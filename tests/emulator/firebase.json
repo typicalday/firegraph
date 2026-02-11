@@ -1,0 +1,17 @@
+{
+  "emulators": {
+    "hub": {
+      "port": 4188
+    },
+    "firestore": {
+      "port": 8188
+    },
+    "ui": {
+      "enabled": false
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

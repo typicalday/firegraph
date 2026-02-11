@@ -1,0 +1,37 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "graph",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "aUid", "order": "ASCENDING" },
+        { "fieldPath": "abType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "graph",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "abType", "order": "ASCENDING" },
+        { "fieldPath": "bUid", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "graph",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "aType", "order": "ASCENDING" },
+        { "fieldPath": "abType", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "graph",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "abType", "order": "ASCENDING" },
+        { "fieldPath": "bType", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

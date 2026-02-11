@@ -1,0 +1,62 @@
+{
+  "name": "firegraph",
+  "version": "0.1.0",
+  "description": "Generic Firestore adjacency graph client with smart query planning",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit/",
+    "test:integration": "vitest run tests/integration/",
+    "test:emulator": "bash tests/scripts/test-with-emulator.sh",
+    "test:emulator:unit": "bash tests/scripts/test-with-emulator.sh tests/unit/",
+    "test:emulator:integration": "bash tests/scripts/test-with-emulator.sh tests/integration/",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest",
+    "emulator:start": "cd tests/emulator && firebase emulators:start -P demo-firegraph",
+    "emulator:stop": "npx kill-port -y 4188 8188"
+  },
+  "peerDependencies": {
+    "firebase-admin": "^12.0.0 || ^13.0.0",
+    "zod": "^3.22.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.0.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "zod": "^3.24.0",
+    "@vitest/coverage-v8": "^3.0.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
