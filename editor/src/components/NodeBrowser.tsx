@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
 import type { Schema, GraphRecord } from '../types';
 import { getNodes } from '../api';
+import type { GetNodesParams } from '../api';
 import { getTypeBadgeColor, formatTimestamp, truncateData } from '../utils';
 import NodeEditor from './NodeEditor';
 
@@ -10,6 +11,14 @@ interface Props {
   onDataChanged?: () => void;
 }
 
+const LIMIT_OPTIONS = [10, 25, 50, 100];
+const SORT_FIELDS = [
+  { value: 'aUid', label: 'UID' },
+  { value: 'createdAt', label: 'Created' },
+  { value: 'updatedAt', label: 'Updated' },
+];
+const FILTER_OPS = ['==', '!=', '<', '<=', '>', '>='];
+
 export default function NodeBrowser({ schema, onDataChanged }: Props) {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
@@ -17,63 +26,114 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
-  const loadNodes = useCallback(async () => {
-    if (!type) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getNodes(type);
-      setNodes(result.nodes);
-      setHasMore(result.hasMore);
-      setNextCursor(result.nextCursor);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [type]);
+  // Toolbar state
+  const [limit, setLimit] = useState(25);
+  const [sortBy, setSortBy] = useState('aUid');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [filterField, setFilterField] = useState('');
+  const [filterOp, setFilterOp] = useState('==');
+  const [filterValue, setFilterValue] = useState('');
+  const [activeFilter, setActiveFilter] = useState<{ field: string; op: string; value: string } | null>(null);
 
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+
+  const buildParams = useCallback(
+    (startAfter?: string): GetNodesParams => {
+      const params: GetNodesParams = { limit, sortBy, sortDir };
+      if (startAfter) params.startAfter = startAfter;
+      if (activeFilter) {
+        params.filterField = activeFilter.field;
+        params.filterOp = activeFilter.op;
+        params.filterValue = activeFilter.value;
+      }
+      return params;
+    },
+    [limit, sortBy, sortDir, activeFilter],
+  );
+
+  const loadNodes = useCallback(
+    async (startAfter?: string) => {
+      if (!type) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await getNodes(type, buildParams(startAfter));
+        setNodes(result.nodes);
+        setHasMore(result.hasMore);
+        setNextCursor(result.nextCursor);
+      } catch (err) {
+        setError(String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [type, buildParams],
+  );
+
+  // Reset pagination when type/limit/sort/filter changes
   useEffect(() => {
+    setPage(1);
+    setCursorStack([]);
+    setNextCursor(null);
     loadNodes();
     setShowCreate(false);
   }, [loadNodes]);
 
-  const loadMore = async () => {
-    if (!type || !nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const result = await getNodes(type, 50, nextCursor);
-      setNodes((prev) => [...prev, ...result.nodes]);
-      setHasMore(result.hasMore);
-      setNextCursor(result.nextCursor);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoadingMore(false);
-    }
+  const goNextPage = async () => {
+    if (!nextCursor) return;
+    setCursorStack((prev) => [...prev, nextCursor]);
+    setPage((p) => p + 1);
+    await loadNodes(nextCursor);
   };
 
-  const nodeTypeMeta = schema.nodeTypes.find((nt) => nt.type === type);
-  const canWrite = !schema.readonly && schema.registryAvailable;
+  const goPrevPage = async () => {
+    if (page <= 1) return;
+    const newStack = [...cursorStack];
+    newStack.pop(); // remove current page's cursor
+    const prevCursor = newStack.length > 0 ? newStack[newStack.length - 1] : undefined;
+    setCursorStack(newStack);
+    setPage((p) => p - 1);
+    await loadNodes(prevCursor);
+  };
+
+  const handleAddFilter = () => {
+    if (!filterField.trim() || !filterValue.trim()) return;
+    setActiveFilter({ field: filterField.trim(), op: filterOp, value: filterValue.trim() });
+  };
+
+  const handleRemoveFilter = () => {
+    setActiveFilter(null);
+    setFilterField('');
+    setFilterOp('==');
+    setFilterValue('');
+  };
+
+  const handleRefresh = () => {
+    setPage(1);
+    setCursorStack([]);
+    loadNodes();
+  };
+
+  // Get field names from schema for the filter dropdown
+  const nodeSchema = schema.nodeSchemas?.find((ns) => ns.aType === type && ns.isNodeEntry);
+  const fieldNames = nodeSchema?.fields?.map((f) => f.name) ?? [];
+
+  const canWrite = !schema.readonly;
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-4">
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-xl font-bold">{type}</h1>
           <span className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(type!)}`}>
             node
           </span>
-          {nodeTypeMeta && (
-            <span className="text-xs text-slate-500">
-              ~{nodeTypeMeta.count} found
-            </span>
-          )}
           {canWrite && !showCreate && (
             <button
               onClick={() => setShowCreate(true)}
@@ -89,6 +149,154 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
         <p className="text-sm text-slate-400">
           Browse all <strong>{type}</strong> nodes
         </p>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-slate-900 rounded-xl border border-slate-800 p-3 mb-4 space-y-3">
+        {/* Row 1: Limit, Sort, Refresh */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Limit */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Show</label>
+            <select
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              {LIMIT_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="w-px h-5 bg-slate-700" />
+
+          {/* Sort */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Sort</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              {SORT_FIELDS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors"
+              title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+            >
+              {sortDir === 'asc' ? '\u2191 Asc' : '\u2193 Desc'}
+            </button>
+          </div>
+
+          <div className="w-px h-5 bg-slate-700" />
+
+          {/* Pagination */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={goPrevPage}
+              disabled={page <= 1 || loading}
+              className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Prev
+            </button>
+            <span className="text-xs text-slate-400 px-1">Page {page}</span>
+            <button
+              onClick={goNextPage}
+              disabled={!hasMore || loading}
+              className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+
+          {/* Refresh */}
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="ml-auto px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
+            title="Refresh"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Row 2: Filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Filter</label>
+          {fieldNames.length > 0 ? (
+            <select
+              value={filterField}
+              onChange={(e) => setFilterField(e.target.value)}
+              className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">Field...</option>
+              {fieldNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={filterField}
+              onChange={(e) => setFilterField(e.target.value)}
+              placeholder="data.field"
+              className="w-28 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+            />
+          )}
+          <select
+            value={filterOp}
+            onChange={(e) => setFilterOp(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+          >
+            {FILTER_OPS.map((op) => (
+              <option key={op} value={op}>
+                {op}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={filterValue}
+            onChange={(e) => setFilterValue(e.target.value)}
+            placeholder="value"
+            className="w-32 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAddFilter();
+            }}
+          />
+          <button
+            onClick={handleAddFilter}
+            disabled={!filterField.trim() || filterValue.trim() === ''}
+            className="px-2 py-1 bg-indigo-600/20 text-indigo-400 rounded text-xs hover:bg-indigo-600/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            Apply
+          </button>
+
+          {/* Active filter chip */}
+          {activeFilter && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
+              {activeFilter.field} {activeFilter.op} {activeFilter.value}
+              <button
+                onClick={handleRemoveFilter}
+                className="ml-0.5 text-indigo-400 hover:text-indigo-200"
+              >
+                &times;
+              </button>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Create form */}
@@ -122,7 +330,7 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
         </div>
       ) : nodes.length === 0 ? (
         <div className="text-center py-12 text-slate-500">
-          <p>No nodes found of type "{type}"</p>
+          <p>No nodes found{activeFilter ? ' matching filter' : ` of type "${type}"`}</p>
         </div>
       ) : (
         <>
@@ -170,18 +378,29 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
             </table>
           </div>
 
-          {/* Load More */}
-          {hasMore && (
-            <div className="mt-4 text-center">
+          {/* Bottom pagination */}
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-xs text-slate-500">
+              {nodes.length} result{nodes.length !== 1 ? 's' : ''} on this page
+            </span>
+            <div className="flex items-center gap-1.5">
               <button
-                onClick={loadMore}
-                disabled={loadingMore}
-                className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-colors disabled:opacity-50"
+                onClick={goPrevPage}
+                disabled={page <= 1 || loading}
+                className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                {loadingMore ? 'Loading...' : 'Load More'}
+                Previous
+              </button>
+              <span className="text-xs text-slate-400 px-2">Page {page}</span>
+              <button
+                onClick={goNextPage}
+                disabled={!hasMore || loading}
+                className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Next
               </button>
             </div>
-          )}
+          </div>
         </>
       )}
     </div>

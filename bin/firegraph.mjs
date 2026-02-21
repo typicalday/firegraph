@@ -18,7 +18,7 @@ if (subcommand === 'editor') {
   console.log('    editor    Launch the Firegraph Editor UI');
   console.log('');
   console.log('  Editor options:');
-  console.log('    --registry <path>      Path to TypeScript file exporting a GraphRegistry');
+  console.log('    --registry <path>      Path to TypeScript file exporting a GraphRegistry (required)');
   console.log('    --project <id>         GCP project ID (default: auto-detect via ADC)');
   console.log('    --collection <path>    Firestore collection path (default: graph)');
   console.log('    --port <number>        Server port (default: 3883)');
@@ -27,7 +27,7 @@ if (subcommand === 'editor') {
   console.log('');
   console.log('  Examples:');
   console.log('    npx firegraph editor --registry ./src/registry.ts --collection graph');
-  console.log('    npx firegraph editor --emulator --project demo-project');
+  console.log('    npx firegraph editor --registry ./src/registry.ts --emulator --project demo-project');
   console.log('');
 } else {
   console.error(`Unknown command: ${subcommand}`);

@@ -1,6 +1,5 @@
 export interface NodeType {
   type: string;
-  count: number;
   description?: string;
 }
 
@@ -8,7 +7,6 @@ export interface EdgeType {
   aType: string;
   abType: string;
   bType: string;
-  count: number;
   description?: string;
 }
 
@@ -41,9 +39,6 @@ export interface RegistryEntryMeta {
 export interface Schema {
   nodeTypes: NodeType[];
   edgeTypes: EdgeType[];
-  sampleSize: number;
-  isComplete: boolean;
-  registryAvailable: boolean;
   readonly: boolean;
   nodeSchemas?: RegistryEntryMeta[];
   edgeSchemas?: RegistryEntryMeta[];
@@ -94,6 +89,5 @@ export interface TraversalResult {
 export interface AppConfig {
   projectId: string;
   collection: string;
-  registryAvailable: boolean;
   readonly: boolean;
 }

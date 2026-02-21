@@ -1,6 +1,6 @@
 # Firegraph Editor — Integration Guide
 
-The Firegraph Editor is a full-stack web UI for browsing and editing graph data stored in Firestore. When pointed at a project's registry file, it becomes schema-aware: it knows every node type, edge type, and Zod validation rule, and generates forms accordingly. All writes are validated through the registry before reaching Firestore.
+The Firegraph Editor is a full-stack web UI for browsing and editing graph data stored in Firestore. It requires a project registry file to operate: it knows every node type, edge type, and Zod validation rule from the registry, generates forms accordingly, and validates all writes through the registry before reaching Firestore.
 
 ## Quick Start
 
@@ -20,13 +20,11 @@ This starts the editor at `http://localhost:3883`. It imports your TypeScript re
 
 The editor resolves `firebase-admin` and `zod` from your project's `node_modules` at runtime. `jiti` (used to import TypeScript registry files) is included as a dependency of firegraph. Everything else (Express, React, etc.) is bundled inside firegraph.
 
-## Two Modes of Operation
+## Registry Requirement
 
-### Registry Mode (Read/Write)
+The `--registry` flag is **required**. The editor will exit with an error if no registry is provided. The registry gives the editor:
 
-When you pass `--registry`, the editor imports your TypeScript file and uses it for:
-
-- **Schema discovery** — knows every node type, edge type, and their relationships without sampling documents
+- **Schema discovery** — knows every node type, edge type, and their relationships without sampling documents (zero Firestore reads on startup)
 - **Form generation** — builds input forms from Zod schemas (text fields, number inputs, enum dropdowns, checkboxes, nested objects, arrays)
 - **Write validation** — all creates and updates go through `GraphClient.putNode()` / `GraphClient.putEdge()`, which validates against the registry before writing to Firestore
 - **Constraint display** — shows min/max, required/optional, enum options, regex patterns directly in the form UI
@@ -35,24 +33,22 @@ When you pass `--registry`, the editor imports your TypeScript file and uses it 
 npx firegraph editor --registry ./src/registry.ts --collection my-graph
 ```
 
-### Discovery Mode (Read-Only)
-
-Without `--registry`, the editor samples up to 2,000 documents from your collection to discover node and edge types. This is useful for exploring data when you don't have a registry, but no writes are allowed.
+Use `--readonly` to prevent writes even with a registry loaded:
 
 ```bash
-npx firegraph editor --collection my-graph --project my-gcp-project
+npx firegraph editor --registry ./src/registry.ts --collection my-graph --readonly
 ```
 
 ## CLI Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--registry <path>` | *(none)* | Path to TypeScript file exporting a `GraphRegistry` |
+| `--registry <path>` | *(required)* | Path to TypeScript file exporting a `GraphRegistry` |
 | `--project <id>` | *(auto-detect via ADC)* | GCP project ID |
 | `--collection <path>` | `graph` | Firestore collection path |
 | `--port <number>` | `3883` | Server port |
 | `--emulator [host:port]` | *(none)* | Use Firestore emulator (default: `127.0.0.1:8080`) |
-| `--readonly` | `false` | Force read-only mode even with a registry |
+| `--readonly` | `false` | Force read-only mode |
 
 Flags also respect environment variables:
 
@@ -163,9 +159,19 @@ interface FieldMeta {
 
 This is what the frontend receives via `GET /api/schema` and uses to render the `SchemaForm` component.
 
+## Browse Toolbar
+
+The node browse page includes a toolbar with:
+
+- **Limit selector** — choose how many results per page (10, 25, 50, 100)
+- **Sort control** — sort by UID, createdAt, or updatedAt in ascending or descending order
+- **Filter** — filter by data subfields (e.g., `status == active`) using equality and comparison operators
+- **Pagination** — Previous/Next page navigation with page indicator
+- **Refresh** — re-fetch the current view
+
 ## Write Operations
 
-When the editor is in registry mode (not `--readonly`), it exposes these capabilities:
+When the editor is not in `--readonly` mode, it exposes these capabilities:
 
 ### Creating Nodes
 
@@ -228,9 +234,9 @@ The editor server exposes these endpoints (useful if you want to script interact
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/config` | Server configuration (project, collection, registry status, readonly) |
-| `GET` | `/api/schema` | Full schema with field metadata (registry mode) or sampled types (discovery) |
-| `GET` | `/api/nodes?type=X&limit=50` | Browse nodes by type, paginated |
+| `GET` | `/api/config` | Server configuration (project, collection, readonly) |
+| `GET` | `/api/schema` | Full schema with field metadata from registry (zero Firestore reads) |
+| `GET` | `/api/nodes?type=X&limit=25&sortBy=aUid&sortDir=asc` | Browse nodes by type with sorting, filtering, pagination |
 | `GET` | `/api/node/:uid` | Single node with outgoing and incoming edges |
 | `GET` | `/api/edges?aType=X&abType=Y` | Query edges with optional filters |
 | `GET` | `/api/search?q=term` | Search by UID (exact match + aUid/bUid lookups) |
@@ -241,7 +247,20 @@ The editor server exposes these endpoints (useful if you want to script interact
 | `POST` | `/api/edge` | Create an edge `{ aType, aUid, abType, bType, bUid, data }` |
 | `DELETE` | `/api/edge` | Delete an edge `{ aUid, abType, bUid }` |
 
-Write endpoints return `403` when in read-only or discovery mode, and `400` with structured error details when validation fails.
+### Browse endpoint query params
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `type` | — | Node type to filter by |
+| `limit` | `25` | Results per page (max 200) |
+| `startAfter` | — | Cursor for pagination |
+| `sortBy` | `aUid` | Sort field: `aUid`, `createdAt`, `updatedAt` |
+| `sortDir` | `asc` | Sort direction: `asc` or `desc` |
+| `filterField` | — | Data subfield to filter (e.g., `status` or `data.status`) |
+| `filterOp` | — | Comparison operator: `==`, `!=`, `<`, `<=`, `>`, `>=` |
+| `filterValue` | — | Value to compare against |
+
+Write endpoints return `403` when in read-only mode, and `400` with structured error details when validation fails.
 
 ## Adding an npm Script
 
@@ -330,9 +349,9 @@ The editor looks for:
 
 Make sure your file exports a `GraphRegistry` object (the return value of `createRegistry()`).
 
-### "Write operations require a registry"
+### "--registry is required"
 
-Writes are only available in registry mode. Pass `--registry` to enable them.
+The editor no longer supports discovery mode (running without a registry). You must provide a `--registry` flag pointing to a TypeScript file that exports a `GraphRegistry`.
 
 ### Connection errors
 

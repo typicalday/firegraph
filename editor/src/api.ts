@@ -19,16 +19,30 @@ export async function getSchema(): Promise<Schema> {
   return fetchJson(`${BASE}/schema`);
 }
 
+export interface GetNodesParams {
+  limit?: number;
+  startAfter?: string;
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+  filterField?: string;
+  filterOp?: string;
+  filterValue?: string;
+}
+
 export async function getNodes(
   type?: string,
-  limit = 50,
-  startAfter?: string,
+  params: GetNodesParams = {},
 ): Promise<{ nodes: GraphRecord[]; hasMore: boolean; nextCursor: string | null }> {
-  const params = new URLSearchParams();
-  if (type) params.set('type', type);
-  params.set('limit', String(limit));
-  if (startAfter) params.set('startAfter', startAfter);
-  return fetchJson(`${BASE}/nodes?${params}`);
+  const searchParams = new URLSearchParams();
+  if (type) searchParams.set('type', type);
+  if (params.limit) searchParams.set('limit', String(params.limit));
+  if (params.startAfter) searchParams.set('startAfter', params.startAfter);
+  if (params.sortBy) searchParams.set('sortBy', params.sortBy);
+  if (params.sortDir) searchParams.set('sortDir', params.sortDir);
+  if (params.filterField) searchParams.set('filterField', params.filterField);
+  if (params.filterOp) searchParams.set('filterOp', params.filterOp);
+  if (params.filterValue !== undefined) searchParams.set('filterValue', params.filterValue);
+  return fetchJson(`${BASE}/nodes?${searchParams}`);
 }
 
 export async function getNodeDetail(uid: string): Promise<NodeDetailData> {
@@ -42,7 +56,8 @@ export async function getEdges(params: {
   bType?: string;
   bUid?: string;
   limit?: number;
-}): Promise<{ edges: GraphRecord[]; hasMore: boolean }> {
+  startAfter?: string;
+}): Promise<{ edges: GraphRecord[]; hasMore: boolean; nextCursor: string | null }> {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) searchParams.set(key, String(value));

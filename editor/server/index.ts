@@ -86,21 +86,31 @@ const collectionPath = config.collection;
 
 // --- Load registry ---
 
-let registry: GraphRegistry | undefined;
-let schemaMetadata: SchemaMetadata | undefined;
+let registry: GraphRegistry;
+let schemaMetadata: SchemaMetadata;
 let graphClient: GraphClient;
 
 async function init() {
-  if (config.registryPath) {
-    console.log(`  Loading registry from ${config.registryPath}...`);
-    registry = await loadRegistry(config.registryPath);
-    schemaMetadata = introspectRegistry(registry);
-    console.log(
-      `  Registry loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
-    );
+  if (!config.registryPath) {
+    console.error('');
+    console.error('  Error: --registry <path> is required.');
+    console.error('');
+    console.error('  The editor requires a registry file to operate. Discovery mode has been removed.');
+    console.error('  Provide a path to a TypeScript file that exports a GraphRegistry:');
+    console.error('');
+    console.error('    npx firegraph editor --registry ./src/registry.ts --collection graph');
+    console.error('');
+    process.exit(1);
   }
 
-  graphClient = createGraphClient(db, collectionPath, registry ? { registry } : {});
+  console.log(`  Loading registry from ${config.registryPath}...`);
+  registry = await loadRegistry(config.registryPath);
+  schemaMetadata = introspectRegistry(registry);
+  console.log(
+    `  Registry loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
+  );
+
+  graphClient = createGraphClient(db, collectionPath, { registry });
 }
 
 // --- Helpers ---
@@ -120,7 +130,7 @@ function serializeRecord(doc: DocumentData): Record<string, unknown> {
 }
 
 const NODE_RELATION = 'is';
-const isWriteEnabled = !config.readonly && !!config.registryPath;
+const isWriteEnabled = !config.readonly;
 
 // --- Express app ---
 
@@ -134,105 +144,33 @@ app.get('/api/config', (_req, res) => {
   res.json({
     projectId: config.project || '(auto-detected)',
     collection: collectionPath,
-    registryAvailable: !!registry,
     readonly: !isWriteEnabled,
   });
 });
 
 // --- API: Schema ---
 
-app.get('/api/schema', async (_req, res) => {
+app.get('/api/schema', (_req, res) => {
   try {
-    if (schemaMetadata) {
-      // Registry mode: return full schema from registry
-      const nodeTypes = schemaMetadata.nodeTypes.map((n) => ({
-        type: n.aType,
-        count: 0, // counts are filled on-demand below
-        description: n.description,
-      }));
+    const nodeTypes = schemaMetadata.nodeTypes.map((n) => ({
+      type: n.aType,
+      description: n.description,
+    }));
 
-      const edgeTypes = schemaMetadata.edgeTypes.map((e) => ({
-        aType: e.aType,
-        abType: e.abType,
-        bType: e.bType,
-        count: 0,
-        description: e.description,
-      }));
+    const edgeTypes = schemaMetadata.edgeTypes.map((e) => ({
+      aType: e.aType,
+      abType: e.abType,
+      bType: e.bType,
+      description: e.description,
+    }));
 
-      // Optionally fetch actual counts (quick sample)
-      const col = db.collection(collectionPath);
-      const sampleSize = 2000;
-      const snapshot = await col.limit(sampleSize).get();
-
-      const nodeCountMap: Record<string, number> = {};
-      const edgeCountMap: Record<string, number> = {};
-
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        if (data.abType === NODE_RELATION) {
-          nodeCountMap[data.aType] = (nodeCountMap[data.aType] || 0) + 1;
-        } else {
-          const key = `${data.aType}:${data.abType}:${data.bType}`;
-          edgeCountMap[key] = (edgeCountMap[key] || 0) + 1;
-        }
-      }
-
-      for (const n of nodeTypes) {
-        n.count = nodeCountMap[n.type] || 0;
-      }
-      for (const e of edgeTypes) {
-        e.count = edgeCountMap[`${e.aType}:${e.abType}:${e.bType}`] || 0;
-      }
-
-      res.json({
-        nodeTypes,
-        edgeTypes,
-        sampleSize: snapshot.size,
-        isComplete: snapshot.size < sampleSize,
-        registryAvailable: true,
-        readonly: !isWriteEnabled,
-        nodeSchemas: schemaMetadata.nodeTypes,
-        edgeSchemas: schemaMetadata.edgeTypes,
-      });
-    } else {
-      // Discovery mode: sample documents
-      const col = db.collection(collectionPath);
-      const sampleSize = 2000;
-      const snapshot = await col.limit(sampleSize).get();
-
-      const nodeTypeCounts: Record<string, number> = {};
-      const edgeTypeCounts: Record<string, { aType: string; abType: string; bType: string; count: number }> = {};
-
-      for (const doc of snapshot.docs) {
-        const data = doc.data();
-        const { aType, abType, bType } = data;
-
-        if (abType === NODE_RELATION) {
-          nodeTypeCounts[aType] = (nodeTypeCounts[aType] || 0) + 1;
-        } else {
-          const key = `${aType}:${abType}:${bType}`;
-          if (!edgeTypeCounts[key]) {
-            edgeTypeCounts[key] = { aType, abType, bType, count: 0 };
-          }
-          edgeTypeCounts[key].count++;
-        }
-      }
-
-      const nodeTypes = Object.entries(nodeTypeCounts)
-        .map(([type, count]) => ({ type, count }))
-        .sort((a, b) => a.type.localeCompare(b.type));
-
-      const edgeTypes = Object.values(edgeTypeCounts).sort((a, b) => a.abType.localeCompare(b.abType));
-
-      res.json({
-        nodeTypes,
-        edgeTypes,
-        sampleSize: snapshot.size,
-        isComplete: snapshot.size < sampleSize,
-        registryAvailable: false,
-        readonly: true,
-      });
-    }
+    res.json({
+      nodeTypes,
+      edgeTypes,
+      readonly: !isWriteEnabled,
+      nodeSchemas: schemaMetadata.nodeTypes,
+      edgeSchemas: schemaMetadata.edgeTypes,
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -244,8 +182,16 @@ app.get('/api/nodes', async (req, res) => {
   try {
     const col = db.collection(collectionPath);
     const type = req.query.type as string | undefined;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const limit = Math.min(parseInt(req.query.limit as string) || 25, 200);
     const startAfter = req.query.startAfter as string | undefined;
+    const sortBy = (req.query.sortBy as string) || 'aUid';
+    const sortDir = (req.query.sortDir as string) === 'desc' ? 'desc' : 'asc';
+    const filterField = req.query.filterField as string | undefined;
+    const filterOp = req.query.filterOp as string | undefined;
+    const filterValue = req.query.filterValue as string | undefined;
+
+    const allowedSortFields = ['aUid', 'createdAt', 'updatedAt'];
+    const effectiveSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'aUid';
 
     let query: Query = col.where('abType', '==', NODE_RELATION);
 
@@ -253,7 +199,23 @@ app.get('/api/nodes', async (req, res) => {
       query = query.where('aType', '==', type);
     }
 
-    query = query.orderBy('aUid').limit(limit + 1);
+    // Apply optional data subfield filter
+    if (filterField && filterOp && filterValue !== undefined) {
+      const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
+      type AllowedOp = (typeof allowedOps)[number];
+      if (allowedOps.includes(filterOp as AllowedOp)) {
+        const field = filterField.startsWith('data.') ? filterField : `data.${filterField}`;
+        // Attempt numeric coercion for comparison ops
+        let coercedValue: string | number = filterValue;
+        if (['<', '<=', '>', '>='].includes(filterOp)) {
+          const num = Number(filterValue);
+          if (!isNaN(num)) coercedValue = num;
+        }
+        query = query.where(field, filterOp as AllowedOp, coercedValue);
+      }
+    }
+
+    query = query.orderBy(effectiveSortBy, sortDir as 'asc' | 'desc').limit(limit + 1);
 
     if (startAfter) {
       query = query.startAfter(startAfter);
@@ -265,7 +227,15 @@ app.get('/api/nodes', async (req, res) => {
 
     const nodes = docs.map((doc) => serializeRecord(doc.data()));
 
-    res.json({ nodes, hasMore, nextCursor: hasMore ? docs[docs.length - 1]?.data().aUid : null });
+    // Build cursor from the sort field of the last doc
+    let nextCursor: string | null = null;
+    if (hasMore && docs.length > 0) {
+      const lastDoc = docs[docs.length - 1].data();
+      const cursorValue = lastDoc[effectiveSortBy];
+      nextCursor = cursorValue instanceof Timestamp ? cursorValue.toDate().toISOString() : String(cursorValue);
+    }
+
+    res.json({ nodes, hasMore, nextCursor });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -305,7 +275,8 @@ app.get('/api/node/:uid', async (req, res) => {
 app.get('/api/edges', async (req, res) => {
   try {
     const col = db.collection(collectionPath);
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const limit = Math.min(parseInt(req.query.limit as string) || 25, 200);
+    const startAfter = req.query.startAfter as string | undefined;
     const { aType, aUid, abType, bType, bUid } = req.query as Record<string, string | undefined>;
 
     let query: Query = col;
@@ -316,17 +287,29 @@ app.get('/api/edges', async (req, res) => {
     if (bType) query = query.where('bType', '==', bType);
     if (bUid) query = query.where('bUid', '==', bUid);
 
-    query = query.limit(limit + 1);
+    // Exclude node-self edges unless filtering by specific abType
+    if (!abType) {
+      query = query.where('abType', '!=', NODE_RELATION);
+    }
+
+    query = query.orderBy('abType').limit(limit + 1);
+
+    if (startAfter) {
+      query = query.startAfter(startAfter);
+    }
+
     const snapshot = await query.get();
     const docs = snapshot.docs.slice(0, limit);
     const hasMore = snapshot.docs.length > limit;
 
-    let edges = docs.map((doc) => serializeRecord(doc.data()));
-    if (!abType) {
-      edges = edges.filter((e) => e.abType !== NODE_RELATION);
+    const edges = docs.map((doc) => serializeRecord(doc.data()));
+
+    let nextCursor: string | null = null;
+    if (hasMore && docs.length > 0) {
+      nextCursor = String(docs[docs.length - 1].data().abType);
     }
 
-    res.json({ edges, hasMore });
+    res.json({ edges, hasMore, nextCursor });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -613,12 +596,8 @@ async function start() {
     if (config.emulator) {
       console.log(`  Emulator:   ${config.emulator}`);
     }
-    if (registry) {
-      console.log(`  Registry:   ${config.registryPath}`);
-      console.log(`  Mode:       ${isWriteEnabled ? 'Read/Write' : 'Read-Only'}`);
-    } else {
-      console.log('  Mode:       Discovery (read-only, no registry)');
-    }
+    console.log(`  Registry:   ${config.registryPath}`);
+    console.log(`  Mode:       ${isWriteEnabled ? 'Read/Write' : 'Read-Only'}`);
     console.log(`  Server:     http://localhost:${port}`);
     if (!isProduction) {
       console.log(`  UI (dev):   http://localhost:3883`);
