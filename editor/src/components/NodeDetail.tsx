@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
 import type { Schema, GraphRecord } from '../types';
-import { getNodeDetail, getEdges, deleteNode, deleteEdge } from '../api';
+import { getNodeDetail, getEdges, getNodesBatch, deleteNode, deleteEdge } from '../api';
 import { getTypeBadgeColor, formatTimestamp } from '../utils';
 import JsonView from './JsonView';
 import { TraversalPanel } from './TraversalBuilder';
@@ -305,6 +305,11 @@ function PaginatedEdgeSection({
   const [page, setPage] = useState(1);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
 
+  // Resolve state
+  const [resolveAll, setResolveAll] = useState(false);
+  const [resolvedNodes, setResolvedNodes] = useState<Record<string, GraphRecord | null>>({});
+  const [resolving, setResolving] = useState(false);
+
   const loadEdges = useCallback(
     async (startAfter?: string) => {
       setLoading(true);
@@ -339,8 +344,24 @@ function PaginatedEdgeSection({
   useEffect(() => {
     setPage(1);
     setCursorStack([]);
+    setResolvedNodes({});
     loadEdges();
   }, [loadEdges, reloadKey]);
+
+  // Batch resolve when resolveAll is on and edges change
+  useEffect(() => {
+    if (!resolveAll || edges.length === 0) return;
+    const targetUids = edges.map((e) => (direction === 'out' ? e.bUid : e.aUid));
+    const uniqueUids = [...new Set(targetUids)];
+    const toFetch = uniqueUids.filter((u) => !(u in resolvedNodes));
+    if (toFetch.length === 0) return;
+
+    setResolving(true);
+    getNodesBatch(toFetch)
+      .then((result) => setResolvedNodes((prev) => ({ ...prev, ...result.nodes })))
+      .catch(() => {})
+      .finally(() => setResolving(false));
+  }, [resolveAll, edges, direction]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const goNextPage = async () => {
     if (!nextCursor) return;
@@ -436,6 +457,29 @@ function PaginatedEdgeSection({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
         </button>
+
+        {/* Resolve all toggle */}
+        <div className="w-px h-4 bg-slate-700" />
+        <button
+          onClick={() => setResolveAll((v) => !v)}
+          className={`px-2 py-1 border rounded text-xs transition-colors ${
+            resolveAll
+              ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-300'
+              : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+          }`}
+          title={resolveAll ? 'Stop resolving target nodes' : 'Resolve all target nodes inline'}
+        >
+          {resolving ? (
+            <span className="flex items-center gap-1">
+              <span className="w-2.5 h-2.5 border border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              Resolving...
+            </span>
+          ) : resolveAll ? (
+            'Resolved'
+          ) : (
+            'Resolve all'
+          )}
+        </button>
       </div>
 
       {/* Error */}
@@ -485,6 +529,8 @@ function PaginatedEdgeSection({
                       targetType={targetType}
                       canWrite={canWrite}
                       onDelete={() => onDeleteEdge(edge)}
+                      resolvedNode={resolvedNodes[targetUid]}
+                      resolveAllActive={resolveAll}
                     />
                   );
                 })}
@@ -531,15 +577,46 @@ function EdgeRow({
   targetType,
   canWrite,
   onDelete,
+  resolvedNode,
+  resolveAllActive,
 }: {
   edge: GraphRecord;
   targetUid: string;
   targetType: string;
   canWrite: boolean;
   onDelete: () => void;
+  resolvedNode?: GraphRecord | null;
+  resolveAllActive?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [nodeExpanded, setNodeExpanded] = useState(false);
+  const [nodeData, setNodeData] = useState<GraphRecord | null | undefined>(undefined);
+  const [nodeLoading, setNodeLoading] = useState(false);
   const hasData = Object.keys(edge.data).length > 0;
+
+  // Effective resolved node: per-row fetch takes priority over batch
+  const effectiveNode = nodeData !== undefined ? nodeData : resolvedNode;
+  const isResolved = effectiveNode !== undefined;
+
+  // Auto-expand when resolve-all provides data
+  useEffect(() => {
+    if (resolveAllActive && resolvedNode !== undefined) {
+      setNodeExpanded(true);
+    }
+  }, [resolveAllActive, resolvedNode]);
+
+  const handleResolve = async () => {
+    setNodeLoading(true);
+    try {
+      const result = await getNodesBatch([targetUid]);
+      setNodeData(result.nodes[targetUid] ?? null);
+      setNodeExpanded(true);
+    } catch {
+      // silently fail
+    } finally {
+      setNodeLoading(false);
+    }
+  };
 
   return (
     <div className="bg-slate-800/50 rounded-lg">
@@ -558,7 +635,26 @@ function EdgeRow({
             onClick={() => setExpanded(!expanded)}
             className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
           >
-            {expanded ? 'hide data' : 'show data'}
+            {expanded ? 'hide edge' : 'show edge'}
+          </button>
+        )}
+        {!isResolved && !nodeLoading && (
+          <button
+            onClick={handleResolve}
+            className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            resolve
+          </button>
+        )}
+        {nodeLoading && (
+          <span className="w-2.5 h-2.5 border border-slate-400 border-t-transparent rounded-full animate-spin" />
+        )}
+        {isResolved && (
+          <button
+            onClick={() => setNodeExpanded(!nodeExpanded)}
+            className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {nodeExpanded ? 'hide node' : 'show node'}
           </button>
         )}
         {canWrite && (
@@ -575,6 +671,27 @@ function EdgeRow({
           <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
             <JsonView data={edge.data} defaultExpanded />
           </div>
+        </div>
+      )}
+      {nodeExpanded && isResolved && (
+        <div className="px-3 pb-2">
+          {effectiveNode === null ? (
+            <p className="text-[11px] text-slate-500 italic">Node not found</p>
+          ) : (
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                  Node Data
+                </span>
+                <span className="text-[10px] text-slate-600">
+                  {formatTimestamp(effectiveNode.updatedAt)}
+                </span>
+              </div>
+              <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
+                <JsonView data={effectiveNode.data} defaultExpanded />
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -270,6 +270,34 @@ app.get('/api/node/:uid', async (req, res) => {
   }
 });
 
+// --- API: Batch Get Nodes ---
+
+app.post('/api/nodes/batch', async (req, res) => {
+  try {
+    const { uids } = req.body as { uids: string[] };
+    if (!Array.isArray(uids) || uids.length === 0) {
+      return res.status(400).json({ error: 'uids must be a non-empty array' });
+    }
+    const cappedUids = uids.slice(0, 100);
+    const col = db.collection(collectionPath);
+    const refs = cappedUids.map((uid) => col.doc(uid));
+    const snapshots = await db.getAll(...refs);
+
+    const nodes: Record<string, Record<string, unknown> | null> = {};
+    for (const snap of snapshots) {
+      if (snap.exists) {
+        nodes[snap.id] = serializeRecord(snap.data()!);
+      } else {
+        nodes[snap.id] = null;
+      }
+    }
+
+    res.json({ nodes });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // --- API: Query Edges ---
 
 app.get('/api/edges', async (req, res) => {

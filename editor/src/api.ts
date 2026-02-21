@@ -49,6 +49,16 @@ export async function getNodeDetail(uid: string): Promise<NodeDetailData> {
   return fetchJson(`${BASE}/node/${encodeURIComponent(uid)}`);
 }
 
+export async function getNodesBatch(
+  uids: string[],
+): Promise<{ nodes: Record<string, GraphRecord | null> }> {
+  return fetchJson(`${BASE}/nodes/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uids }),
+  });
+}
+
 export async function getEdges(params: {
   aType?: string;
   aUid?: string;
