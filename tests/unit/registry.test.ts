@@ -65,6 +65,27 @@ describe('createRegistry', () => {
     expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 0 })).not.toThrow();
   });
 
+  it('entries returns all registered entries', () => {
+    const entries = [
+      { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },
+      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', dataSchema: edgeSchema },
+    ];
+    const registry = createRegistry(entries);
+    const result = registry.entries();
+    expect(result).toHaveLength(2);
+    expect(result[0].aType).toBe('tour');
+    expect(result[0].abType).toBe('is');
+    expect(result[1].abType).toBe('hasDeparture');
+  });
+
+  it('entries returns a frozen array (defensive copy)', () => {
+    const registry = createRegistry([
+      { aType: 'tour', abType: 'is', bType: 'tour' },
+    ]);
+    const result = registry.entries();
+    expect(Object.isFrozen(result)).toBe(true);
+  });
+
   it('ValidationError includes Zod details', () => {
     const registry = createRegistry([
       { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },

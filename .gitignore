@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.tsbuildinfo
+*.tgz
 .firebase/
 firebase-debug.log
 firestore-debug.log

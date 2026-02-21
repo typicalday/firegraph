@@ -66,6 +66,7 @@ export interface GraphClientOptions {
 export interface GraphRegistry {
   validate(aType: string, abType: string, bType: string, data: unknown): void;
   lookup(aType: string, abType: string, bType: string): RegistryEntry | undefined;
+  entries(): ReadonlyArray<RegistryEntry>;
 }
 
 export interface GraphReader {

@@ -18,11 +18,20 @@
       }
     }
   },
+  "bin": {
+    "firegraph": "./bin/firegraph.mjs"
+  },
   "files": [
-    "dist"
+    "dist",
+    "bin"
   ],
   "scripts": {
     "build": "tsup",
+    "build:editor:client": "cd editor && npx vite build",
+    "build:editor:server": "node editor/build-server.mjs",
+    "build:editor": "npm run build:editor:client && npm run build:editor:server",
+    "build:all": "npm run build && npm run build:editor",
+    "dev:editor": "cd editor && npm run dev",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit/",
@@ -45,6 +54,7 @@
     }
   },
   "dependencies": {
+    "jiti": "^2.4.0",
     "nanoid": "^5.0.9"
   },
   "devDependencies": {

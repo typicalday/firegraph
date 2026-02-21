@@ -7,6 +7,7 @@ function tripleKey(aType: string, abType: string, bType: string): string {
 
 export function createRegistry(entries: RegistryEntry[]): GraphRegistry {
   const map = new Map<string, RegistryEntry>();
+  const entryList: ReadonlyArray<RegistryEntry> = Object.freeze([...entries]);
 
   for (const entry of entries) {
     map.set(tripleKey(entry.aType, entry.abType, entry.bType), entry);
@@ -34,6 +35,10 @@ export function createRegistry(entries: RegistryEntry[]): GraphRegistry {
           );
         }
       }
+    },
+
+    entries(): ReadonlyArray<RegistryEntry> {
+      return entryList;
     },
   };
 }

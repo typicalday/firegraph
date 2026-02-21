@@ -79,6 +79,37 @@ pnpm emulator:stop      # kill emulator
 - **Runtime**: `nanoid` (ID generation)
 - **Peer**: `firebase-admin` (required), `zod` (optional, for registry schemas)
 
+## Editor
+
+The `editor/` directory contains a full-stack web UI for browsing and editing graph data. It is registry-aware: when given a path to a project's registry file, it introspects Zod schemas to generate forms and validates all writes through the registry.
+
+### Editor Architecture
+
+| Directory | Purpose |
+|-----------|---------|
+| `editor/server/index.ts` | Express server — reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
+| `editor/server/registry-loader.ts` | Dynamic TypeScript import of user's registry file via `jiti` |
+| `editor/server/schema-introspect.ts` | Walks Zod `._def` tree to extract field metadata (`FieldMeta[]`) |
+| `editor/src/` | React 19 + React Router + Tailwind CSS frontend |
+| `editor/src/components/SchemaForm.tsx` | Dynamic form generator from `FieldMeta[]` |
+| `editor/src/components/NodeEditor.tsx` | Create/edit node form |
+| `editor/src/components/EdgeEditor.tsx` | Create edge form |
+
+### Editor Commands
+
+```bash
+pnpm build:all         # build library + editor
+pnpm build:editor      # build editor only (client + server)
+pnpm dev:editor        # dev mode (Express :3884 + Vite :3883)
+npx firegraph editor   # run production editor
+```
+
+### Editor Build Pipeline
+
+- **Client**: Vite → `dist/editor/client/` (React SPA)
+- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, zod, jiti external)
+- **CLI**: `bin/firegraph.mjs` dispatches subcommands (`editor`)
+
 ## Conventions
 
 - All source in `src/`, all tests in `tests/`
