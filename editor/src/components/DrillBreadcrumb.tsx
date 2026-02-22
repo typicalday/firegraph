@@ -24,7 +24,7 @@ const WHEEL_COOLDOWN = 300;
  * Clicking a lane's dot also focuses it.
  */
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
-  const { lanes, activeLaneId, activeIndex, popTo, closeLane } = useDrill();
+  const { lanes, activeLaneId, activeIndex, popTo, closeLane, switchLane } = useDrill();
 
   // Build inverse label lookup from schema
   const inverseLabelMap = useMemo(() => {
@@ -106,8 +106,12 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
         return (
           <div
             key={lane.id}
+            onClick={!isFocused && multiLane ? () => {
+              setFocusedIdx(lanes.indexOf(lane));
+              switchLane(lane.id);
+            } : undefined}
             className={`flex items-center gap-1 shrink-0 transition-opacity ${
-              !isFocused && multiLane ? 'opacity-40' : ''
+              !isFocused && multiLane ? 'opacity-40 cursor-pointer hover:opacity-70' : ''
             }`}
           >
             {/* Lane indicator dot — clickable to focus, padded hit area */}
