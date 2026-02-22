@@ -81,6 +81,24 @@ pnpm emulator:stop      # kill emulator
 - **Runtime**: `nanoid` (ID generation)
 - **Peer**: `firebase-admin` (required), `zod` (optional, for registry schemas)
 
+### Inverse Labels
+
+Edge entries support an optional `inverseLabel` field — a display-only label for when an edge is viewed from the B-side (incoming direction). This does not create a real inverse edge; it's purely cosmetic for the editor UI.
+
+```typescript
+createRegistry([
+  { aType: 'project', abType: 'hasTask', bType: 'task', inverseLabel: 'taskOf' },
+  { aType: 'task',    abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+]);
+```
+
+In the editor, incoming edges with an `inverseLabel` display:
+- `— stepOf →` (amber color, arrow reads left-to-right) instead of `← hasStep —`
+- Hovering the label shows a tooltip: "Inverse of: hasStep"
+- Without `inverseLabel`, the existing `← abType —` display is preserved
+
+The label flows through: `RegistryEntry.inverseLabel` → `introspectRegistry()` → `GET /api/schema` → frontend `EdgeType.inverseLabel` → `NodeDetail.tsx` + `DrillBreadcrumb.tsx`.
+
 ## Editor
 
 The `editor/` directory contains a full-stack web UI for browsing and editing graph data. It is registry-aware: when given a path to a project's registry file, it introspects Zod schemas to generate forms and validates all writes through the registry.

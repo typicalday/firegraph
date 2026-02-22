@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDrill } from './drill-context';
 import { getTypeBadgeColor } from '../utils';
 import type { PeekPosition } from './DrillStack';
+import type { Schema } from '../types';
 
 interface Props {
   peek: PeekPosition | null;
   onPeek: (laneId: string, frameIndex: number) => void;
+  schema: Schema;
 }
 
 /** Accumulated deltaY threshold before stepping one lane. */
@@ -21,8 +23,19 @@ const WHEEL_COOLDOWN = 300;
  * Mouse wheel over the breadcrumb area scrolls which lane is focused.
  * Clicking a lane's dot also focuses it.
  */
-export default function DrillBreadcrumb({ peek, onPeek }: Props) {
+export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const { lanes, activeLaneId, activeIndex, popTo, closeLane } = useDrill();
+
+  // Build inverse label lookup from schema
+  const inverseLabelMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const et of schema.edgeTypes) {
+      if (et.inverseLabel) {
+        map[et.abType] = et.inverseLabel;
+      }
+    }
+    return map;
+  }, [schema.edgeTypes]);
 
   const showBreadcrumbs =
     lanes.length > 1 || (lanes.length === 1 && lanes[0].frames.length > 1);
@@ -120,6 +133,13 @@ export default function DrillBreadcrumb({ peek, onPeek }: Props) {
                     {frame.direction === 'out' ? (
                       <>
                         <span className="text-indigo-500/60">{frame.edgeType}</span>
+                        <span className="ml-0.5">&rarr;</span>
+                      </>
+                    ) : inverseLabelMap[frame.edgeType] ? (
+                      <>
+                        <span className="text-amber-500/60 cursor-help" title={`Inverse of: ${frame.edgeType}`}>
+                          {inverseLabelMap[frame.edgeType]}
+                        </span>
                         <span className="ml-0.5">&rarr;</span>
                       </>
                     ) : (

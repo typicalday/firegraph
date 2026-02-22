@@ -98,4 +98,20 @@ describe('createRegistry', () => {
       expect((err as ValidationError).details).toBeDefined();
     }
   });
+
+  it('preserves inverseLabel on lookup', () => {
+    const registry = createRegistry([
+      { aType: 'task', abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+    ]);
+    const entry = registry.lookup('task', 'hasStep', 'step');
+    expect(entry?.inverseLabel).toBe('stepOf');
+  });
+
+  it('returns inverseLabel via entries()', () => {
+    const registry = createRegistry([
+      { aType: 'task', abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+    ]);
+    const [entry] = registry.entries();
+    expect(entry.inverseLabel).toBe('stepOf');
+  });
 });

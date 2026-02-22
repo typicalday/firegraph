@@ -109,14 +109,14 @@ const registry = createRegistry([
   { aType: 'rider',     abType: 'is', bType: 'rider',     dataSchema: riderDataSchema,     description: 'Rider on a booking' },
   { aType: 'operator',  abType: 'is', bType: 'operator',  dataSchema: operatorDataSchema,  description: 'Operator partner' },
 
-  // Edge types
-  { aType: 'tour',    abType: 'hasDeparture',        bType: 'departure', dataSchema: orderedEdgeData,          description: 'Tour has a departure date' },
-  { aType: 'tour',    abType: 'hasItineraryDay',     bType: 'tour',      dataSchema: orderedEdgeData,          description: 'Tour has an itinerary day' },
-  { aType: 'tour',    abType: 'fulfilledByOperator', bType: 'operator',  dataSchema: operatorAgreementEdgeData, description: 'Tour fulfilled by operator' },
-  { aType: 'user',    abType: 'placedBooking',       bType: 'booking',   dataSchema: emptyEdgeData,            description: 'User placed a booking' },
-  { aType: 'booking', abType: 'bookedForTour',       bType: 'tour',      dataSchema: emptyEdgeData,            description: 'Booking is for a tour' },
-  { aType: 'booking', abType: 'bookedForDeparture',  bType: 'departure', dataSchema: emptyEdgeData,            description: 'Booking is for a departure' },
-  { aType: 'booking', abType: 'includesRider',       bType: 'rider',     dataSchema: primaryContactEdgeData,   description: 'Booking includes a rider' },
+  // Edge types (inverseLabel is a display-only label for when viewing incoming edges)
+  { aType: 'tour',    abType: 'hasDeparture',        bType: 'departure', dataSchema: orderedEdgeData,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
+  { aType: 'tour',    abType: 'hasItineraryDay',     bType: 'tour',      dataSchema: orderedEdgeData,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
+  { aType: 'tour',    abType: 'fulfilledByOperator', bType: 'operator',  dataSchema: operatorAgreementEdgeData, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
+  { aType: 'user',    abType: 'placedBooking',       bType: 'booking',   dataSchema: emptyEdgeData,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
+  { aType: 'booking', abType: 'bookedForTour',       bType: 'tour',      dataSchema: emptyEdgeData,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
+  { aType: 'booking', abType: 'bookedForDeparture',  bType: 'departure', dataSchema: emptyEdgeData,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
+  { aType: 'booking', abType: 'includesRider',       bType: 'rider',     dataSchema: primaryContactEdgeData,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
 ]);
 
 const g = createGraphClient(db, 'examples/registry/graph', { registry });

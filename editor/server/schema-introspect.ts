@@ -21,6 +21,7 @@ export interface RegistryEntryMeta {
   abType: string;
   bType: string;
   description?: string;
+  inverseLabel?: string;
   hasDataSchema: boolean;
   fields: FieldMeta[];
   isNodeEntry: boolean;
@@ -44,6 +45,7 @@ export function introspectRegistry(registry: GraphRegistry): SchemaMetadata {
       abType: entry.abType,
       bType: entry.bType,
       description: entry.description,
+      inverseLabel: entry.inverseLabel,
       hasDataSchema: !!entry.dataSchema,
       fields,
       isNodeEntry: entry.abType === 'is',

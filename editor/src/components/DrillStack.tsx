@@ -142,7 +142,7 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <DrillBreadcrumb peek={peek} onPeek={handlePeek} />
+      <DrillBreadcrumb peek={peek} onPeek={handlePeek} schema={schema} />
       <DrillOverrideContext.Provider value={override}>
         <div className="drill-perspective flex-1">
           {lanes.flatMap((lane) =>

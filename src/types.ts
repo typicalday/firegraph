@@ -57,6 +57,7 @@ export interface RegistryEntry {
   bType: string;
   dataSchema?: { parse: (data: unknown) => unknown };
   description?: string;
+  inverseLabel?: string;
 }
 
 export interface GraphClientOptions {

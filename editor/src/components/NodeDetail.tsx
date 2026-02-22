@@ -217,6 +217,14 @@ export function NodeDetailContent({
     .filter((et) => et.bType === node.aType)
     .map((et) => et.abType);
 
+  // Build inverse label lookup for incoming edges
+  const inverseLabelMap: Record<string, string> = {};
+  for (const et of schema.edgeTypes) {
+    if (et.inverseLabel) {
+      inverseLabelMap[et.abType] = et.inverseLabel;
+    }
+  }
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
@@ -323,6 +331,7 @@ export function NodeDetailContent({
           uid={node.aUid}
           direction="in"
           abTypes={inAbTypes}
+          inverseLabelMap={inverseLabelMap}
           canWrite={canWrite}
           onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
           reloadKey={edgeReloadKey}
@@ -375,6 +384,7 @@ function PaginatedEdgeSection({
   uid,
   direction,
   abTypes,
+  inverseLabelMap = {},
   canWrite,
   onDeleteEdge,
   reloadKey,
@@ -384,6 +394,7 @@ function PaginatedEdgeSection({
   uid: string;
   direction: 'in' | 'out';
   abTypes: string[];
+  inverseLabelMap?: Record<string, string>;
   canWrite: boolean;
   onDeleteEdge: (edge: GraphRecord) => void;
   reloadKey: number;
@@ -596,19 +607,27 @@ function PaginatedEdgeSection({
         <p className="text-sm text-slate-500">No {direction === 'out' ? 'outgoing' : 'incoming'} edges{filterAbType ? ` of type "${filterAbType}"` : ''}</p>
       ) : (
         <div className="space-y-4">
-          {Object.entries(groups).map(([abType, groupEdges]) => (
+          {Object.entries(groups).map(([abType, groupEdges]) => {
+            const inverseLabel = direction === 'in' ? inverseLabelMap[abType] : undefined;
+            return (
             <div key={abType}>
-              <h3 className="text-xs text-indigo-400 font-mono mb-2 flex items-center gap-2">
+              <h3 className="text-xs font-mono mb-2 flex items-center gap-2">
                 {direction === 'out' ? (
                   <>
                     <span className="text-slate-500">&mdash;</span>
-                    {abType}
+                    <span className="text-indigo-400">{abType}</span>
+                    <span className="text-slate-500">&rarr;</span>
+                  </>
+                ) : inverseLabel ? (
+                  <>
+                    <span className="text-slate-500">&mdash;</span>
+                    <span className="text-amber-400 cursor-help" title={`Inverse of: ${abType}`}>{inverseLabel}</span>
                     <span className="text-slate-500">&rarr;</span>
                   </>
                 ) : (
                   <>
                     <span className="text-slate-500">&larr;</span>
-                    {abType}
+                    <span className="text-indigo-400">{abType}</span>
                     <span className="text-slate-500">&mdash;</span>
                   </>
                 )}
@@ -637,7 +656,8 @@ function PaginatedEdgeSection({
                 })}
               </div>
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 

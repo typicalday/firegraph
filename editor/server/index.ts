@@ -230,6 +230,7 @@ app.get('/api/schema', (_req, res) => {
       abType: e.abType,
       bType: e.bType,
       description: e.description,
+      inverseLabel: e.inverseLabel,
     }));
 
     res.json({

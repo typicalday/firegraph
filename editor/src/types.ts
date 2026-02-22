@@ -8,6 +8,7 @@ export interface EdgeType {
   abType: string;
   bType: string;
   description?: string;
+  inverseLabel?: string;
 }
 
 export interface FieldMeta {
@@ -31,6 +32,7 @@ export interface RegistryEntryMeta {
   abType: string;
   bType: string;
   description?: string;
+  inverseLabel?: string;
   hasDataSchema: boolean;
   fields: FieldMeta[];
   isNodeEntry: boolean;
