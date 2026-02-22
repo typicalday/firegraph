@@ -18,8 +18,12 @@ export interface DrillContextValue {
   activeLane: Lane;
   activeIndex: number;
   drillIn: (frame: DrillFrame) => void;
+  drillPath: (frames: DrillFrame[]) => void;
   extendLane: (laneId: string, frame: DrillFrame) => void;
+  extendPath: (laneId: string, frames: DrillFrame[]) => void;
   forkAndDrill: (fromLaneId: string, fromIndex: number, frame: DrillFrame) => void;
+  forkAndDrillPath: (fromLaneId: string, fromIndex: number, frames: DrillFrame[]) => void;
+  createLane: (frames: DrillFrame[]) => void;
   popTo: (laneId: string, index: number) => void;
   closeLane: (laneId: string) => void;
   switchLane: (laneId: string) => void;
@@ -36,7 +40,10 @@ interface DrillState {
 type DrillAction =
   | { type: 'RESET'; rootUid: string }
   | { type: 'EXTEND_LANE'; laneId: string; frame: DrillFrame }
+  | { type: 'EXTEND_PATH'; laneId: string; frames: DrillFrame[] }
   | { type: 'FORK_AND_DRILL'; fromLaneId: string; fromIndex: number; frame: DrillFrame; newLaneId: string }
+  | { type: 'FORK_AND_DRILL_PATH'; fromLaneId: string; fromIndex: number; frames: DrillFrame[]; newLaneId: string }
+  | { type: 'CREATE_LANE'; newLaneId: string; frames: DrillFrame[] }
   | { type: 'POP_TO'; laneId: string; index: number }
   | { type: 'CLOSE_LANE'; laneId: string; rootUid: string }
   | { type: 'SWITCH_LANE'; laneId: string }
@@ -69,6 +76,14 @@ function drillReducer(state: DrillState, action: DrillAction): DrillState {
         activeLaneId: action.laneId,
       };
     }
+    case 'EXTEND_PATH': {
+      return {
+        lanes: state.lanes.map((l) =>
+          l.id === action.laneId ? { ...l, frames: [...l.frames, ...action.frames] } : l,
+        ),
+        activeLaneId: action.laneId,
+      };
+    }
     case 'FORK_AND_DRILL': {
       const source = state.lanes.find((l) => l.id === action.fromLaneId);
       if (!source) return state;
@@ -78,6 +93,24 @@ function drillReducer(state: DrillState, action: DrillAction): DrillState {
       };
       return {
         lanes: [...state.lanes, newLane],
+        activeLaneId: action.newLaneId,
+      };
+    }
+    case 'FORK_AND_DRILL_PATH': {
+      const source = state.lanes.find((l) => l.id === action.fromLaneId);
+      if (!source) return state;
+      const newLane: Lane = {
+        id: action.newLaneId,
+        frames: [...source.frames.slice(0, action.fromIndex + 1), ...action.frames],
+      };
+      return {
+        lanes: [...state.lanes, newLane],
+        activeLaneId: action.newLaneId,
+      };
+    }
+    case 'CREATE_LANE': {
+      return {
+        lanes: [...state.lanes, { id: action.newLaneId, frames: action.frames }],
         activeLaneId: action.newLaneId,
       };
     }
@@ -153,8 +186,21 @@ export function DrillProvider({ rootUid, children }: { rootUid: string; children
     [state.activeLaneId],
   );
 
+  const drillPath = useCallback(
+    (frames: DrillFrame[]) => {
+      if (frames.length === 0) return;
+      dispatch({ type: 'EXTEND_PATH', laneId: state.activeLaneId, frames });
+    },
+    [state.activeLaneId],
+  );
+
   const extendLane = useCallback((laneId: string, frame: DrillFrame) => {
     dispatch({ type: 'EXTEND_LANE', laneId, frame });
+  }, []);
+
+  const extendPath = useCallback((laneId: string, frames: DrillFrame[]) => {
+    if (frames.length === 0) return;
+    dispatch({ type: 'EXTEND_PATH', laneId, frames });
   }, []);
 
   const forkAndDrill = useCallback(
@@ -164,6 +210,21 @@ export function DrillProvider({ rootUid, children }: { rootUid: string; children
     },
     [],
   );
+
+  const forkAndDrillPath = useCallback(
+    (fromLaneId: string, fromIndex: number, frames: DrillFrame[]) => {
+      if (frames.length === 0) return;
+      const newLaneId = nextLaneId();
+      dispatch({ type: 'FORK_AND_DRILL_PATH', fromLaneId, fromIndex, frames, newLaneId });
+    },
+    [],
+  );
+
+  const createLane = useCallback((frames: DrillFrame[]) => {
+    if (frames.length === 0) return;
+    const newLaneId = nextLaneId();
+    dispatch({ type: 'CREATE_LANE', newLaneId, frames });
+  }, []);
 
   const popTo = useCallback((laneId: string, index: number) => {
     dispatch({ type: 'POP_TO', laneId, index });
@@ -191,14 +252,18 @@ export function DrillProvider({ rootUid, children }: { rootUid: string; children
       activeLane,
       activeIndex: activeLane.frames.length - 1,
       drillIn,
+      drillPath,
       extendLane,
+      extendPath,
       forkAndDrill,
+      forkAndDrillPath,
+      createLane,
       popTo,
       closeLane,
       switchLane,
       setRootType,
     }),
-    [state.lanes, state.activeLaneId, activeLane, drillIn, extendLane, forkAndDrill, popTo, closeLane, switchLane, setRootType],
+    [state.lanes, state.activeLaneId, activeLane, drillIn, drillPath, extendLane, extendPath, forkAndDrill, forkAndDrillPath, createLane, popTo, closeLane, switchLane, setRootType],
   );
 
   return (
@@ -214,5 +279,13 @@ export function useDrill(): DrillContextValue {
   const ctx = useContext(DrillContext);
   if (!ctx) throw new Error('useDrill must be used within a DrillProvider');
   const override = useContext(DrillOverrideContext);
+  return override ? { ...ctx, ...override } : ctx;
+}
+
+/** Safe version — returns null when outside a DrillProvider */
+export function useDrillMaybe(): DrillContextValue | null {
+  const ctx = useContext(DrillContext);
+  const override = useContext(DrillOverrideContext);
+  if (!ctx) return null;
   return override ? { ...ctx, ...override } : ctx;
 }

@@ -83,11 +83,12 @@ export async function runTraversal(
   startUid: string,
   hops: HopDef[],
   maxReads = 100,
+  concurrency = 5,
 ): Promise<TraversalResult> {
   return fetchJson(`${BASE}/traverse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ startUid, hops, maxReads }),
+    body: JSON.stringify({ startUid, hops, maxReads, concurrency }),
   });
 }
 

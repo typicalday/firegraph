@@ -64,12 +64,20 @@ export interface NodeDetailData {
   inEdges: GraphRecord[];
 }
 
+export interface WhereClause {
+  field: string;
+  op: '==' | '!=' | '<' | '<=' | '>' | '>=';
+  value: string | number | boolean;
+}
+
 export interface HopDef {
   abType: string;
   direction: 'forward' | 'reverse';
   limit: number;
   aType?: string;
   bType?: string;
+  orderBy?: { field: string; direction: 'asc' | 'desc' };
+  where?: WhereClause[];
 }
 
 export interface HopResult {

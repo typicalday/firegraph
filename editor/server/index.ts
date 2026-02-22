@@ -439,6 +439,8 @@ interface HopDef {
   limit?: number;
   aType?: string;
   bType?: string;
+  orderBy?: { field: string; direction?: 'asc' | 'desc' };
+  where?: Array<{ field: string; op: string; value: string | number | boolean }>;
 }
 
 interface HopResultData {
@@ -452,10 +454,11 @@ interface HopResultData {
 
 app.post('/api/traverse', async (req, res) => {
   try {
-    const { startUid, hops, maxReads = 100 } = req.body as {
+    const { startUid, hops, maxReads = 100, concurrency = 5 } = req.body as {
       startUid: string;
       hops: HopDef[];
       maxReads?: number;
+      concurrency?: number;
     };
 
     if (!startUid || !hops || hops.length === 0) {
@@ -489,7 +492,7 @@ app.post('/api/traverse', async (req, res) => {
       const sourceCount = sourceUids.length;
       let hopTruncated = false;
 
-      const batchSize = 5;
+      const batchSize = Math.max(1, Math.min(20, concurrency));
       for (let i = 0; i < sourceUids.length; i += batchSize) {
         if (totalReads >= maxReads) {
           hopTruncated = true;
@@ -509,6 +512,24 @@ app.post('/api/traverse', async (req, res) => {
           } else {
             query = query.where('bUid', '==', uid);
             if (hop.aType) query = query.where('aType', '==', hop.aType);
+          }
+
+          // Apply where clauses on data fields
+          const allowedOps = ['==', '!=', '<', '<=', '>', '>='];
+          if (hop.where && hop.where.length > 0) {
+            for (const clause of hop.where) {
+              if (!allowedOps.includes(clause.op)) continue;
+              const field = clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+              query = query.where(field, clause.op as FirebaseFirestore.WhereFilterOp, clause.value);
+            }
+          }
+
+          // Apply orderBy
+          if (hop.orderBy) {
+            const orderField = hop.orderBy.field.startsWith('data.')
+              ? hop.orderBy.field
+              : `data.${hop.orderBy.field}`;
+            query = query.orderBy(orderField, hop.orderBy.direction ?? 'asc');
           }
 
           query = query.limit(hopLimit);

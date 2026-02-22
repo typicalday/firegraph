@@ -349,7 +349,7 @@ export function NodeDetailContent({
             </svg>
             Traverse from this node
           </h2>
-          <TraversalPanel schema={schema} startUid={node.aUid} />
+          <TraversalPanel schema={schema} startUid={node.aUid} startNodeType={node.aType} viewRegistry={viewRegistry} config={config} />
         </section>
       )}
 
