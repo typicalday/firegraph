@@ -162,10 +162,18 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
     return map;
   }, [lanes, vLane]);
 
-  // --- Scoped drillIn: extends visual lane at tip, forks at non-tip ---
+  // --- Scoped drillIn: navigate to existing, extend at tip, fork at non-tip ---
   const scopedDrillIn = useCallback(
     (frame: DrillFrame) => {
       if (!vLane) return;
+
+      // If the target uid already exists in the visual lane, just show it
+      const existingIdx = vLane.frames.findIndex((f) => f.uid === frame.uid);
+      if (existingIdx >= 0) {
+        setPeek({ laneId: vLane.id, frameIndex: existingIdx });
+        return;
+      }
+
       if (visualIndex < vLane.frames.length - 1) {
         forkAndDrill(visualLaneId, visualIndex, frame);
       } else {

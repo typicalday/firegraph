@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useDrill } from './drill-context';
+import { Fragment, useMemo, type ReactNode } from 'react';
+import { useDrill, type DrillFrame, type Lane } from './drill-context';
 import { getTypeBadgeColor } from '../utils';
 import type { PeekPosition } from './DrillStack';
 import type { Schema } from '../types';
@@ -10,197 +10,192 @@ interface Props {
   schema: Schema;
 }
 
-/** Accumulated deltaY threshold before stepping one lane. */
-const WHEEL_THRESHOLD = 80;
-/** Cooldown (ms) after a step before the next step can fire. */
-const WHEEL_COOLDOWN = 300;
+// --- Trie ---
+
+interface TrieNode {
+  frame: DrillFrame;
+  depth: number;
+  laneIds: string[];
+  children: TrieNode[];
+}
+
+function buildTrie(lanes: Lane[]): TrieNode | null {
+  if (lanes.length === 0 || lanes[0].frames.length === 0) return null;
+
+  function buildChildren(parentLanes: Lane[], depth: number): TrieNode[] {
+    const groups = new Map<string, Lane[]>();
+    for (const lane of parentLanes) {
+      if (depth >= lane.frames.length) continue;
+      const uid = lane.frames[depth].uid;
+      if (!groups.has(uid)) groups.set(uid, []);
+      groups.get(uid)!.push(lane);
+    }
+
+    return Array.from(groups.values()).map((groupLanes) => ({
+      frame: groupLanes[0].frames[depth],
+      depth,
+      laneIds: groupLanes.map((l) => l.id),
+      children: buildChildren(groupLanes, depth + 1),
+    }));
+  }
+
+  return {
+    frame: lanes[0].frames[0],
+    depth: 0,
+    laneIds: lanes.map((l) => l.id),
+    children: buildChildren(lanes, 1),
+  };
+}
+
+// --- Component ---
 
 /**
- * Multi-row breadcrumb showing one row per lane.
+ * Tree-style breadcrumb that merges common lane prefixes.
  *
- * Only one lane is "focused" (interactive) at a time — its items respond to
- * hover and click. Other lanes are visible but dimmed and inert.
- * Mouse wheel over the breadcrumb area scrolls which lane is focused.
- * Clicking a lane's dot also focuses it.
+ * Shared frames are rendered once and vertically centered across
+ * descendant branches. All frames are interactive — clicking navigates,
+ * hovering peeks.
  */
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const { lanes, activeLaneId, activeIndex, popTo, closeLane, switchLane } = useDrill();
 
-  // Build inverse label lookup from schema
   const inverseLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
     for (const et of schema.edgeTypes) {
-      if (et.inverseLabel) {
-        map[et.abType] = et.inverseLabel;
-      }
+      if (et.inverseLabel) map[et.abType] = et.inverseLabel;
     }
     return map;
   }, [schema.edgeTypes]);
 
+  const trie = useMemo(() => buildTrie(lanes), [lanes]);
+
   const showBreadcrumbs =
     lanes.length > 1 || (lanes.length === 1 && lanes[0].frames.length > 1);
 
-  // Focused lane index — the only interactive row
-  const [focusedIdx, setFocusedIdx] = useState(0);
-
-  // Accumulated wheel delta for debounced stepping
-  const wheelAccum = useRef(0);
-  const wheelCooldownUntil = useRef(0);
-
-  // Snap focus to active lane when lanes change (fork, close, drill)
-  useEffect(() => {
-    const idx = lanes.findIndex((l) => l.id === activeLaneId);
-    if (idx >= 0) setFocusedIdx(idx);
-    wheelAccum.current = 0;
-  }, [lanes.length, activeLaneId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Clamp if lanes shrink
-  useEffect(() => {
-    setFocusedIdx((prev) => Math.min(prev, lanes.length - 1));
-  }, [lanes.length]);
-
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
-      if (lanes.length <= 1) return;
-      e.preventDefault();
-
-      const now = Date.now();
-      if (now < wheelCooldownUntil.current) {
-        // In cooldown — swallow momentum events
-        wheelAccum.current = 0;
-        return;
-      }
-
-      wheelAccum.current += e.deltaY;
-
-      if (wheelAccum.current >= WHEEL_THRESHOLD) {
-        wheelAccum.current = 0;
-        wheelCooldownUntil.current = now + WHEEL_COOLDOWN;
-        setFocusedIdx((prev) => Math.min(prev + 1, lanes.length - 1));
-      } else if (wheelAccum.current <= -WHEEL_THRESHOLD) {
-        wheelAccum.current = 0;
-        wheelCooldownUntil.current = now + WHEEL_COOLDOWN;
-        setFocusedIdx((prev) => Math.max(prev - 1, 0));
-      }
-    },
-    [lanes.length],
-  );
-
-  if (!showBreadcrumbs) return null;
+  if (!showBreadcrumbs || !trie) return null;
 
   const multiLane = lanes.length > 1;
-  const focusedLaneId = lanes[focusedIdx]?.id;
-
-  // Visual highlight: peek position, or active lane tip for the focused lane
   const visualLaneId = peek?.laneId ?? activeLaneId;
   const visualIndex = peek?.frameIndex ?? activeIndex;
 
+  /** Pick the best lane for interactions on a shared node. */
+  function bestLaneFor(node: TrieNode): string {
+    if (node.laneIds.includes(activeLaneId)) return activeLaneId;
+    return node.laneIds[0];
+  }
+
+  /** Edge label between parent and child frame. */
+  function renderEdgeLabel(frame: DrillFrame): ReactNode {
+    return (
+      <span className="text-slate-600 font-mono mx-0.5 shrink-0">
+        {frame.direction === 'out' ? (
+          <>
+            <span className="text-indigo-500/60">{frame.edgeType}</span>
+            <span className="ml-0.5">&rarr;</span>
+          </>
+        ) : inverseLabelMap[frame.edgeType] ? (
+          <>
+            <span className="text-amber-500/60 cursor-help" title={`Inverse of: ${frame.edgeType}`}>
+              {inverseLabelMap[frame.edgeType]}
+            </span>
+            <span className="ml-0.5">&rarr;</span>
+          </>
+        ) : (
+          <>
+            <span className="mr-0.5">&larr;</span>
+            <span className="text-indigo-500/60">{frame.edgeType}</span>
+          </>
+        )}
+      </span>
+    );
+  }
+
+  /** Clickable frame button. */
+  function renderFrameButton(node: TrieNode): ReactNode {
+    const laneId = bestLaneFor(node);
+    const isHighlighted = node.laneIds.includes(visualLaneId) && node.depth === visualIndex;
+    return (
+      <button
+        onClick={() => { switchLane(laneId); popTo(laneId, node.depth); }}
+        onMouseEnter={() => onPeek(laneId, node.depth)}
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors shrink-0 ${
+          isHighlighted
+            ? 'bg-slate-800 text-slate-200'
+            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+        }`}
+      >
+        {node.frame.nodeType && (
+          <span className={`px-1 py-px rounded text-[9px] font-mono ${getTypeBadgeColor(node.frame.nodeType)}`}>
+            {node.frame.nodeType}
+          </span>
+        )}
+        <span className="font-mono truncate max-w-[120px]">{node.frame.uid}</span>
+      </button>
+    );
+  }
+
+  /**
+   * Recursively render a trie node: flatten single-child chains into an
+   * inline run, then branch when children > 1.
+   */
+  function renderSubtree(node: TrieNode, isFirst: boolean): ReactNode {
+    // Flatten linear chain (single child at each step)
+    const run: TrieNode[] = [node];
+    let tip = node;
+    while (tip.children.length === 1) {
+      tip = tip.children[0];
+      run.push(tip);
+    }
+
+    return (
+      <>
+        {/* Linear segment */}
+        {run.map((n, i) => (
+          <Fragment key={n.depth}>
+            {(i > 0 || !isFirst) && renderEdgeLabel(n.frame)}
+            {renderFrameButton(n)}
+          </Fragment>
+        ))}
+
+        {/* Branch point */}
+        {tip.children.length > 1 && (
+          <div className="flex flex-col border-l border-slate-700/50 ml-1.5 my-0.5">
+            {tip.children.map((child, i) => {
+              const branchActive = child.laneIds.includes(activeLaneId);
+              return (
+                <div
+                  key={i}
+                  className={`flex items-center transition-opacity ${
+                    !branchActive && multiLane ? 'opacity-50 hover:opacity-80' : ''
+                  }`}
+                >
+                  <span className="w-2 h-px bg-slate-700/50 shrink-0" />
+                  {renderSubtree(child, false)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Close button at leaf */}
+        {tip.children.length === 0 && multiLane && (
+          <button
+            onClick={(e) => { e.stopPropagation(); closeLane(tip.laneIds[0]); }}
+            className="ml-1 text-slate-600 hover:text-slate-400 transition-colors shrink-0 text-sm leading-none"
+            title="Close this lane"
+          >
+            &times;
+          </button>
+        )}
+      </>
+    );
+  }
+
   return (
     <nav
-      className="flex flex-col gap-0.5 px-4 py-2 bg-slate-900/80 border-b border-slate-800 overflow-y-auto max-h-32 text-xs"
-      onWheel={handleWheel}
+      className="flex items-center px-4 py-2 bg-slate-900/80 border-b border-slate-800 overflow-x-auto overflow-y-auto max-h-32 text-xs"
     >
-      {lanes.map((lane) => {
-        const isFocused = lane.id === focusedLaneId;
-
-        return (
-          <div
-            key={lane.id}
-            onClick={!isFocused && multiLane ? () => {
-              setFocusedIdx(lanes.indexOf(lane));
-              switchLane(lane.id);
-            } : undefined}
-            className={`flex items-center gap-1 shrink-0 transition-opacity ${
-              !isFocused && multiLane ? 'opacity-40 cursor-pointer hover:opacity-70' : ''
-            }`}
-          >
-            {/* Lane indicator dot — clickable to focus, padded hit area */}
-            {multiLane && (
-              <button
-                onClick={() => setFocusedIdx(lanes.indexOf(lane))}
-                className="shrink-0 p-1.5 -m-1 flex items-center justify-center"
-                title={isFocused ? 'Active lane' : 'Focus this lane'}
-              >
-                <span
-                  className={`block w-2 h-2 rounded-full transition-colors ${
-                    isFocused ? 'bg-indigo-500' : 'bg-slate-600 hover:bg-slate-500'
-                  }`}
-                />
-              </button>
-            )}
-
-            {/* Frames — only interactive on focused lane */}
-            {lane.frames.map((frame, i) => (
-              <span key={i} className="flex items-center gap-1 shrink-0">
-                {i > 0 && (
-                  <span className="text-slate-600 font-mono mx-0.5">
-                    {frame.direction === 'out' ? (
-                      <>
-                        <span className="text-indigo-500/60">{frame.edgeType}</span>
-                        <span className="ml-0.5">&rarr;</span>
-                      </>
-                    ) : inverseLabelMap[frame.edgeType] ? (
-                      <>
-                        <span className="text-amber-500/60 cursor-help" title={`Inverse of: ${frame.edgeType}`}>
-                          {inverseLabelMap[frame.edgeType]}
-                        </span>
-                        <span className="ml-0.5">&rarr;</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="mr-0.5">&larr;</span>
-                        <span className="text-indigo-500/60">{frame.edgeType}</span>
-                      </>
-                    )}
-                  </span>
-                )}
-                {isFocused ? (
-                  <button
-                    onClick={() => popTo(lane.id, i)}
-                    onMouseEnter={() => onPeek(lane.id, i)}
-                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${
-                      lane.id === visualLaneId && i === visualIndex
-                        ? 'bg-slate-800 text-slate-200'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                    }`}
-                  >
-                    {frame.nodeType && (
-                      <span
-                        className={`px-1 py-px rounded text-[9px] font-mono ${getTypeBadgeColor(frame.nodeType)}`}
-                      >
-                        {frame.nodeType}
-                      </span>
-                    )}
-                    <span className="font-mono truncate max-w-[120px]">{frame.uid}</span>
-                  </button>
-                ) : (
-                  <span className="flex items-center gap-1 px-1.5 py-0.5 text-slate-500">
-                    {frame.nodeType && (
-                      <span
-                        className={`px-1 py-px rounded text-[9px] font-mono opacity-60 ${getTypeBadgeColor(frame.nodeType)}`}
-                      >
-                        {frame.nodeType}
-                      </span>
-                    )}
-                    <span className="font-mono truncate max-w-[120px]">{frame.uid}</span>
-                  </span>
-                )}
-              </span>
-            ))}
-
-            {/* Close button — always interactive */}
-            {multiLane && (
-              <button
-                onClick={() => closeLane(lane.id)}
-                className="ml-1 text-slate-600 hover:text-slate-400 transition-colors shrink-0 text-sm leading-none"
-                title="Close this lane"
-              >
-                &times;
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {renderSubtree(trie, true)}
     </nav>
   );
 }
