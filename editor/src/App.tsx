@@ -1,55 +1,39 @@
 import { Routes, Route } from 'react-router-dom';
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import NodeBrowser from './components/NodeBrowser';
 import NodeDetail from './components/NodeDetail';
 import TraversalBuilder from './components/TraversalBuilder';
 import ViewGallery from './components/ViewGallery';
-import type { Schema, AppConfig, ViewRegistryData } from './types';
-import { getSchema, getConfig, getViews } from './api';
+import type { ViewRegistryData } from './types';
+import { trpc } from './trpc';
 
 export default function App() {
-  const [schema, setSchema] = useState<Schema | null>(null);
-  const [config, setConfig] = useState<AppConfig | null>(null);
-  const [viewRegistry, setViewRegistry] = useState<ViewRegistryData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: schema, error: schemaError, isLoading: schemaLoading } = trpc.getSchema.useQuery();
+  const { data: config, error: configError, isLoading: configLoading } = trpc.getConfig.useQuery();
+  const { data: viewsData, error: viewsError, isLoading: viewsLoading } = trpc.getViews.useQuery();
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [schemaData, configData, viewsData] = await Promise.all([
-        getSchema(),
-        getConfig(),
-        getViews(),
-      ]);
-      setSchema(schemaData);
-      setConfig(configData);
-      setViewRegistry(viewsData);
+  const loading = schemaLoading || configLoading || viewsLoading;
+  const error = schemaError || configError || viewsError;
 
-      // Load the views bundle if views are available
-      if (viewsData.hasViews) {
-        await new Promise<void>((resolve) => {
-          const script = document.createElement('script');
-          script.type = 'module';
-          script.src = '/api/views/bundle';
-          script.onload = () => resolve();
-          script.onerror = () => resolve(); // graceful degradation
-          document.head.appendChild(script);
-        });
+  // Load views bundle when view data is available
+  const loadViewsBundle = useCallback(() => {
+    if (viewsData?.hasViews) {
+      // Only inject script once
+      if (!document.querySelector('script[src="/api/views/bundle"]')) {
+        const script = document.createElement('script');
+        script.type = 'module';
+        script.src = '/api/views/bundle';
+        document.head.appendChild(script);
       }
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  }, [viewsData]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  // Trigger bundle load when views data arrives
+  if (viewsData && !loading) {
+    loadViewsBundle();
+  }
 
   if (loading) {
     return (
@@ -67,18 +51,20 @@ export default function App() {
       <div className="flex items-center justify-center h-screen">
         <div className="bg-slate-900 border border-red-500/30 rounded-xl p-8 max-w-lg">
           <h2 className="text-red-400 text-lg font-semibold mb-2">Connection Error</h2>
-          <p className="text-slate-300 text-sm mb-4">{error}</p>
+          <p className="text-slate-300 text-sm mb-4">{error.message}</p>
           <p className="text-slate-500 text-xs mb-4">
             Make sure you have ADC configured (run <code className="text-slate-300">gcloud auth application-default login</code>)
             and the server is running with the correct --project, --collection, and --registry flags.
           </p>
-          <button onClick={loadData} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500 transition-colors">
+          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500 transition-colors">
             Retry
           </button>
         </div>
       </div>
     );
   }
+
+  const viewRegistry: ViewRegistryData = viewsData ?? { nodes: {}, edges: {}, hasViews: false };
 
   return (
     <Layout schema={schema!} config={config!} viewRegistry={viewRegistry}>

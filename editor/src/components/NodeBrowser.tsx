@@ -1,8 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { Schema, GraphRecord } from '../types';
-import { getNodes } from '../api';
-import type { GetNodesParams } from '../api';
+import { trpc } from '../trpc';
 import { getTypeBadgeColor, formatTimestamp, truncateData } from '../utils';
 import NodeEditor from './NodeEditor';
 
@@ -22,10 +21,6 @@ const FILTER_OPS = ['==', '!=', '<', '<=', '>', '>='];
 export default function NodeBrowser({ schema, onDataChanged }: Props) {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
-  const [nodes, setNodes] = useState<GraphRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
 
   // Toolbar state
@@ -40,65 +35,53 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
   // Pagination state
   const [page, setPage] = useState(1);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [startAfter, setStartAfter] = useState<string | undefined>(undefined);
 
-  const buildParams = useCallback(
-    (startAfter?: string): GetNodesParams => {
-      const params: GetNodesParams = { limit, sortBy, sortDir };
-      if (startAfter) params.startAfter = startAfter;
-      if (activeFilter) {
-        params.filterField = activeFilter.field;
-        params.filterOp = activeFilter.op;
-        params.filterValue = activeFilter.value;
-      }
-      return params;
-    },
-    [limit, sortBy, sortDir, activeFilter],
-  );
+  const queryInput = {
+    type,
+    limit,
+    sortBy,
+    sortDir: sortDir as 'asc' | 'desc',
+    startAfter,
+    ...(activeFilter ? {
+      filterField: activeFilter.field,
+      filterOp: activeFilter.op,
+      filterValue: activeFilter.value,
+    } : {}),
+  };
 
-  const loadNodes = useCallback(
-    async (startAfter?: string) => {
-      if (!type) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await getNodes(type, buildParams(startAfter));
-        setNodes(result.nodes);
-        setHasMore(result.hasMore);
-        setNextCursor(result.nextCursor);
-      } catch (err) {
-        setError(String(err));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [type, buildParams],
-  );
+  const { data, isLoading: loading, error: queryError, refetch } = trpc.getNodes.useQuery(queryInput, {
+    placeholderData: (prev) => prev,
+  });
+
+  const nodes = (data?.nodes ?? []) as GraphRecord[];
+  const hasMore = data?.hasMore ?? false;
+  const nextCursor = data?.nextCursor ?? null;
+  const error = queryError?.message ?? null;
 
   // Reset pagination when type/limit/sort/filter changes
   useEffect(() => {
     setPage(1);
     setCursorStack([]);
-    setNextCursor(null);
-    loadNodes();
+    setStartAfter(undefined);
     setShowCreate(false);
-  }, [loadNodes]);
+  }, [type, limit, sortBy, sortDir, activeFilter]);
 
-  const goNextPage = async () => {
+  const goNextPage = () => {
     if (!nextCursor) return;
     setCursorStack((prev) => [...prev, nextCursor]);
     setPage((p) => p + 1);
-    await loadNodes(nextCursor);
+    setStartAfter(nextCursor);
   };
 
-  const goPrevPage = async () => {
+  const goPrevPage = () => {
     if (page <= 1) return;
     const newStack = [...cursorStack];
-    newStack.pop(); // remove current page's cursor
+    newStack.pop();
     const prevCursor = newStack.length > 0 ? newStack[newStack.length - 1] : undefined;
     setCursorStack(newStack);
     setPage((p) => p - 1);
-    await loadNodes(prevCursor);
+    setStartAfter(prevCursor);
   };
 
   const handleAddFilter = () => {
@@ -116,7 +99,8 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
   const handleRefresh = () => {
     setPage(1);
     setCursorStack([]);
-    loadNodes();
+    setStartAfter(undefined);
+    refetch();
   };
 
   // Get field names from schema for the filter dropdown

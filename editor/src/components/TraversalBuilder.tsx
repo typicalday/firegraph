@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClause, FieldMeta, EdgeType, ViewRegistryData, AppConfig, ViewMeta } from '../types';
-import { runTraversal, getNodesBatch } from '../api';
+import { trpc } from '../trpc';
 import { getTypeBadgeColor, resolveViewForEntity } from '../utils';
 import { DrillProvider, useDrillMaybe, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
@@ -155,9 +155,14 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
   const [maxReads, setMaxReads] = useState(100);
   const [concurrency, setConcurrency] = useState(5);
   const [result, setResult] = useState<TraversalResult | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedAdvanced, setExpandedAdvanced] = useState<Set<number>>(new Set());
+
+  const traverseMutation = trpc.traverse.useMutation({
+    onSuccess: (data) => setResult(data as unknown as TraversalResult),
+    onError: (err) => setError(err.message),
+  });
+  const loading = traverseMutation.isPending;
 
   const typeFlow = useMemo(
     () => inferTypeFlow(schema, startNodeType, hops),
@@ -214,19 +219,16 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
     });
   };
 
-  const executeTraversal = async () => {
+  const executeTraversal = () => {
     if (!startUid.trim()) return;
-    setLoading(true);
     setError(null);
     setResult(null);
-    try {
-      const res = await runTraversal(startUid.trim(), hops, maxReads, concurrency);
-      setResult(res);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
+    traverseMutation.mutate({
+      startUid: startUid.trim(),
+      hops,
+      maxReads,
+      concurrency,
+    });
   };
 
   return (
@@ -862,6 +864,7 @@ function HopEdgeRow({
   config?: AppConfig;
 }) {
   const drill = useDrillMaybe();
+  const utils = trpc.useUtils();
   const [edgeExpanded, setEdgeExpanded] = useState(false);
   const [nodeExpanded, setNodeExpanded] = useState(false);
   const [nodeData, setNodeData] = useState<GraphRecord | null | undefined>(undefined);
@@ -915,11 +918,10 @@ function HopEdgeRow({
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
-      const res = await getNodesBatch([targetUid]);
-      const resolved = res.nodes[targetUid] ?? null;
+      const res = await utils.getNodesBatch.fetch({ uids: [targetUid] });
+      const resolved = (res.nodes[targetUid] as GraphRecord | null) ?? null;
       setNodeData(resolved);
       setNodeExpanded(true);
-      // Apply view default from config using actual node data
       if (resolved) {
         const rc = config?.viewDefaults?.nodes?.[targetType];
         if (rc && nodeViews.length > 0) {

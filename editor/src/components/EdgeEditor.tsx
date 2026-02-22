@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { Schema, RegistryEntryMeta } from '../types';
-import { createEdge } from '../api';
+import { trpc } from '../trpc';
 import SchemaForm from './SchemaForm';
 
 interface Props {
@@ -29,8 +29,14 @@ export default function EdgeEditor({ schema, defaultAUid, defaultAType, onSaved,
   const [aUid, setAUid] = useState(defaultAUid ?? '');
   const [bUid, setBUid] = useState('');
   const [formValues, setFormValues] = useState<Record<string, unknown>>({});
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const createMutation = trpc.createEdge.useMutation({
+    onSuccess: () => onSaved(),
+    onError: (err) => setError(err.message),
+  });
+
+  const loading = createMutation.isPending;
 
   const currentSchema: RegistryEntryMeta | undefined = useMemo(
     () => edgeSchemas.find((es) => `${es.aType}:${es.abType}:${es.bType}` === selectedEdgeKey),
@@ -42,25 +48,17 @@ export default function EdgeEditor({ schema, defaultAUid, defaultAType, onSaved,
     setFormValues({});
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!currentSchema) return;
-    setLoading(true);
     setError(null);
-    try {
-      await createEdge(
-        currentSchema.aType,
-        aUid,
-        currentSchema.abType,
-        currentSchema.bType,
-        bUid,
-        formValues,
-      );
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
+    createMutation.mutate({
+      aType: currentSchema.aType,
+      aUid,
+      abType: currentSchema.abType,
+      bType: currentSchema.bType,
+      bUid,
+      data: formValues,
+    });
   };
 
   return (

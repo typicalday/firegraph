@@ -12,9 +12,14 @@
     "start": "NODE_ENV=production node ../dist/editor/server/index.mjs"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.90.21",
+    "@trpc/client": "^11.10.0",
+    "@trpc/react-query": "^11.10.0",
+    "@trpc/server": "^11.10.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
-    "jiti": "^2.4.0"
+    "jiti": "^2.4.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

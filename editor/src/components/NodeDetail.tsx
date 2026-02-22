@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
-import { getNodeDetail, getEdges, getNodesBatch, deleteNode, deleteEdge } from '../api';
+import { trpc } from '../trpc';
 import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity } from '../utils';
 import JsonView from './JsonView';
 import CustomView from './CustomView';
@@ -66,44 +66,35 @@ export function NodeDetailContent({
 }: NodeDetailContentProps) {
   const navigate = useNavigate();
   const { popTo, setRootType } = useDrill();
-  const [node, setNode] = useState<GraphRecord | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [showCreateEdge, setShowCreateEdge] = useState(false);
   const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; abType: string; bUid: string } | null>(null);
-  const [edgeDeleteLoading, setEdgeDeleteLoading] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
   const [activeView, setActiveView] = useState('json');
   const [viewInitialized, setViewInitialized] = useState(false);
 
-  const loadNode = useCallback(async () => {
-    if (!uid) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getNodeDetail(uid);
-      setNode(result.node);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [uid]);
+  const { data: nodeDetailData, isLoading: loading, error: queryError, refetch: loadNode } = trpc.getNodeDetail.useQuery(
+    { uid },
+    { enabled: !!uid },
+  );
+
+  const node = (nodeDetailData?.node as GraphRecord | null) ?? null;
+  const error = queryError?.message ?? mutationError ?? null;
 
   // Track a reload signal for edge sections
   const [edgeReloadKey, setEdgeReloadKey] = useState(0);
   const reloadEdges = () => setEdgeReloadKey((k) => k + 1);
 
+  // Reset UI state when uid changes
   useEffect(() => {
-    loadNode();
     setEditing(false);
     setShowCreateEdge(false);
     setViewInitialized(false);
-  }, [loadNode]);
+    setMutationError(null);
+  }, [uid]);
 
   // Resolve initial view from config defaults once node data is available
   useEffect(() => {
@@ -127,38 +118,40 @@ export function NodeDetailContent({
     }
   }, [node, drillIndex, setRootType]);
 
-  const handleDelete = async () => {
-    if (!uid) return;
-    setDeleteLoading(true);
-    try {
-      await deleteNode(uid);
+  const deleteNodeMutation = trpc.deleteNode.useMutation({
+    onSuccess: () => {
       onDataChanged?.();
       if (isDrilled && laneId) {
         popTo(laneId, drillIndex - 1);
       } else {
         navigate('/');
       }
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setDeleteLoading(false);
-      setShowDeleteConfirm(false);
-    }
-  };
+    },
+    onError: (err) => setMutationError(err.message),
+    onSettled: () => setShowDeleteConfirm(false),
+  });
 
-  const handleDeleteEdge = async () => {
-    if (!deletingEdge) return;
-    setEdgeDeleteLoading(true);
-    try {
-      await deleteEdge(deletingEdge.aUid, deletingEdge.abType, deletingEdge.bUid);
+  const deleteEdgeMutation = trpc.deleteEdge.useMutation({
+    onSuccess: () => {
       setDeletingEdge(null);
       reloadEdges();
       onDataChanged?.();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setEdgeDeleteLoading(false);
-    }
+    },
+    onError: (err) => setMutationError(err.message),
+  });
+
+  const handleDelete = () => {
+    if (!uid) return;
+    deleteNodeMutation.mutate({ uid });
+  };
+
+  const handleDeleteEdge = () => {
+    if (!deletingEdge) return;
+    deleteEdgeMutation.mutate({
+      aUid: deletingEdge.aUid,
+      abType: deletingEdge.abType,
+      bUid: deletingEdge.bUid,
+    });
   };
 
   if (loading) {
@@ -360,7 +353,7 @@ export function NodeDetailContent({
           message={`Are you sure you want to delete node "${node.aUid}" (${node.aType})? This cannot be undone.`}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteConfirm(false)}
-          loading={deleteLoading}
+          loading={deleteNodeMutation.isPending}
         />
       )}
 
@@ -371,7 +364,7 @@ export function NodeDetailContent({
           message={`Delete edge ${deletingEdge.aUid} —[${deletingEdge.abType}]→ ${deletingEdge.bUid}?`}
           onConfirm={handleDeleteEdge}
           onCancel={() => setDeletingEdge(null)}
-          loading={edgeDeleteLoading}
+          loading={deleteEdgeMutation.isPending}
         />
       )}
     </div>
@@ -401,91 +394,77 @@ function PaginatedEdgeSection({
   viewRegistry?: ViewRegistryData | null;
   config: AppConfig;
 }) {
-  const [edges, setEdges] = useState<GraphRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-
   // Toolbar state
   const [limit, setLimit] = useState(25);
   const [filterAbType, setFilterAbType] = useState('');
   const [page, setPage] = useState(1);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const [startAfter, setStartAfter] = useState<string | undefined>(undefined);
 
   // Resolve state
   const [resolveAll, setResolveAll] = useState(false);
   const [resolvedNodes, setResolvedNodes] = useState<Record<string, GraphRecord | null>>({});
-  const [resolving, setResolving] = useState(false);
 
-  const loadEdges = useCallback(
-    async (startAfter?: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const params: Record<string, string | number> = { limit };
-        if (direction === 'out') {
-          params.aUid = uid;
-        } else {
-          params.bUid = uid;
-        }
-        if (filterAbType) {
-          params.abType = filterAbType;
-        }
-        if (startAfter) {
-          params.startAfter = startAfter;
-        }
-        const result = await getEdges(params);
-        setEdges(result.edges);
-        setHasMore(result.hasMore);
-        setNextCursor(result.nextCursor);
-      } catch (err) {
-        setError(String(err));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [uid, direction, limit, filterAbType],
+  const edgeQueryInput = {
+    ...(direction === 'out' ? { aUid: uid } : { bUid: uid }),
+    ...(filterAbType ? { abType: filterAbType } : {}),
+    limit,
+    startAfter,
+  };
+
+  const { data: edgeData, isLoading: loading, error: queryError, refetch: refetchEdges } = trpc.getEdges.useQuery(
+    edgeQueryInput,
+    { placeholderData: (prev) => prev },
   );
 
-  // Reset and reload when params change or external reload is triggered
+  const edges = (edgeData?.edges ?? []) as GraphRecord[];
+  const hasMore = edgeData?.hasMore ?? false;
+  const nextCursor = edgeData?.nextCursor ?? null;
+  const error = queryError?.message ?? null;
+
+  // Compute UIDs that need batch resolving
+  const toResolveUids = resolveAll && edges.length > 0
+    ? [...new Set(edges.map((e) => (direction === 'out' ? e.bUid : e.aUid)))].filter((u) => !(u in resolvedNodes))
+    : [];
+
+  const { data: batchData, isFetching: resolving } = trpc.getNodesBatch.useQuery(
+    { uids: toResolveUids },
+    { enabled: toResolveUids.length > 0 },
+  );
+
+  // Sync batch resolve results into local state
+  useEffect(() => {
+    if (!batchData) return;
+    const mapped: Record<string, GraphRecord | null> = {};
+    for (const [k, v] of Object.entries(batchData.nodes)) {
+      mapped[k] = v as GraphRecord | null;
+    }
+    setResolvedNodes((prev) => ({ ...prev, ...mapped }));
+  }, [batchData]);
+
+  // Reset pagination when params change or external reload is triggered
   useEffect(() => {
     setPage(1);
     setCursorStack([]);
+    setStartAfter(undefined);
     setResolvedNodes({});
-    loadEdges();
-  }, [loadEdges, reloadKey]);
+  }, [uid, direction, limit, filterAbType, reloadKey]);
 
-  // Batch resolve when resolveAll is on and edges change
-  useEffect(() => {
-    if (!resolveAll || edges.length === 0) return;
-    const targetUids = edges.map((e) => (direction === 'out' ? e.bUid : e.aUid));
-    const uniqueUids = [...new Set(targetUids)];
-    const toFetch = uniqueUids.filter((u) => !(u in resolvedNodes));
-    if (toFetch.length === 0) return;
-
-    setResolving(true);
-    getNodesBatch(toFetch)
-      .then((result) => setResolvedNodes((prev) => ({ ...prev, ...result.nodes })))
-      .catch(() => {})
-      .finally(() => setResolving(false));
-  }, [resolveAll, edges, direction]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const goNextPage = async () => {
+  const goNextPage = () => {
     if (!nextCursor) return;
     setCursorStack((prev) => [...prev, nextCursor]);
     setPage((p) => p + 1);
-    await loadEdges(nextCursor);
+    setStartAfter(nextCursor);
   };
 
-  const goPrevPage = async () => {
+  const goPrevPage = () => {
     if (page <= 1) return;
     const newStack = [...cursorStack];
     newStack.pop();
     const prevCursor = newStack.length > 0 ? newStack[newStack.length - 1] : undefined;
     setCursorStack(newStack);
     setPage((p) => p - 1);
-    await loadEdges(prevCursor);
+    setStartAfter(prevCursor);
   };
 
   // Group edges by abType for display
@@ -556,7 +535,7 @@ function PaginatedEdgeSection({
 
         {/* Refresh */}
         <button
-          onClick={() => { setPage(1); setCursorStack([]); loadEdges(); }}
+          onClick={() => { setPage(1); setCursorStack([]); setStartAfter(undefined); refetchEdges(); }}
           disabled={loading}
           className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
           title="Refresh"
@@ -718,6 +697,7 @@ function EdgeRow({
   config: AppConfig;
 }) {
   const { drillIn } = useDrill();
+  const utils = trpc.useUtils();
   const [expanded, setExpanded] = useState(false);
   const [nodeExpanded, setNodeExpanded] = useState(false);
 
@@ -776,11 +756,10 @@ function EdgeRow({
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
-      const result = await getNodesBatch([targetUid]);
-      const resolved = result.nodes[targetUid] ?? null;
+      const result = await utils.getNodesBatch.fetch({ uids: [targetUid] });
+      const resolved = (result.nodes[targetUid] as GraphRecord | null) ?? null;
       setNodeData(resolved);
       setNodeExpanded(true);
-      // Set view from config defaults using actual node data
       if (resolved) {
         const rc = config.viewDefaults?.nodes?.[targetType];
         if (rc && nodeViews.length > 0) {

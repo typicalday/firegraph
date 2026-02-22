@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { Schema, RegistryEntryMeta, GraphRecord } from '../types';
-import { createNode, updateNode } from '../api';
+import { trpc } from '../trpc';
 import SchemaForm from './SchemaForm';
 
 interface Props {
@@ -20,8 +20,18 @@ export default function NodeEditor({ schema, existingNode, defaultType, onSaved,
   const [selectedType, setSelectedType] = useState(existingNode?.aType ?? defaultType ?? nodeSchemas[0]?.aType ?? '');
   const [uid, setUid] = useState(existingNode?.aUid ?? '');
   const [formValues, setFormValues] = useState<Record<string, unknown>>(existingNode?.data ?? {});
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const createMutation = trpc.createNode.useMutation({
+    onSuccess: (data) => onSaved(data.uid),
+    onError: (err) => setError(err.message),
+  });
+  const updateMutation = trpc.updateNode.useMutation({
+    onSuccess: () => onSaved(existingNode!.aUid),
+    onError: (err) => setError(err.message),
+  });
+
+  const loading = createMutation.isPending || updateMutation.isPending;
 
   const currentSchema: RegistryEntryMeta | undefined = useMemo(
     () => nodeSchemas.find((ns) => ns.aType === selectedType),
@@ -35,21 +45,12 @@ export default function NodeEditor({ schema, existingNode, defaultType, onSaved,
     }
   };
 
-  const handleSubmit = async () => {
-    setLoading(true);
+  const handleSubmit = () => {
     setError(null);
-    try {
-      if (isEdit) {
-        await updateNode(existingNode!.aUid, formValues);
-        onSaved(existingNode!.aUid);
-      } else {
-        const result = await createNode(selectedType, uid || undefined, formValues);
-        onSaved(result.uid);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
+    if (isEdit) {
+      updateMutation.mutate({ uid: existingNode!.aUid, data: formValues });
+    } else {
+      createMutation.mutate({ aType: selectedType, uid: uid || undefined, data: formValues });
     }
   };
 
