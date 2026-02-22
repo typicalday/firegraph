@@ -1,14 +1,15 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import type { Schema, AppConfig } from '../types';
+import type { Schema, AppConfig, ViewRegistryData } from '../types';
 import { getTypeColor } from '../utils';
 
 interface Props {
   schema: Schema;
   config: AppConfig;
+  viewRegistry?: ViewRegistryData | null;
 }
 
-export default function Sidebar({ schema, config }: Props) {
+export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,6 +95,21 @@ export default function Sidebar({ schema, config }: Props) {
             </svg>
             Traverse
           </Link>
+          {viewRegistry?.hasViews && (
+            <Link
+              to="/views"
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                location.pathname === '/views'
+                  ? 'bg-indigo-600/20 text-indigo-400'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+              </svg>
+              Views
+            </Link>
+          )}
         </div>
 
         {/* Node Types */}

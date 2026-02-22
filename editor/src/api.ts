@@ -1,4 +1,4 @@
-import type { Schema, GraphRecord, NodeDetailData, TraversalResult, HopDef, AppConfig } from './types';
+import type { Schema, GraphRecord, NodeDetailData, TraversalResult, HopDef, AppConfig, ViewRegistryData } from './types';
 
 const BASE = '/api';
 
@@ -17,6 +17,10 @@ export async function getConfig(): Promise<AppConfig> {
 
 export async function getSchema(): Promise<Schema> {
   return fetchJson(`${BASE}/schema`);
+}
+
+export async function getViews(): Promise<ViewRegistryData> {
+  return fetchJson(`${BASE}/views`);
 }
 
 export interface GetNodesParams {

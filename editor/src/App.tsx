@@ -5,12 +5,14 @@ import Dashboard from './components/Dashboard';
 import NodeBrowser from './components/NodeBrowser';
 import NodeDetail from './components/NodeDetail';
 import TraversalBuilder from './components/TraversalBuilder';
-import type { Schema, AppConfig } from './types';
-import { getSchema, getConfig } from './api';
+import ViewGallery from './components/ViewGallery';
+import type { Schema, AppConfig, ViewRegistryData } from './types';
+import { getSchema, getConfig, getViews } from './api';
 
 export default function App() {
   const [schema, setSchema] = useState<Schema | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [viewRegistry, setViewRegistry] = useState<ViewRegistryData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -18,9 +20,26 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [schemaData, configData] = await Promise.all([getSchema(), getConfig()]);
+      const [schemaData, configData, viewsData] = await Promise.all([
+        getSchema(),
+        getConfig(),
+        getViews(),
+      ]);
       setSchema(schemaData);
       setConfig(configData);
+      setViewRegistry(viewsData);
+
+      // Load the views bundle if views are available
+      if (viewsData.hasViews) {
+        await new Promise<void>((resolve) => {
+          const script = document.createElement('script');
+          script.type = 'module';
+          script.src = '/api/views/bundle';
+          script.onload = () => resolve();
+          script.onerror = () => resolve(); // graceful degradation
+          document.head.appendChild(script);
+        });
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -62,12 +81,13 @@ export default function App() {
   }
 
   return (
-    <Layout schema={schema!} config={config!}>
+    <Layout schema={schema!} config={config!} viewRegistry={viewRegistry}>
       <Routes>
         <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />
         <Route path="/browse/:type" element={<NodeBrowser schema={schema!} />} />
-        <Route path="/node/:uid" element={<NodeDetail schema={schema!} />} />
+        <Route path="/node/:uid" element={<NodeDetail schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
         <Route path="/traverse" element={<TraversalBuilder schema={schema!} />} />
+        <Route path="/views" element={<ViewGallery viewRegistry={viewRegistry} schema={schema!} />} />
       </Routes>
     </Layout>
   );

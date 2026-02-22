@@ -71,3 +71,32 @@ export function truncateData(data: Record<string, unknown>, maxLength = 80): str
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength) + '...';
 }
+
+/**
+ * Resolve the best view name for an entity given its data and config.
+ * Mirrors `resolveView` from `src/config.ts` — duplicated to avoid cross-build imports.
+ */
+export function resolveViewForEntity(
+  data: Record<string, unknown>,
+  resolverConfig: { default?: string; rules?: Array<{ when: Record<string, unknown>; view: string }> } | undefined,
+  availableViews: Array<{ viewName: string; tagName: string }>,
+): string {
+  const availableNames = new Set(availableViews.map((v) => v.viewName));
+
+  if (!resolverConfig) return 'json';
+
+  if (resolverConfig.rules) {
+    for (const rule of resolverConfig.rules) {
+      const matches = Object.entries(rule.when).every(([k, v]) => data[k] === v);
+      if (matches && availableNames.has(rule.view)) {
+        return rule.view;
+      }
+    }
+  }
+
+  if (resolverConfig.default && availableNames.has(resolverConfig.default)) {
+    return resolverConfig.default;
+  }
+
+  return 'json';
+}

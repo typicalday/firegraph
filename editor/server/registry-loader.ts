@@ -1,6 +1,6 @@
-import { createJiti } from 'jiti';
 import path from 'path';
 import type { GraphRegistry } from '../../src/types.js';
+import { importJiti } from './jiti-import.js';
 
 function isGraphRegistry(value: unknown): value is GraphRegistry {
   return (
@@ -15,8 +15,7 @@ function isGraphRegistry(value: unknown): value is GraphRegistry {
 export async function loadRegistry(registryPath: string): Promise<GraphRegistry> {
   const absolutePath = path.resolve(process.cwd(), registryPath);
 
-  // Use the registry file's URL as the caller so bare specifiers (like 'firegraph')
-  // resolve from the registry file's node_modules, not the editor bundle's location
+  const { createJiti } = await importJiti();
   const jiti = createJiti(`file://${absolutePath}`, {
     interopDefault: true,
     moduleCache: false,

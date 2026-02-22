@@ -1,24 +1,71 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect, useCallback } from 'react';
-import type { Schema, GraphRecord } from '../types';
+import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { getNodeDetail, getEdges, getNodesBatch, deleteNode, deleteEdge } from '../api';
-import { getTypeBadgeColor, formatTimestamp } from '../utils';
+import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity } from '../utils';
 import JsonView from './JsonView';
+import CustomView from './CustomView';
+import ViewSwitcher from './ViewSwitcher';
 import { TraversalPanel } from './TraversalBuilder';
 import NodeEditor from './NodeEditor';
 import EdgeEditor from './EdgeEditor';
 import ConfirmDialog from './ConfirmDialog';
+import { DrillProvider, useDrill } from './drill-context';
+import DrillStack from './DrillStack';
 
 interface Props {
   schema: Schema;
+  viewRegistry?: ViewRegistryData | null;
+  config: AppConfig;
   onDataChanged?: () => void;
 }
 
 const LIMIT_OPTIONS = [10, 25, 50, 100];
 
-export default function NodeDetail({ schema, onDataChanged }: Props) {
+/**
+ * Exported route component — thin shell that wraps DrillProvider + DrillStack.
+ */
+export default function NodeDetail({ schema, viewRegistry, config, onDataChanged }: Props) {
   const { uid } = useParams<{ uid: string }>();
+  if (!uid) return null;
+
+  return (
+    <DrillProvider rootUid={uid}>
+      <DrillStack
+        schema={schema}
+        viewRegistry={viewRegistry}
+        config={config}
+        onDataChanged={onDataChanged}
+      />
+    </DrillProvider>
+  );
+}
+
+// --- NodeDetailContent: the actual node detail rendering ---
+
+export interface NodeDetailContentProps {
+  uid: string;
+  schema: Schema;
+  viewRegistry?: ViewRegistryData | null;
+  config: AppConfig;
+  onDataChanged?: () => void;
+  isDrilled?: boolean;
+  drillIndex?: number;
+  laneId?: string;
+}
+
+export function NodeDetailContent({
+  uid,
+  schema,
+  viewRegistry,
+  config,
+  onDataChanged,
+  isDrilled = false,
+  drillIndex = 0,
+  laneId,
+}: NodeDetailContentProps) {
   const navigate = useNavigate();
+  const { popTo, setRootType } = useDrill();
   const [node, setNode] = useState<GraphRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +77,8 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
   const [edgeDeleteLoading, setEdgeDeleteLoading] = useState(false);
 
   const canWrite = !schema.readonly;
+  const [activeView, setActiveView] = useState('json');
+  const [viewInitialized, setViewInitialized] = useState(false);
 
   const loadNode = useCallback(async () => {
     if (!uid) return;
@@ -53,7 +102,30 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
     loadNode();
     setEditing(false);
     setShowCreateEdge(false);
+    setViewInitialized(false);
   }, [loadNode]);
+
+  // Resolve initial view from config defaults once node data is available
+  useEffect(() => {
+    if (!node || viewInitialized) return;
+    const views = viewRegistry?.nodes[node.aType]?.views ?? [];
+    const resolverConfig = config.viewDefaults?.nodes?.[node.aType];
+    if (resolverConfig && views.length > 0) {
+      const resolved = resolveViewForEntity(node.data, resolverConfig, views);
+      if (resolved !== 'json') {
+        const match = views.find((v) => v.viewName === resolved);
+        if (match) setActiveView(match.tagName);
+      }
+    }
+    setViewInitialized(true);
+  }, [node, viewInitialized, viewRegistry, config]);
+
+  // Set root type for breadcrumb when this is the root frame
+  useEffect(() => {
+    if (node && drillIndex === 0) {
+      setRootType(node.aType);
+    }
+  }, [node, drillIndex, setRootType]);
 
   const handleDelete = async () => {
     if (!uid) return;
@@ -61,7 +133,11 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
     try {
       await deleteNode(uid);
       onDataChanged?.();
-      navigate('/');
+      if (isDrilled && laneId) {
+        popTo(laneId, drillIndex - 1);
+      } else {
+        navigate('/');
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -178,10 +254,23 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
 
       {/* Data */}
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
-        <h2 className="text-sm font-semibold mb-3">Data</h2>
-        <div className="font-mono text-xs leading-relaxed bg-slate-950 rounded-lg p-4 overflow-auto max-h-96">
-          <JsonView data={node.data} defaultExpanded />
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Data</h2>
+          <ViewSwitcher
+            views={viewRegistry?.nodes[node.aType]?.views ?? []}
+            activeView={activeView}
+            onSwitch={setActiveView}
+          />
         </div>
+        {activeView === 'json' ? (
+          <div className="font-mono text-xs leading-relaxed bg-slate-950 rounded-lg p-4 overflow-auto max-h-96">
+            <JsonView data={node.data} defaultExpanded />
+          </div>
+        ) : (
+          <div className="bg-slate-950 rounded-lg p-4 overflow-auto">
+            <CustomView tagName={activeView} data={node.data as Record<string, unknown>} />
+          </div>
+        )}
       </section>
 
       {/* Outgoing Edges */}
@@ -222,6 +311,8 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
           canWrite={canWrite}
           onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
           reloadKey={edgeReloadKey}
+          viewRegistry={viewRegistry}
+          config={config}
         />
       </section>
 
@@ -235,6 +326,8 @@ export default function NodeDetail({ schema, onDataChanged }: Props) {
           canWrite={canWrite}
           onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
           reloadKey={edgeReloadKey}
+          viewRegistry={viewRegistry}
+          config={config}
         />
       </section>
 
@@ -285,6 +378,8 @@ function PaginatedEdgeSection({
   canWrite,
   onDeleteEdge,
   reloadKey,
+  viewRegistry,
+  config,
 }: {
   uid: string;
   direction: 'in' | 'out';
@@ -292,6 +387,8 @@ function PaginatedEdgeSection({
   canWrite: boolean;
   onDeleteEdge: (edge: GraphRecord) => void;
   reloadKey: number;
+  viewRegistry?: ViewRegistryData | null;
+  config: AppConfig;
 }) {
   const [edges, setEdges] = useState<GraphRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -527,10 +624,14 @@ function PaginatedEdgeSection({
                       edge={edge}
                       targetUid={targetUid}
                       targetType={targetType}
+                      direction={direction}
                       canWrite={canWrite}
                       onDelete={() => onDeleteEdge(edge)}
                       resolvedNode={resolvedNodes[targetUid]}
                       resolveAllActive={resolveAll}
+                      edgeViews={viewRegistry?.edges[edge.abType]?.views ?? []}
+                      nodeViews={viewRegistry?.nodes[targetType]?.views ?? []}
+                      config={config}
                     />
                   );
                 })}
@@ -575,21 +676,58 @@ function EdgeRow({
   edge,
   targetUid,
   targetType,
+  direction,
   canWrite,
   onDelete,
   resolvedNode,
   resolveAllActive,
+  edgeViews = [],
+  nodeViews = [],
+  config,
 }: {
   edge: GraphRecord;
   targetUid: string;
   targetType: string;
+  direction: 'in' | 'out';
   canWrite: boolean;
   onDelete: () => void;
   resolvedNode?: GraphRecord | null;
   resolveAllActive?: boolean;
+  edgeViews?: ViewMeta[];
+  nodeViews?: ViewMeta[];
+  config: AppConfig;
 }) {
+  const { drillIn } = useDrill();
   const [expanded, setExpanded] = useState(false);
   const [nodeExpanded, setNodeExpanded] = useState(false);
+
+  // Resolve initial edge view from config defaults
+  const initialEdgeView = () => {
+    const rc = config.viewDefaults?.edges?.[edge.abType];
+    if (rc && edgeViews.length > 0) {
+      const resolved = resolveViewForEntity(edge.data, rc, edgeViews);
+      if (resolved !== 'json') {
+        const match = edgeViews.find((v) => v.viewName === resolved);
+        if (match) return match.tagName;
+      }
+    }
+    return 'json';
+  };
+  const [edgeViewMode, setEdgeViewMode] = useState(initialEdgeView);
+
+  // Resolve initial node view from config defaults
+  const initialNodeView = () => {
+    const rc = config.viewDefaults?.nodes?.[targetType];
+    if (rc && nodeViews.length > 0) {
+      const resolved = resolveViewForEntity({}, rc, nodeViews);
+      if (resolved !== 'json') {
+        const match = nodeViews.find((v) => v.viewName === resolved);
+        if (match) return match.tagName;
+      }
+    }
+    return 'json';
+  };
+  const [nodeViewMode, setNodeViewMode] = useState(initialNodeView);
   const [nodeData, setNodeData] = useState<GraphRecord | null | undefined>(undefined);
   const [nodeLoading, setNodeLoading] = useState(false);
   const hasData = Object.keys(edge.data).length > 0;
@@ -598,24 +736,55 @@ function EdgeRow({
   const effectiveNode = nodeData !== undefined ? nodeData : resolvedNode;
   const isResolved = effectiveNode !== undefined;
 
-  // Auto-expand when resolve-all provides data
+  // Auto-expand when resolve-all provides data, and resolve view from config
   useEffect(() => {
     if (resolveAllActive && resolvedNode !== undefined) {
       setNodeExpanded(true);
+      if (resolvedNode) {
+        const rc = config.viewDefaults?.nodes?.[targetType];
+        if (rc && nodeViews.length > 0) {
+          const resolved = resolveViewForEntity(resolvedNode.data, rc, nodeViews);
+          if (resolved !== 'json') {
+            const match = nodeViews.find((v) => v.viewName === resolved);
+            if (match) setNodeViewMode(match.tagName);
+          }
+        }
+      }
     }
-  }, [resolveAllActive, resolvedNode]);
+  }, [resolveAllActive, resolvedNode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
       const result = await getNodesBatch([targetUid]);
-      setNodeData(result.nodes[targetUid] ?? null);
+      const resolved = result.nodes[targetUid] ?? null;
+      setNodeData(resolved);
       setNodeExpanded(true);
+      // Set view from config defaults using actual node data
+      if (resolved) {
+        const rc = config.viewDefaults?.nodes?.[targetType];
+        if (rc && nodeViews.length > 0) {
+          const viewName = resolveViewForEntity(resolved.data, rc, nodeViews);
+          if (viewName !== 'json') {
+            const match = nodeViews.find((v) => v.viewName === viewName);
+            if (match) setNodeViewMode(match.tagName);
+          }
+        }
+      }
     } catch {
       // silently fail
     } finally {
       setNodeLoading(false);
     }
+  };
+
+  const handleDive = () => {
+    drillIn({
+      uid: targetUid,
+      nodeType: targetType,
+      edgeType: edge.abType,
+      direction,
+    });
   };
 
   return (
@@ -624,11 +793,19 @@ function EdgeRow({
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(targetType)}`}>
           {targetType}
         </span>
-        <Link
-          to={`/node/${encodeURIComponent(targetUid)}`}
+        <button
+          onClick={handleDive}
           className="text-sm font-mono text-indigo-400 hover:text-indigo-300 transition-colors"
+          title="Dive into this node"
         >
           {targetUid}
+        </button>
+        <Link
+          to={`/node/${encodeURIComponent(targetUid)}`}
+          className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+          title="Navigate to this node's page"
+        >
+          go to
         </Link>
         {hasData && (
           <button
@@ -668,9 +845,20 @@ function EdgeRow({
       </div>
       {expanded && hasData && (
         <div className="px-3 pb-2">
-          <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
-            <JsonView data={edge.data} defaultExpanded />
-          </div>
+          {edgeViews.length > 0 && (
+            <div className="mb-2">
+              <ViewSwitcher views={edgeViews} activeView={edgeViewMode} onSwitch={setEdgeViewMode} />
+            </div>
+          )}
+          {edgeViewMode === 'json' ? (
+            <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
+              <JsonView data={edge.data} defaultExpanded />
+            </div>
+          ) : (
+            <div className="bg-slate-950 rounded p-2 overflow-auto">
+              <CustomView tagName={edgeViewMode} data={edge.data as Record<string, unknown>} />
+            </div>
+          )}
         </div>
       )}
       {nodeExpanded && isResolved && (
@@ -686,10 +874,19 @@ function EdgeRow({
                 <span className="text-[10px] text-slate-600">
                   {formatTimestamp(effectiveNode.updatedAt)}
                 </span>
+                {nodeViews.length > 0 && (
+                  <ViewSwitcher views={nodeViews} activeView={nodeViewMode} onSwitch={setNodeViewMode} />
+                )}
               </div>
-              <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
-                <JsonView data={effectiveNode.data} defaultExpanded />
-              </div>
+              {nodeViewMode === 'json' ? (
+                <div className="font-mono text-[11px] leading-relaxed bg-slate-950 rounded p-2 overflow-auto max-h-40">
+                  <JsonView data={effectiveNode.data} defaultExpanded />
+                </div>
+              ) : (
+                <div className="bg-slate-950 rounded p-2 overflow-auto">
+                  <CustomView tagName={nodeViewMode} data={effectiveNode.data as Record<string, unknown>} />
+                </div>
+              )}
             </div>
           )}
         </div>

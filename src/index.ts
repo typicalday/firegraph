@@ -5,6 +5,8 @@ export { computeNodeDocId, computeEdgeDocId } from './docid.js';
 export { buildNodeRecord, buildEdgeRecord } from './record.js';
 export { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';
 export { createTraversal } from './traverse.js';
+export { defineViews } from './views.js';
+export { defineConfig, resolveView } from './config.js';
 
 export {
   FiregraphError,
@@ -38,3 +40,19 @@ export type {
   TraversalResult,
   TraversalBuilder,
 } from './types.js';
+
+export type {
+  ViewComponentClass,
+  EntityViewConfig,
+  ViewRegistryInput,
+  ViewMeta,
+  EntityViewMeta,
+  ViewRegistry,
+} from './views.js';
+
+export type {
+  FiregraphConfig,
+  ViewRule,
+  ViewResolverConfig,
+  ViewDefaultsConfig,
+} from './config.js';

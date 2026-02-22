@@ -54,6 +54,7 @@
     }
   },
   "dependencies": {
+    "esbuild": "^0.24.0",
     "jiti": "^2.4.0",
     "nanoid": "^5.0.9"
   },

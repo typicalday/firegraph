@@ -90,4 +90,41 @@ export interface AppConfig {
   projectId: string;
   collection: string;
   readonly: boolean;
+  viewDefaults?: ViewDefaultsConfig | null;
+}
+
+// --- View resolution types (mirrors src/config.ts for client use) ---
+
+export interface ViewRule {
+  when: Record<string, unknown>;
+  view: string;
+}
+
+export interface ViewResolverConfig {
+  default?: string;
+  rules?: ViewRule[];
+}
+
+export interface ViewDefaultsConfig {
+  nodes?: Record<string, ViewResolverConfig>;
+  edges?: Record<string, ViewResolverConfig>;
+}
+
+// --- View types ---
+
+export interface ViewMeta {
+  tagName: string;
+  viewName: string;
+  description?: string;
+}
+
+export interface EntityViewMeta {
+  views: ViewMeta[];
+  sampleData?: Record<string, Record<string, unknown>>;
+}
+
+export interface ViewRegistryData {
+  nodes: Record<string, EntityViewMeta>;
+  edges: Record<string, EntityViewMeta>;
+  hasViews: boolean;
 }

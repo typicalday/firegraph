@@ -6,9 +6,9 @@ await build({
   platform: 'node',
   format: 'esm',
   outfile: 'dist/editor/server/index.mjs',
-  external: ['firebase-admin', 'zod', 'jiti'],
-  // jiti must be external because it dynamically loads babel transforms at runtime
-  // via relative paths that break when bundled. Consumers need jiti installed.
+  external: ['firebase-admin', 'zod', 'jiti', 'esbuild'],
+  // jiti and esbuild must be external because they use native binaries / dynamic
+  // requires that break when bundled. Consumers need them installed.
   target: 'node18',
   absWorkingDir: new URL('..', import.meta.url).pathname,
   banner: {

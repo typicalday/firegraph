@@ -27,6 +27,8 @@ All records live in a single Firestore collection. Document IDs:
 | `src/query.ts` | Query planner: routes `FindEdgesParams` to either `get` (direct doc lookup) or `query` (filtered scan) strategy |
 | `src/traverse.ts` | Multi-hop graph traversal with budget enforcement and concurrency control |
 | `src/registry.ts` | Optional schema registry for type-safe edge validation (works with Zod) |
+| `src/config.ts` | `defineConfig()`, `resolveView()` — project config file types and view resolution |
+| `src/views.ts` | `defineViews()` — framework-agnostic model view definitions (Web Components) |
 | `src/record.ts` | Builds `GraphRecord` objects with server timestamps |
 | `src/docid.ts` | Computes document IDs (passthrough for nodes, sharded hash for edges) |
 | `src/id.ts` | 21-char nanoid generation |
@@ -88,12 +90,18 @@ The `editor/` directory contains a full-stack web UI for browsing and editing gr
 | Directory | Purpose |
 |-----------|---------|
 | `editor/server/index.ts` | Express server — reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
+| `editor/server/config-loader.ts` | Discovers and loads `firegraph.config.ts` via `jiti` |
 | `editor/server/registry-loader.ts` | Dynamic TypeScript import of user's registry file via `jiti` |
 | `editor/server/schema-introspect.ts` | Walks Zod `._def` tree to extract field metadata (`FieldMeta[]`) |
+| `editor/server/views-loader.ts` | Dynamic import of user's views file via `jiti` (metadata extraction) |
+| `editor/server/views-bundler.ts` | esbuild bundles views file into browser-loadable ES module |
 | `editor/src/` | React 19 + React Router + Tailwind CSS frontend |
 | `editor/src/components/SchemaForm.tsx` | Dynamic form generator from `FieldMeta[]` |
 | `editor/src/components/NodeEditor.tsx` | Create/edit node form |
 | `editor/src/components/EdgeEditor.tsx` | Create edge form |
+| `editor/src/components/CustomView.tsx` | React wrapper for rendering Web Component views |
+| `editor/src/components/ViewSwitcher.tsx` | Tab bar for switching between JSON and custom views |
+| `editor/src/components/ViewGallery.tsx` | Storybook-like preview page for all registered views |
 
 ### Editor Commands
 
@@ -101,21 +109,415 @@ The `editor/` directory contains a full-stack web UI for browsing and editing gr
 pnpm build:all         # build library + editor
 pnpm build:editor      # build editor only (client + server)
 pnpm dev:editor        # dev mode (Express :3884 + Vite :3883)
-npx firegraph editor   # run production editor
+npx firegraph editor   # run production editor (auto-discovers firegraph.config.ts)
+npx firegraph editor --config ./custom.ts   # explicit config path
+npx firegraph editor --registry ./src/registry.ts  # CLI flags (no config file)
 ```
 
 ### Editor Build Pipeline
 
 - **Client**: Vite → `dist/editor/client/` (React SPA)
-- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, zod, jiti external)
+- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, zod, jiti, esbuild external)
 - **CLI**: `bin/firegraph.mjs` dispatches subcommands (`editor`)
+
+### Model Views
+
+Model views let projects define **multiple, purpose-driven visual representations** for each entity type. Instead of always displaying raw JSON, the editor can render nodes and edges through custom views tailored to specific use cases — an "executive summary" for a user, a "card" for compact display, a "timeline entry" for a departure.
+
+Views are **framework-agnostic**: they are standard Web Components (Custom Elements), not React components. They work in any environment that supports the DOM. The data contract for each view is the `data` shape defined by the entity's Zod schema in the registry.
+
+#### Concept
+
+Every firegraph record has a `data: Record<string, unknown>` payload whose shape is defined by the registry's Zod schema. A view is simply a different way to render that same data. One entity type can have many views, each showing the data from a different angle or for a different audience.
+
+```
+Registry schema (contract)     Views (presentation)
+┌──────────────────────┐      ┌─────────────┐
+│ user                 │      │ card         │  compact display
+│   displayName: str   │─────▶│ profile      │  full profile
+│   email: str         │      │ executive    │  executive summary
+│   role: enum         │      │ admin        │  admin panel
+└──────────────────────┘      └─────────────┘
+```
+
+#### View Component Contract
+
+Each view is a class that extends `HTMLElement` and satisfies this interface:
+
+```typescript
+interface ViewComponentClass {
+  new (...args: any[]): { data: Record<string, unknown> };
+  viewName: string;        // required — short identifier (e.g. 'card')
+  description?: string;    // optional — shown in gallery and tooltips
+}
+```
+
+In practice, a view component looks like this:
+
+```typescript
+class UserCard extends HTMLElement {
+  static viewName = 'card';
+  static description = 'Compact user card';
+
+  private _data: Record<string, unknown> = {};
+
+  // The editor sets this property when rendering the view.
+  // The data shape matches the registry's Zod schema for this entity type.
+  set data(value: Record<string, unknown>) {
+    this._data = value;
+    this.render();
+  }
+
+  get data() {
+    return this._data;
+  }
+
+  // Called when the element is added to the DOM
+  connectedCallback() {
+    this.render();
+  }
+
+  private render() {
+    const d = this._data;
+    this.innerHTML = `
+      <div style="padding: 12px; border-radius: 8px; background: #1e293b;">
+        <strong>${d.displayName ?? ''}</strong>
+        <div style="font-size: 12px; color: #94a3b8;">${d.email ?? ''}</div>
+      </div>
+    `;
+  }
+}
+```
+
+Key rules:
+- The `data` setter must trigger a re-render (the editor will call it whenever data changes)
+- `connectedCallback()` should also render (for initial mount)
+- Use inline styles or Shadow DOM for styling — the view runs inside the editor's page
+- The component receives only the `data` portion of the record, never the firegraph fields (aType, aUid, etc.)
+
+#### `defineViews()` API
+
+The `defineViews()` factory function takes a `ViewRegistryInput` and returns a `ViewRegistry`. Import it from `firegraph`:
+
+```typescript
+import { defineViews } from 'firegraph';
+```
+
+**Input shape:**
+
+```typescript
+interface ViewRegistryInput {
+  nodes?: Record<string, EntityViewConfig>;  // keyed by aType
+  edges?: Record<string, EntityViewConfig>;  // keyed by abType
+}
+
+interface EntityViewConfig {
+  views: ViewComponentClass[];
+  sampleData?: Record<string, Record<string, unknown>>;  // keyed by viewName
+}
+```
+
+**Output shape:**
+
+```typescript
+interface ViewRegistry {
+  nodes: Record<string, EntityViewMeta>;
+  edges: Record<string, EntityViewMeta>;
+}
+
+interface EntityViewMeta {
+  views: ViewMeta[];
+  sampleData?: Record<string, Record<string, unknown>>;
+}
+
+interface ViewMeta {
+  tagName: string;       // auto-generated, e.g. 'fg-user-card'
+  viewName: string;      // from the component's static viewName
+  description?: string;  // from the component's static description
+}
+```
+
+**Dual-environment behaviour:**
+- **Browser**: `defineViews()` calls `customElements.define()` for each view class, registering it with a deterministic tag name. The tag name format is `fg-{entityType}-{viewName}` for nodes and `fg-edge-{abType}-{viewName}` for edges.
+- **Node.js (server)**: `defineViews()` only returns metadata. No DOM APIs are called. This is how the editor server extracts view metadata without a browser.
+
+#### Creating a Views File
+
+Create a TypeScript file in your project (e.g. `src/views.ts`). It must export a `ViewRegistry` — either as the default export, a named `views` export, or any named export.
+
+```typescript
+// src/views.ts
+import { defineViews } from 'firegraph';
+
+class UserCard extends HTMLElement {
+  static viewName = 'card';
+  static description = 'Compact user card';
+  private _data: Record<string, unknown> = {};
+  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
+  get data() { return this._data; }
+  connectedCallback() { this.render(); }
+  private render() {
+    const d = this._data;
+    this.innerHTML = `<strong>${d.displayName ?? ''}</strong>`;
+  }
+}
+
+class UserProfile extends HTMLElement {
+  static viewName = 'profile';
+  static description = 'Full user profile';
+  private _data: Record<string, unknown> = {};
+  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
+  get data() { return this._data; }
+  connectedCallback() { this.render(); }
+  private render() {
+    const d = this._data;
+    this.innerHTML = `
+      <div>
+        <h3>${d.displayName ?? ''}</h3>
+        <p>${d.email ?? ''}</p>
+        <span>Role: ${d.role ?? '—'}</span>
+      </div>
+    `;
+  }
+}
+
+// Edge view example — keyed by abType
+class ManagesEntry extends HTMLElement {
+  static viewName = 'summary';
+  static description = 'Management relationship summary';
+  private _data: Record<string, unknown> = {};
+  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
+  get data() { return this._data; }
+  connectedCallback() { this.render(); }
+  private render() {
+    this.innerHTML = `<span>Since: ${this._data.since ?? '—'}</span>`;
+  }
+}
+
+export default defineViews({
+  nodes: {
+    user: {
+      views: [UserCard, UserProfile],
+      sampleData: {
+        card: { displayName: 'Jamie Chen', email: 'jamie@example.com', role: 'admin' },
+        profile: { displayName: 'Jamie Chen', email: 'jamie@example.com', role: 'admin' },
+      },
+    },
+  },
+  edges: {
+    manages: {
+      views: [ManagesEntry],
+      sampleData: {
+        summary: { since: '2024-01-15' },
+      },
+    },
+  },
+});
+```
+
+**Key points:**
+- Node views are keyed by `aType` (the entity type name from your registry)
+- Edge views are keyed by `abType` (the relation name from your registry)
+- `sampleData` is keyed by `viewName` — each view can have its own sample data for the gallery
+- `sampleData` is optional — the gallery will show an empty object if not provided, and you can paste data in manually
+
+#### Tag Name Generation
+
+`defineViews()` generates deterministic custom element tag names from the entity type and view name:
+
+| Entity | View | Generated Tag |
+|--------|------|---------------|
+| Node `user`, view `card` | `fg-user-card` |
+| Node `user`, view `profile` | `fg-user-profile` |
+| Node `tourDeparture`, view `badge` | `fg-tourdeparture-badge` |
+| Edge `hasDeparture`, view `timeline` | `fg-edge-hasdeparture-timeline` |
+| Edge `manages`, view `summary` | `fg-edge-manages-summary` |
+
+Non-alphanumeric characters are replaced with hyphens. Consecutive hyphens are collapsed.
+
+#### Running the Editor with Views
+
+The simplest way is to use a `firegraph.config.ts` (see **Configuration** section below):
+
+```bash
+npx firegraph editor   # auto-discovers firegraph.config.ts
+```
+
+Or pass flags directly:
+
+```bash
+# Development
+pnpm dev:editor -- --registry ./src/registry.ts --views ./src/views.ts
+
+# Production
+npx firegraph editor --registry ./src/registry.ts --views ./src/views.ts --collection graph
+
+# With emulator
+npx firegraph editor \
+  --registry ./src/registry.ts \
+  --views ./src/views.ts \
+  --emulator \
+  --project demo-project
+```
+
+The `--views` flag/config is optional. Without it, the editor works exactly as before (JSON view only). With it, the editor loads views and shows view switchers wherever views are registered.
+
+#### What Happens at Startup
+
+When the editor server starts with `--views`:
+
+1. **Metadata extraction**: `views-loader.ts` uses `jiti` to dynamically import the views file in Node.js. Since `customElements` doesn't exist on the server, `defineViews()` returns only metadata (tag names, view names, descriptions, sample data). The loader duck-type checks for a `ViewRegistry` shape (`{ nodes: {}, edges: {} }`).
+
+2. **Browser bundle**: `views-bundler.ts` uses `esbuild` to compile the views file into a single ES module targeting the browser (`format: 'esm'`, `platform: 'browser'`, `target: 'es2022'`). The bundle is kept in memory (`write: false`), minified, and given a content hash for caching.
+
+3. **API endpoints**: Two endpoints are registered:
+   - `GET /api/views` — returns the view metadata as JSON:
+     ```json
+     {
+       "nodes": {
+         "user": {
+           "views": [
+             { "tagName": "fg-user-card", "viewName": "card", "description": "Compact user card" },
+             { "tagName": "fg-user-profile", "viewName": "profile", "description": "Full user profile" }
+           ],
+           "sampleData": {
+             "card": { "displayName": "Jamie Chen", "email": "jamie@example.com" }
+           }
+         }
+       },
+       "edges": { ... },
+       "hasViews": true
+     }
+     ```
+   - `GET /api/views/bundle` — returns the compiled JavaScript with `Content-Type: application/javascript`, `Cache-Control: public, max-age=3600`, and an `ETag` header.
+
+4. **Frontend loading**: `App.tsx` fetches `/api/views` in parallel with schema and config. If `hasViews` is `true`, it injects a `<script type="module" src="/api/views/bundle">` into the document head. When the browser executes this script, `defineViews()` runs in a browser context — this time `customElements` exists, so all view classes are registered as custom elements.
+
+#### Editor Integration Points
+
+**Node detail page** (`/node/:uid`): The "Data" section header gains a `ViewSwitcher` toolbar showing `[JSON] [card] [profile]`. Clicking a view name replaces the `JsonView` with a `CustomView` wrapper that creates the corresponding custom element and sets its `.data` property.
+
+**Edge rows**: When viewing a node's outgoing or incoming edges, each edge row can switch between JSON and custom views if views are registered for that edge's `abType`. Resolved inline nodes also show view switchers if views are registered for their `aType`.
+
+**View Gallery page** (`/views`): A Storybook-like page accessible from the sidebar (the "Views" link appears only when views are loaded). It lists all entity types with views, showing:
+- Entity type badge (node/edge) and name
+- Number of registered views
+- "Edit sample data" toggle — opens a JSON textarea where you can modify sample data live
+- A grid of all views for that type, each rendered with its sample data
+- Tag name shown in monospace for reference
+
+#### `CustomView` React Wrapper
+
+`CustomView.tsx` bridges React and Web Components. It:
+1. Creates a `<div>` container via a React ref
+2. Imperatively creates the custom element (`document.createElement(tagName)`)
+3. Appends it to the container
+4. Sets `.data = { ... }` on the element whenever data changes
+5. Replaces the element if the tagName changes
+6. Cleans up on unmount
+
+This approach avoids React's VDOM conflicting with the custom element's internal DOM management.
+
+#### Styling Views
+
+Views run inside the editor's page, so they share the page's CSS environment. Options for styling:
+
+- **Inline styles** (simplest): Use `style="..."` attributes directly in the HTML. This is what the example views do.
+- **Shadow DOM** (isolated): Call `this.attachShadow({ mode: 'open' })` in the constructor, then render into `this.shadowRoot`. Styles inside the shadow root won't leak out or be affected by the editor's styles.
+- **Adopted stylesheets**: Create a `CSSStyleSheet`, set its rules, and add it to `this.shadowRoot.adoptedStyleSheets`. This is the most performant approach for Shadow DOM.
+
+The editor's background is dark (slate-950), so views that use a dark color scheme will blend in naturally.
+
+#### Example Views File
+
+See `examples/07-model-views.ts` for a complete working example with:
+- **Node views**: `TourCard` (compact card), `TourDetail` (full details table), `DepartureBadge` (date badge with pricing)
+- **Edge views**: `HasDepartureTimeline` (timeline entry with status dot), `HasRiderCard` (compact rider assignment card)
+
+#### Dependencies
+
+The views system adds `esbuild` as a runtime dependency (used by the server to bundle views on startup). It is listed in the root `package.json` `dependencies` alongside `jiti` and `nanoid`. Both `esbuild` and `jiti` are marked as externals in the editor server build (`editor/build-server.mjs`) since they require native binaries / dynamic requires that break when bundled.
+
+## Configuration
+
+Projects can create a `firegraph.config.ts` (or `.js`/`.mjs`) in their root to consolidate all editor settings. This is the Vite-style approach — no CLI flags needed when a config file exists.
+
+### Config File
+
+```typescript
+// firegraph.config.ts
+import { defineConfig } from 'firegraph';
+
+export default defineConfig({
+  registry: './src/registry.ts',
+  views: './src/views.ts',
+  project: 'my-project',
+  collection: 'graph',
+  emulator: '127.0.0.1:8080',
+
+  editor: {
+    port: 3883,
+    readonly: false,
+  },
+
+  viewDefaults: {
+    nodes: {
+      task: {
+        default: 'card',
+        rules: [
+          { when: { status: 'completed' }, view: 'detail' },
+          { when: { status: 'failed' }, view: 'detail' },
+        ],
+      },
+      user: { default: 'card' },
+    },
+    edges: {
+      manages: { default: 'summary' },
+    },
+  },
+});
+```
+
+`defineConfig()` is an identity function that provides type-checking and autocomplete. The file can use either a default export or a named `config` export.
+
+### Config Discovery
+
+1. If `--config <path>` is passed, use that exact file.
+2. Otherwise search cwd for `firegraph.config.ts`, `firegraph.config.js`, `firegraph.config.mjs` (in that order).
+3. If no config file found, fall back to CLI flags only.
+
+Discovery and loading is handled by `editor/server/config-loader.ts` using `jiti` (same pattern as registry/views loading).
+
+### Precedence
+
+`defaults < config file < env vars < CLI flags`
+
+CLI flags always win. Config file fills in what's not specified on the command line. This means `npx firegraph editor` with a config file present just works, and `npx firegraph editor --readonly` overrides the config file's `readonly: false`.
+
+### View Defaults
+
+The `viewDefaults` section defines which view to show by default for each entity type, with optional conditional rules:
+
+- **`default`**: View name to use when no rules match (falls back to `'json'` if unset).
+- **`rules`**: Ordered list of `{ when, view }` objects. First rule where ALL `when` conditions match the entity's data wins. Conditions use strict equality on data fields.
+
+View resolution is implemented as a pure function (`resolveView()` in `src/config.ts`, duplicated as `resolveViewForEntity()` in `editor/src/utils.ts` for the client). It only returns view names that exist in the available views — unknown view names are silently skipped.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/config.ts` | `FiregraphConfig` interface, `defineConfig()`, `resolveView()` |
+| `editor/server/config-loader.ts` | `discoverConfigPath()`, `loadConfig()` — jiti-based loading |
+| `editor/src/utils.ts` | `resolveViewForEntity()` — client-side view resolution |
+| `examples/firegraph.config.ts` | Example config file |
 
 ## Conventions
 
 - All source in `src/`, all tests in `tests/`
 - `.js` extensions in imports (ESM resolution)
 - Prefer interfaces over classes for public API surfaces
-- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`) over `new`
+- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`, `defineViews`, `defineConfig`) over `new`
 - Errors extend `FiregraphError` with a string `code`
 - No default exports
 - Internal modules live in `src/internal/`
