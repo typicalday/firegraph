@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClause, FieldMeta, EdgeType, ViewRegistryData, AppConfig, ViewMeta } from '../types';
 import { runTraversal, getNodesBatch } from '../api';
 import { getTypeBadgeColor, resolveViewForEntity } from '../utils';
-import { useDrillMaybe, type DrillFrame } from './drill-context';
+import { DrillProvider, useDrillMaybe, type DrillFrame } from './drill-context';
+import DrillStack from './DrillStack';
 import JsonView from './JsonView';
 import ViewSwitcher from './ViewSwitcher';
 import CustomView from './CustomView';
@@ -445,7 +447,7 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
       {/* Results */}
       {result && (
         <div className="mt-5">
-          <TraversalResults result={result} viewRegistry={viewRegistry} config={config} />
+          <TraversalResults result={result} startUid={startUid} schema={schema} viewRegistry={viewRegistry} config={config} />
         </div>
       )}
     </>
@@ -659,15 +661,23 @@ function reconstructPath(
 
 // --- Results ---
 
+const EXPLORE_MAX_LANES = 20;
+
 function TraversalResults({
   result,
+  startUid,
+  schema,
   viewRegistry,
   config,
 }: {
   result: TraversalResult;
+  startUid: string;
+  schema: Schema;
   viewRegistry?: ViewRegistryData | null;
   config?: AppConfig;
 }) {
+  const [exploringHop, setExploringHop] = useState<number | null>(null);
+
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
       {/* Stats */}
@@ -704,6 +714,14 @@ function TraversalResults({
               {hop.truncated && (
                 <span className="text-amber-400 text-[10px]">truncated</span>
               )}
+              {hop.edges.length > 0 && (
+                <button
+                  onClick={() => setExploringHop(i)}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors ml-auto"
+                >
+                  explore
+                </button>
+              )}
             </h3>
             <div className="space-y-1.5">
               {hop.edges.slice(0, 20).map((edge, j) => (
@@ -730,7 +748,99 @@ function TraversalResults({
           </div>
         ))}
       </div>
+
+      {/* Explore modal */}
+      {exploringHop !== null && (
+        <HopExploreModal
+          allHops={result.hops}
+          hopIndex={exploringHop}
+          startUid={startUid}
+          schema={schema}
+          viewRegistry={viewRegistry}
+          config={config}
+          onClose={() => setExploringHop(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// --- Explore Modal ---
+
+function HopExploreModal({
+  allHops,
+  hopIndex,
+  startUid,
+  schema,
+  viewRegistry,
+  config,
+  onClose,
+}: {
+  allHops: HopResult[];
+  hopIndex: number;
+  startUid: string;
+  schema: Schema;
+  viewRegistry?: ViewRegistryData | null;
+  config?: AppConfig;
+  onClose: () => void;
+}) {
+  const hop = allHops[hopIndex];
+
+  // Reconstruct full paths for each edge in this hop (capped)
+  const initialPaths = useMemo(() => {
+    const edges = hop.edges.slice(0, EXPLORE_MAX_LANES);
+    return edges.map((edge) => reconstructPath(allHops, hopIndex, edge));
+  }, [allHops, hopIndex, hop.edges]);
+
+  // Escape to close
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-slate-950 border border-slate-800 rounded-xl w-[90vw] h-[85vh] flex flex-col overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
+          <h3 className="text-sm font-medium flex items-center gap-2">
+            <span className="text-slate-400">Exploring Hop {hopIndex + 1}:</span>
+            <span className="text-indigo-400 font-mono">{hop.abType}</span>
+            <span className="text-slate-600 text-xs">
+              ({hop.edges.length} edges{hop.edges.length > EXPLORE_MAX_LANES ? `, showing first ${EXPLORE_MAX_LANES}` : ''})
+            </span>
+          </h3>
+          <button
+            onClick={onClose}
+            className="ml-auto text-slate-500 hover:text-slate-300 transition-colors p-1"
+            title="Close (Escape)"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Drill context scoped to this hop's results */}
+        <DrillProvider rootUid={startUid} initialPaths={initialPaths}>
+          <DrillStack
+            schema={schema}
+            viewRegistry={viewRegistry}
+            config={config}
+          />
+        </DrillProvider>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

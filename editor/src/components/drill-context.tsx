@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 
 export interface DrillFrame {
   uid: string;
@@ -163,15 +163,40 @@ export const DrillOverrideContext = createContext<Partial<DrillContextValue> | n
 
 // --- Provider ---
 
-export function DrillProvider({ rootUid, children }: { rootUid: string; children: ReactNode }) {
-  const [state, dispatch] = useReducer(drillReducer, rootUid, (uid) => {
-    laneCounter = 0;
-    const id = nextLaneId();
-    return { lanes: [{ id, frames: [makeRootFrame(uid)] }], activeLaneId: id };
-  });
+export function DrillProvider({
+  rootUid,
+  initialPaths,
+  children,
+}: {
+  rootUid: string;
+  /** Optional pre-built paths (each is an array of DrillFrames after the root). */
+  initialPaths?: DrillFrame[][];
+  children: ReactNode;
+}) {
+  const [state, dispatch] = useReducer(
+    drillReducer,
+    { rootUid, initialPaths },
+    (init) => {
+      laneCounter = 0;
+      if (init.initialPaths && init.initialPaths.length > 0) {
+        const lanes = init.initialPaths.map((frames) => ({
+          id: nextLaneId(),
+          frames: [makeRootFrame(init.rootUid), ...frames],
+        }));
+        return { lanes, activeLaneId: lanes[0].id };
+      }
+      const id = nextLaneId();
+      return { lanes: [{ id, frames: [makeRootFrame(init.rootUid)] }], activeLaneId: id };
+    },
+  );
 
+  // Reset when rootUid changes (but not on initial mount — the initializer handles that)
+  const prevRootUid = useRef(rootUid);
   useEffect(() => {
-    dispatch({ type: 'RESET', rootUid });
+    if (prevRootUid.current !== rootUid) {
+      prevRootUid.current = rootUid;
+      dispatch({ type: 'RESET', rootUid });
+    }
   }, [rootUid]);
 
   const activeLane = useMemo(
