@@ -75,8 +75,6 @@ if (subcommand === 'editor') {
   console.log('  Editor options:');
   console.log('    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)');
   console.log('    --entities <path>      Path to entities directory');
-  console.log('    --registry <path>      Path to TypeScript file exporting a GraphRegistry (deprecated)');
-  console.log('    --views <path>         Path to TypeScript file exporting views via defineViews() (deprecated)');
   console.log('    --project <id>         GCP project ID (default: auto-detect via ADC)');
   console.log('    --collection <path>    Firestore collection path (default: graph)');
   console.log('    --port <number>        Server port (default: 3883)');

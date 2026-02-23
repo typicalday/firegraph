@@ -9,8 +9,6 @@ import { importJiti } from './jiti-import.js';
  */
 export interface LoadedConfig {
   entities?: string;
-  registry?: string;
-  views?: string;
   project?: string;
   collection?: string;
   emulator?: string;
@@ -89,7 +87,7 @@ export async function loadConfig(explicitPath?: string): Promise<{
   if (!config || typeof config !== 'object') {
     throw new Error(
       `Config file "${configPath}" must export a FiregraphConfig object.\n` +
-        `Example: export default defineConfig({ registry: './src/registry.ts' });`,
+        `Example: export default defineConfig({ entities: './entities' });`,
     );
   }
 

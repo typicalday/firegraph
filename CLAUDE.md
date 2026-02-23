@@ -219,12 +219,10 @@ The `editor/` directory contains a full-stack web UI for browsing and editing gr
 |-----------|---------|
 | `editor/server/index.ts` | Express server — reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
 | `editor/server/config-loader.ts` | Discovers and loads `firegraph.config.ts` via `jiti` |
-| `editor/server/registry-loader.ts` | Dynamic TypeScript import of user's registry file via `jiti` |
+| `editor/server/entities-loader.ts` | Loads per-entity views via `jiti`, builds `ViewRegistry`, merges view defaults |
 | `editor/server/schema-introspect.ts` | Converts JSON Schema → `FieldMeta[]` for form generation |
-| `editor/server/entities-loader.ts` | Wraps `discoverEntities()` for editor: loads views, merges defaults |
 | `editor/server/schema-views-validator.ts` | Validates sample data against JSON Schemas, detects orphaned views |
-| `editor/server/views-loader.ts` | Dynamic import of user's views file via `jiti` (metadata extraction) |
-| `editor/server/views-bundler.ts` | esbuild bundles views file into browser-loadable ES module |
+| `editor/server/views-bundler.ts` | esbuild bundles per-entity views into browser-loadable ES module |
 | `editor/src/` | React 19 + React Router + Tailwind CSS frontend |
 | `editor/src/components/SchemaForm.tsx` | Dynamic form generator from `FieldMeta[]` |
 | `editor/src/components/NodeEditor.tsx` | Create/edit node form |
@@ -374,9 +372,9 @@ interface ViewMeta {
 
 #### Creating a Views File
 
-**Preferred: Per-entity `views.ts` files** (see "Per-Entity Folder Convention" above). Each entity's `views.ts` exports a default array of view classes. Sample data lives in `sample.json` next to it.
+**Per-entity `views.ts` files** (see "Per-Entity Folder Convention" above) are the standard approach. Each entity's `views.ts` exports a default array of view classes. Sample data lives in `sample.json` next to it.
 
-**Legacy: Monolithic views file** using `defineViews()`. Create a TypeScript file in your project (e.g. `src/views.ts`). It must export a `ViewRegistry` — either as the default export, a named `views` export, or any named export.
+**Monolithic views file** using `defineViews()` is also possible for standalone use. Create a TypeScript file in your project (e.g. `src/views.ts`). It must export a `ViewRegistry` — either as the default export, a named `views` export, or any named export.
 
 ```typescript
 // src/views.ts
@@ -479,25 +477,19 @@ npx firegraph editor   # auto-discovers firegraph.config.ts
 Or pass flags directly:
 
 ```bash
-# Per-entity convention (recommended)
 npx firegraph editor --entities ./entities --collection graph
 
 # With emulator
 npx firegraph editor --entities ./entities --emulator --project demo-project
-
-# Legacy (deprecated) — explicit registry and views files
-npx firegraph editor --registry ./src/registry.ts --views ./src/views.ts
 ```
 
-The `--views` flag/config is optional. Without it, the editor works exactly as before (JSON view only). With it, the editor loads views and shows view switchers wherever views are registered.
+Without per-entity `views.ts` files, the editor shows raw JSON. With views, it shows view switchers wherever views are registered.
 
 #### What Happens at Startup
 
-When the editor server starts with `--views`:
+1. **Metadata extraction**: `entities-loader.ts` uses `jiti` to import each per-entity `views.ts` in Node.js. A shim for `HTMLElement` is injected so view classes can be loaded without a browser. The loader reads the default export (array of view classes) and extracts metadata (tag names, view names, descriptions).
 
-1. **Metadata extraction**: `views-loader.ts` uses `jiti` to dynamically import the views file in Node.js. Since `customElements` doesn't exist on the server, `defineViews()` returns only metadata (tag names, view names, descriptions, sample data). The loader duck-type checks for a `ViewRegistry` shape (`{ nodes: {}, edges: {} }`).
-
-2. **Browser bundle**: `views-bundler.ts` uses `esbuild` to compile the views file into a single ES module targeting the browser (`format: 'esm'`, `platform: 'browser'`, `target: 'es2022'`). The bundle is kept in memory (`write: false`), minified, and given a content hash for caching.
+2. **Browser bundle**: `views-bundler.ts` generates a synthetic entry point that imports all per-entity `views.ts` files and calls `defineViews()`. This is bundled with `esbuild` into a single ES module (`format: 'esm'`, `platform: 'browser'`, `target: 'es2022'`). A browser-safe shim replaces the `firegraph` import. The bundle is kept in memory (`write: false`), minified, and given a content hash for caching.
 
 3. **API endpoints**: Two endpoints are registered:
    - `GET /api/views` — returns the view metadata as JSON:
@@ -557,11 +549,9 @@ Views run inside the editor's page, so they share the page's CSS environment. Op
 
 The editor's background is dark (slate-950), so views that use a dark color scheme will blend in naturally.
 
-#### Example Views File
+#### Example Views Files
 
-See `examples/07-model-views.ts` for a complete working example with:
-- **Node views**: `TourCard` (compact card), `TourDetail` (full details table), `DepartureBadge` (date badge with pricing)
-- **Edge views**: `HasDepartureTimeline` (timeline entry with status dot), `HasRiderCard` (compact rider assignment card)
+See `examples/entities/nodes/tour/views.ts` and `examples/entities/edges/hasDeparture/views.ts` for working per-entity views. See `examples/07-model-views.ts` for a comprehensive example using the monolithic `defineViews()` API directly.
 
 #### Dependencies
 
@@ -578,13 +568,7 @@ Projects can create a `firegraph.config.ts` (or `.js`/`.mjs`) in their root to c
 import { defineConfig } from 'firegraph';
 
 export default defineConfig({
-  // Per-entity folder convention (recommended)
   entities: './entities',
-
-  // Legacy: explicit registry and views files (deprecated)
-  // registry: './src/registry.ts',
-  // views: './src/views.ts',
-
   project: 'my-project',
   collection: 'graph',
   emulator: '127.0.0.1:8080',
@@ -594,19 +578,10 @@ export default defineConfig({
     readonly: false,
   },
 
+  // Optional: override per-entity meta.json viewDefaults from config
   viewDefaults: {
     nodes: {
-      task: {
-        default: 'card',
-        rules: [
-          { when: { status: 'completed' }, view: 'detail' },
-          { when: { status: 'failed' }, view: 'detail' },
-        ],
-      },
-      user: { default: 'card' },
-    },
-    edges: {
-      manages: { default: 'summary' },
+      task: { default: 'card', listing: 'row', detail: 'detail' },
     },
   },
 });
@@ -620,7 +595,7 @@ export default defineConfig({
 2. Otherwise search cwd for `firegraph.config.ts`, `firegraph.config.js`, `firegraph.config.mjs` (in that order).
 3. If no config file found, fall back to CLI flags only.
 
-Discovery and loading is handled by `editor/server/config-loader.ts` using `jiti` (same pattern as registry/views loading).
+Discovery and loading is handled by `editor/server/config-loader.ts` using `jiti`.
 
 ### Precedence
 

@@ -77,31 +77,6 @@ export function defineViews(input) {
 `;
 
 /**
- * Bundle the user's views file into a browser-compatible ES module.
- * The resulting code registers custom elements when loaded via `<script type="module">`.
- */
-export async function bundleViews(viewsPath: string): Promise<ViewBundle> {
-  const absolutePath = path.resolve(process.cwd(), viewsPath);
-
-  const result = await build({
-    entryPoints: [absolutePath],
-    bundle: true,
-    format: 'esm',
-    platform: 'browser',
-    target: 'es2022',
-    write: false,
-    minify: true,
-    sourcemap: false,
-    plugins: [firegraphBrowserShim()],
-  });
-
-  const code = result.outputFiles[0].text;
-  const hash = crypto.createHash('sha256').update(code).digest('hex').slice(0, 12);
-
-  return { code, hash };
-}
-
-/**
  * Bundle multiple per-entity view files into a single browser-compatible ES module.
  * Creates a synthetic entry point that imports all view files and calls defineViews().
  */

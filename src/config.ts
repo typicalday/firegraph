@@ -8,14 +8,9 @@
  * import { defineConfig } from 'firegraph';
  *
  * export default defineConfig({
- *   registry: './src/registry.ts',
- *   views: './src/views.ts',
+ *   entities: './entities',
+ *   project: 'my-project',
  *   collection: 'graph',
- *   viewDefaults: {
- *     nodes: {
- *       task: { default: 'card', listing: 'row', detail: 'detail' },
- *     },
- *   },
  * });
  * ```
  */
@@ -55,16 +50,6 @@ export interface ViewDefaultsConfig {
 export interface FiregraphConfig {
   /** Path to entities directory (per-entity folder convention). */
   entities?: string;
-  /**
-   * Path to TypeScript file exporting a GraphRegistry.
-   * @deprecated Use `entities` with the per-entity folder convention instead.
-   */
-  registry?: string;
-  /**
-   * Path to TypeScript file exporting views via defineViews().
-   * @deprecated Use per-entity `views.ts` files inside the entities directory instead.
-   */
-  views?: string;
   /** GCP project ID. */
   project?: string;
   /** Firestore collection path (default: 'graph'). */
@@ -80,7 +65,7 @@ export interface FiregraphConfig {
     readonly?: boolean;
   };
 
-  /** Declarative view defaults per entity type. */
+  /** Declarative view defaults per entity type (overrides per-entity meta.json). */
   viewDefaults?: ViewDefaultsConfig;
 }
 
@@ -94,7 +79,7 @@ export interface FiregraphConfig {
  * @example
  * ```ts
  * import { defineConfig } from 'firegraph';
- * export default defineConfig({ registry: './src/registry.ts' });
+ * export default defineConfig({ entities: './entities' });
  * ```
  */
 export function defineConfig(config: FiregraphConfig): FiregraphConfig {

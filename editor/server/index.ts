@@ -8,11 +8,9 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { createGraphClient } from '../../src/index.js';
 import type { GraphClient, GraphRegistry, DiscoveryResult } from '../../src/types.js';
 import { createRegistry } from '../../src/registry.js';
-import { loadRegistry } from './registry-loader.js';
 import { introspectRegistry } from './schema-introspect.js';
 import type { SchemaMetadata } from './schema-introspect.js';
-import { loadViews } from './views-loader.js';
-import { bundleViews, bundleEntityViews } from './views-bundler.js';
+import { bundleEntityViews } from './views-bundler.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import { loadConfig } from './config-loader.js';
@@ -35,8 +33,6 @@ interface CliArgs {
   collection?: string;
   port?: number;
   emulator?: string;
-  registryPath?: string;
-  viewsPath?: string;
   readonly: boolean;
 }
 
@@ -48,8 +44,6 @@ function parseArgs(): CliArgs {
   let collection: string | undefined;
   let port: number | undefined;
   let emulator: string | undefined;
-  let registryPath: string | undefined;
-  let viewsPath: string | undefined;
   let readonly = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -67,10 +61,6 @@ function parseArgs(): CliArgs {
     else if (arg.startsWith('--emulator=')) emulator = arg.split('=')[1];
     else if (arg === '--emulator' && args[i + 1] && !args[i + 1].startsWith('--')) emulator = args[++i];
     else if (arg === '--emulator') emulator = '127.0.0.1:8080';
-    else if (arg.startsWith('--registry=')) registryPath = arg.split('=')[1];
-    else if (arg === '--registry' && args[i + 1]) registryPath = args[++i];
-    else if (arg.startsWith('--views=')) viewsPath = arg.split('=')[1];
-    else if (arg === '--views' && args[i + 1]) viewsPath = args[++i];
     else if (arg === '--readonly') readonly = true;
   }
 
@@ -80,7 +70,7 @@ function parseArgs(): CliArgs {
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
 
-  return { configPath, entitiesPath, project, collection, port, emulator, registryPath, viewsPath, readonly };
+  return { configPath, entitiesPath, project, collection, port, emulator, readonly };
 }
 
 const cliArgs = parseArgs();
@@ -91,8 +81,6 @@ let resolvedProject: string | undefined;
 let resolvedCollection: string;
 let resolvedEmulator: string | undefined;
 let resolvedEntitiesPath: string | undefined;
-let resolvedRegistryPath: string | undefined;
-let resolvedViewsPath: string | undefined;
 let resolvedReadonly: boolean;
 let resolvedPort: number;
 let resolvedConfigPath: string | undefined;
@@ -122,8 +110,6 @@ async function init() {
   resolvedCollection = cliArgs.collection ?? fileConfig.collection ?? 'graph';
   resolvedEmulator = cliArgs.emulator ?? fileConfig.emulator;
   resolvedEntitiesPath = cliArgs.entitiesPath ?? fileConfig.entities;
-  resolvedRegistryPath = cliArgs.registryPath ?? fileConfig.registry;
-  resolvedViewsPath = cliArgs.viewsPath ?? fileConfig.views;
   resolvedReadonly = cliArgs.readonly || (fileConfig.editor?.readonly ?? false);
 
   const isProduction = process.env.NODE_ENV === 'production';
@@ -152,22 +138,20 @@ async function init() {
 
   db = getFirestore();
 
-  // 4. Load entities (entities mode) or registry (legacy mode)
+  // 4. Load entities
   if (resolvedEntitiesPath) {
     await initEntitiesMode(fileConfig);
-  } else if (resolvedRegistryPath) {
-    await initLegacyMode(fileConfig);
   } else {
     console.error('');
-    console.error('  Error: entities directory or registry path is required.');
+    console.error('  Error: entities directory is required.');
     console.error('');
     console.error('  Provide via firegraph.config.ts or CLI flags:');
     console.error('');
-    console.error('    // firegraph.config.ts (recommended)');
+    console.error('    // firegraph.config.ts');
     console.error('    export default defineConfig({ entities: "./entities" });');
     console.error('');
-    console.error('    // or legacy mode:');
-    console.error('    export default defineConfig({ registry: "./src/registry.ts" });');
+    console.error('    // or CLI flag:');
+    console.error('    npx firegraph editor --entities ./entities');
     console.error('');
     process.exit(1);
   }
@@ -212,33 +196,6 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
   viewDefaultsData = mergeViewDefaults(discovery, fileConfig.viewDefaults);
 
   // Cross-validate
-  crossValidate();
-}
-
-async function initLegacyMode(fileConfig: LoadedConfig) {
-  console.warn('  [deprecated] Using legacy registry mode. Migrate to per-entity folder convention with `entities` config.');
-
-  console.log(`  Loading registry from ${resolvedRegistryPath}...`);
-  registry = await loadRegistry(resolvedRegistryPath!);
-  schemaMetadata = introspectRegistry(registry);
-  console.log(
-    `  Registry loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
-  );
-
-  // Load views if provided
-  if (resolvedViewsPath) {
-    console.log(`  Loading views from ${resolvedViewsPath}...`);
-    viewRegistry = await loadViews(resolvedViewsPath);
-    const nodeViewCount = Object.values(viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
-    const edgeViewCount = Object.values(viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
-    console.log(`  Views loaded: ${nodeViewCount} node views, ${edgeViewCount} edge views`);
-
-    console.log(`  Bundling views for browser...`);
-    viewBundle = await bundleViews(resolvedViewsPath);
-    console.log(`  Views bundled (${(viewBundle.code.length / 1024).toFixed(1)} KB)`);
-  }
-
-  viewDefaultsData = fileConfig.viewDefaults ?? null;
   crossValidate();
 }
 
@@ -329,12 +286,6 @@ async function start() {
     }
     if (resolvedEntitiesPath) {
       console.log(`  Entities:   ${resolvedEntitiesPath}`);
-    }
-    if (resolvedRegistryPath) {
-      console.log(`  Registry:   ${resolvedRegistryPath}`);
-    }
-    if (resolvedViewsPath) {
-      console.log(`  Views:      ${resolvedViewsPath}`);
     }
     if (viewDefaultsData) {
       const nodeDefaults = Object.keys(viewDefaultsData.nodes ?? {}).length;
