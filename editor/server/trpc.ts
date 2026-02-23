@@ -119,14 +119,28 @@ export const appRouter = t.router({
       startAfter: z.string().optional(),
       sortBy: z.string().default('aUid'),
       sortDir: z.enum(['asc', 'desc']).default('asc'),
+      // Legacy single filter (kept for backwards compat)
       filterField: z.string().optional(),
       filterOp: z.string().optional(),
       filterValue: z.string().optional(),
+      // Multi-filter support
+      where: z.array(z.object({
+        field: z.string(),
+        op: z.string(),
+        value: z.union([z.string(), z.number(), z.boolean()]),
+      })).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const col = ctx.db.collection(ctx.collection);
-      const allowedSortFields = ['aUid', 'createdAt', 'updatedAt'];
-      const effectiveSortBy = allowedSortFields.includes(input.sortBy) ? input.sortBy : 'aUid';
+      const builtinSortFields = ['aUid', 'createdAt', 'updatedAt'];
+
+      // Allow sorting by data fields (prefix with data. if needed)
+      let effectiveSortBy: string;
+      if (builtinSortFields.includes(input.sortBy)) {
+        effectiveSortBy = input.sortBy;
+      } else {
+        effectiveSortBy = input.sortBy.startsWith('data.') ? input.sortBy : `data.${input.sortBy}`;
+      }
 
       let query: Query = col.where('abType', '==', NODE_RELATION);
 
@@ -134,9 +148,20 @@ export const appRouter = t.router({
         query = query.where('aType', '==', input.type);
       }
 
-      if (input.filterField && input.filterOp && input.filterValue !== undefined) {
-        const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
-        type AllowedOp = (typeof allowedOps)[number];
+      const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
+      type AllowedOp = (typeof allowedOps)[number];
+
+      // Apply multi-filter where clauses
+      if (input.where && input.where.length > 0) {
+        for (const clause of input.where) {
+          if (!allowedOps.includes(clause.op as AllowedOp)) continue;
+          const field = clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+          query = query.where(field, clause.op as AllowedOp, clause.value);
+        }
+      }
+
+      // Legacy single filter fallback
+      if (!input.where?.length && input.filterField && input.filterOp && input.filterValue !== undefined) {
         if (allowedOps.includes(input.filterOp as AllowedOp)) {
           const field = input.filterField.startsWith('data.') ? input.filterField : `data.${input.filterField}`;
           let coercedValue: string | number = input.filterValue;
