@@ -16,6 +16,26 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./react": {
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
+    },
+    "./svelte": {
+      "import": {
+        "types": "./dist/svelte.d.ts",
+        "default": "./dist/svelte.js"
+      },
+      "require": {
+        "types": "./dist/svelte.d.cts",
+        "default": "./dist/svelte.cjs"
+      }
     }
   },
   "bin": {
@@ -45,7 +65,15 @@
     "emulator:stop": "npx kill-port -y 4188 8188"
   },
   "peerDependencies": {
-    "firebase-admin": "^12.0.0 || ^13.0.0"
+    "firebase-admin": "^12.0.0 || ^13.0.0",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "svelte": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true },
+    "svelte": { "optional": true }
   },
   "dependencies": {
     "ajv": "^8.18.0",

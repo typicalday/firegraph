@@ -1,11 +1,11 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/codegen/index.ts'],
+  entry: ['src/index.ts', 'src/codegen/index.ts', 'src/react.ts', 'src/svelte.ts'],
   format: ['esm', 'cjs'],
   dts: true,
   sourcemap: true,
   clean: true,
   target: 'node18',
-  external: ['firebase-admin', 'json-schema-to-typescript'],
+  external: ['firebase-admin', 'json-schema-to-typescript', 'react', 'react-dom', 'svelte'],
 });

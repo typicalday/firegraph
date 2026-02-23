@@ -32,6 +32,8 @@ All records live in a single Firestore collection. Document IDs:
 | `src/codegen/index.ts` | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`) |
 | `src/config.ts` | `defineConfig()`, `resolveView()` — project config file types and view resolution |
 | `src/views.ts` | `defineViews()` — framework-agnostic model view definitions (Web Components) |
+| `src/react.ts` | `wrapReact()` — React adapter for firegraph views (`firegraph/react`) |
+| `src/svelte.ts` | `wrapSvelte()` — Svelte 5 adapter for firegraph views (`firegraph/svelte`) |
 | `src/record.ts` | Builds `GraphRecord` objects with server timestamps |
 | `src/docid.ts` | Computes document IDs (passthrough for nodes, sharded hash for edges) |
 | `src/id.ts` | 21-char nanoid generation |
@@ -160,6 +162,49 @@ View files can import shared helpers from a sibling or parent `shared.ts`. The e
 - **Browser (bundle):** esbuild creates a synthetic entry using default imports from each entity's views.ts
 
 See `examples/entities/nodes/tour/views.ts` and `examples/entities/edges/hasDeparture/views.ts` for working examples.
+
+#### Framework Adapters (React / Svelte)
+
+Projects using React or Svelte can wrap their existing components instead of writing raw HTMLElement boilerplate. Adapters are separate entry points — they don't add dependencies for projects that don't use them.
+
+**React** (`firegraph/react`):
+```tsx
+import { wrapReact } from 'firegraph/react';
+
+const TaskCard = wrapReact(({ data }) => (
+  <div style={{ padding: 12 }}>
+    <strong>{String(data.title ?? '')}</strong>
+  </div>
+), { viewName: 'card', description: 'Compact task card' });
+
+export default [TaskCard];
+```
+
+**Svelte 5** (`firegraph/svelte`):
+```ts
+import { wrapSvelte } from 'firegraph/svelte';
+import TaskCard from './TaskCard.svelte';
+
+export default [
+  wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact task card' }),
+];
+```
+
+The Svelte component receives a `data` prop: `let { data } = $props();`
+
+**How it works:**
+- `wrapReact(Component, meta)` returns an HTMLElement class that lazily imports `react` and `react-dom/client`, creates a React root, and renders the component with `{ data }` props
+- `wrapSvelte(Component, meta)` returns an HTMLElement class that lazily imports `svelte`, mounts the component with `{ data }` props, and updates reactively
+- React/Svelte are resolved from the project's `node_modules` by esbuild — firegraph doesn't bundle them
+- The browser shim in `views-bundler.ts` routes `firegraph/react` and `firegraph/svelte` to self-contained adapter implementations
+- For Svelte projects: `esbuild-svelte` must be installed for the editor to compile `.svelte` files
+
+**Peer dependencies** (all optional):
+- `react` ^18 or ^19, `react-dom` ^18 or ^19 — for `firegraph/react`
+- `svelte` ^5 — for `firegraph/svelte`
+- `esbuild-svelte` — for `.svelte` file compilation in the editor bundler
+
+See `examples/entities/nodes/tour/views-react.tsx` and `examples/entities/nodes/tour/views-svelte.ts` for examples.
 
 Discovery is handled by `discoverEntities(entitiesDir)` from `src/discover.ts`. It returns a `DiscoveryResult` with `nodes` and `edges` maps, plus warnings for dangling topology references.
 

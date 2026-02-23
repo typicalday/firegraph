@@ -9,12 +9,16 @@ export interface ViewBundle {
 }
 
 /**
- * Inline browser-safe shim for the `firegraph` import.
+ * Inline browser-safe shims for `firegraph`, `firegraph/react`, and
+ * `firegraph/svelte` imports.
  *
- * View files only use `defineViews` from firegraph. Rather than bundling
- * the entire firegraph package (which pulls in firebase-admin, crypto, fs,
- * etc.), we provide a virtual module containing just `defineViews` — a pure
- * browser function with zero Node.js dependencies.
+ * View files import from these paths. Rather than bundling the entire
+ * firegraph package (which pulls in firebase-admin, crypto, fs, etc.),
+ * we provide virtual modules containing only the browser-safe adapter
+ * functions with zero Node.js dependencies.
+ *
+ * React and Svelte themselves are NOT shimmed — they are resolved from
+ * the project's node_modules and bundled by esbuild.
  */
 function firegraphBrowserShim(): Plugin {
   const SHIM_NAMESPACE = 'firegraph-browser-shim';
@@ -28,18 +32,24 @@ function firegraphBrowserShim(): Plugin {
         namespace: SHIM_NAMESPACE,
       }));
 
-      b.onLoad({ filter: /.*/, namespace: SHIM_NAMESPACE }, () => ({
-        contents: DEFINE_VIEWS_SHIM,
-        loader: 'js',
-      }));
+      b.onLoad({ filter: /.*/, namespace: SHIM_NAMESPACE }, (args) => {
+        let contents: string;
+        if (args.path === 'firegraph/react') {
+          contents = REACT_ADAPTER_SHIM;
+        } else if (args.path === 'firegraph/svelte') {
+          contents = SVELTE_ADAPTER_SHIM;
+        } else {
+          contents = DEFINE_VIEWS_SHIM;
+        }
+        return { contents, loader: 'js' };
+      });
     },
   };
 }
 
 /**
  * Browser-safe implementation of `defineViews`.
- * This is a self-contained copy of the logic from `src/views.ts` that
- * runs purely in the browser (no Node.js builtins).
+ * Self-contained copy of the logic from `src/views.ts`.
  */
 const DEFINE_VIEWS_SHIM = `
 function sanitizeTagPart(s) {
@@ -75,6 +85,110 @@ export function defineViews(input) {
   return { nodes, edges };
 }
 `;
+
+/**
+ * Browser-safe implementation of `wrapReact` from `firegraph/react`.
+ * Lazily imports react and react-dom/client at render time.
+ */
+const REACT_ADAPTER_SHIM = `
+export function wrapReact(Component, meta) {
+  let React = null;
+  let ReactDOM = null;
+  let loaded = false;
+
+  async function ensureReact() {
+    if (loaded) return;
+    [React, ReactDOM] = await Promise.all([
+      import('react'),
+      import('react-dom/client'),
+    ]);
+    loaded = true;
+  }
+
+  const Cls = class extends HTMLElement {
+    _data = {};
+    _root = null;
+    _mounted = false;
+
+    set data(v) { this._data = v; this._render(); }
+    get data() { return this._data; }
+
+    connectedCallback() { this._mounted = true; this._render(); }
+    disconnectedCallback() {
+      this._mounted = false;
+      if (this._root) { this._root.unmount(); this._root = null; }
+    }
+
+    async _render() {
+      if (!this._mounted) return;
+      await ensureReact();
+      if (!this._mounted) return;
+      if (!this._root) this._root = ReactDOM.createRoot(this);
+      this._root.render(React.createElement(Component, { data: this._data }));
+    }
+  };
+  Cls.viewName = meta.viewName;
+  Cls.description = meta.description;
+  return Cls;
+}
+`;
+
+/**
+ * Browser-safe implementation of `wrapSvelte` from `firegraph/svelte`.
+ * Lazily imports svelte at mount time. Uses Svelte 5 mount/unmount API.
+ */
+const SVELTE_ADAPTER_SHIM = `
+export function wrapSvelte(Component, meta) {
+  const Cls = class extends HTMLElement {
+    _data = {};
+    _instance = null;
+    _props = null;
+    _mounted = false;
+
+    set data(v) {
+      this._data = v;
+      if (this._props) { this._props.data = v; }
+      else if (this._mounted) { this._mount(); }
+    }
+    get data() { return this._data; }
+
+    connectedCallback() { this._mounted = true; this._mount(); }
+    disconnectedCallback() {
+      this._mounted = false;
+      if (this._instance) {
+        import('svelte').then(({ unmount }) => {
+          if (this._instance) { unmount(this._instance); this._instance = null; this._props = null; }
+        });
+      }
+    }
+
+    async _mount() {
+      const { mount, unmount } = await import('svelte');
+      if (!this._mounted) return;
+      if (this._instance) unmount(this._instance);
+      this._props = { data: this._data };
+      this._instance = mount(Component, { target: this, props: this._props });
+    }
+  };
+  Cls.viewName = meta.viewName;
+  Cls.description = meta.description;
+  return Cls;
+}
+`;
+
+/**
+ * Try to load the esbuild-svelte plugin for .svelte file compilation.
+ * Returns null if esbuild-svelte is not installed.
+ */
+async function loadSveltePlugin(): Promise<Plugin | null> {
+  try {
+    const mod = await import('esbuild-svelte');
+    const esbuildSvelte = mod.default ?? mod;
+    return esbuildSvelte({ compilerOptions: { css: 'injected' } });
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Bundle multiple per-entity view files into a single browser-compatible ES module.
@@ -129,6 +243,11 @@ ${edgeEntries.join(',\n')}
 });
 `;
 
+  // Build plugins — always include firegraph shim, optionally add Svelte
+  const plugins: Plugin[] = [firegraphBrowserShim()];
+  const sveltePlugin = await loadSveltePlugin();
+  if (sveltePlugin) plugins.push(sveltePlugin);
+
   const result = await build({
     stdin: {
       contents: syntheticEntry,
@@ -142,7 +261,7 @@ ${edgeEntries.join(',\n')}
     write: false,
     minify: true,
     sourcemap: false,
-    plugins: [firegraphBrowserShim()],
+    plugins,
   });
 
   const code = result.outputFiles[0].text;
