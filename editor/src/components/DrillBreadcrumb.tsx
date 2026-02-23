@@ -1,4 +1,5 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDrill, type DrillFrame, type Lane } from './drill-context';
 import { getTypeBadgeColor } from '../utils';
 import type { PeekPosition } from './DrillStack';
@@ -57,6 +58,7 @@ function buildTrie(lanes: Lane[]): TrieNode | null {
  * hovering peeks.
  */
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
+  const navigate = useNavigate();
   const { lanes, activeLaneId, activeIndex, popTo, closeLane, switchLane } = useDrill();
 
   const inverseLabelMap = useMemo(() => {
@@ -113,10 +115,19 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   /** Clickable frame button. */
   function renderFrameButton(node: TrieNode): ReactNode {
     const laneId = bestLaneFor(node);
+    const isActive = node.laneIds.includes(activeLaneId) && node.depth === activeIndex;
     const isHighlighted = node.laneIds.includes(visualLaneId) && node.depth === visualIndex;
     return (
       <button
-        onClick={() => { switchLane(laneId); popTo(laneId, node.depth); }}
+        onClick={() => {
+          if (isActive) {
+            // "Go to" — navigate fresh, resetting the drill context
+            navigate(`/node/${encodeURIComponent(node.frame.uid)}`);
+          } else {
+            switchLane(laneId);
+            popTo(laneId, node.depth);
+          }
+        }}
         onMouseEnter={() => onPeek(laneId, node.depth)}
         className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors shrink-0 ${
           isHighlighted
