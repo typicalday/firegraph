@@ -3,7 +3,7 @@ import type { CreateExpressContextOptions } from '@trpc/server/adapters/express'
 import type { Firestore, DocumentData, Query } from 'firebase-admin/firestore';
 import { Timestamp } from 'firebase-admin/firestore';
 import type { GraphClient, GraphRegistry } from '../../src/types.js';
-import { generateId, ValidationError, RegistryViolationError } from '../../src/index.js';
+import { generateId, ValidationError, RegistryViolationError, computeEdgeDocId } from '../../src/index.js';
 import type { SchemaMetadata } from './schema-introspect.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
@@ -445,6 +445,32 @@ export const appRouter = t.router({
       return { results: results.slice(0, input.limit) };
     }),
 
+  // --- Check Node Exists ---
+  checkNode: publicProcedure
+    .input(z.object({ uid: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const doc = await ctx.db.collection(ctx.collection).doc(input.uid).get();
+      if (!doc.exists) return { exists: false as const, node: null };
+      const data = serializeRecord(doc.data()!);
+      return {
+        exists: true as const,
+        node: { aType: data.aType as string, aUid: data.aUid as string },
+      };
+    }),
+
+  // --- Check Edge Exists ---
+  checkEdge: publicProcedure
+    .input(z.object({
+      aUid: z.string().min(1),
+      abType: z.string().min(1),
+      bUid: z.string().min(1),
+    }))
+    .query(async ({ ctx, input }) => {
+      const docId = computeEdgeDocId(input.aUid, input.abType, input.bUid);
+      const doc = await ctx.db.collection(ctx.collection).doc(docId).get();
+      return { exists: doc.exists };
+    }),
+
   // --- Write: Create Node ---
   createNode: writeProcedure
     .input(z.object({
@@ -543,15 +569,32 @@ export const appRouter = t.router({
         const aUid = input.newNodeSide === 'a' ? newUid : input.existingUid;
         const bUid = input.newNodeSide === 'b' ? newUid : input.existingUid;
 
+        // Pre-check: does the node and/or edge already exist?
+        const [existingNode, existingEdge] = await Promise.all([
+          ctx.graphClient.getNode(newUid),
+          ctx.graphClient.getEdge(aUid, input.abType, bUid),
+        ]);
+
+        if (existingNode && existingEdge) {
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: `Both node "${newUid}" and edge ${aUid} —[${input.abType}]→ ${bUid} already exist.`,
+          });
+        }
+
         await ctx.graphClient.runTransaction(async (tx) => {
-          await tx.putNode(newNodeType, newUid, input.nodeData);
+          if (!existingNode) {
+            await tx.putNode(newNodeType, newUid, input.nodeData);
+          }
+          // putEdge is an upsert — if edge exists, it updates updatedAt + data
           await tx.putEdge(
             input.aType, aUid, input.abType,
             input.bType, bUid, input.edgeData,
           );
         });
-        return { success: true as const, uid: newUid };
+        return { success: true as const, uid: newUid, edgeUpdated: !!existingEdge };
       } catch (err) {
+        if (err instanceof TRPCError) throw err;
         if (err instanceof ValidationError || err instanceof RegistryViolationError) {
           throw new TRPCError({ code: 'BAD_REQUEST', message: err.message });
         }

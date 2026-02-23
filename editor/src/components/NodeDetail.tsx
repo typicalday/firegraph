@@ -296,6 +296,8 @@ export function NodeDetailContent({
           <div className="mb-4">
             <EdgeEditor
               schema={schema}
+              viewRegistry={viewRegistry}
+              config={config}
               defaultUid={node.aUid}
               defaultType={node.aType}
               direction="out"
@@ -308,16 +310,18 @@ export function NodeDetailContent({
             />
           </div>
         )}
-        <PaginatedEdgeSection
-          uid={node.aUid}
-          direction="out"
-          abTypes={outAbTypes}
-          canWrite={canWrite}
-          onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
-          reloadKey={edgeReloadKey}
-          viewRegistry={viewRegistry}
-          config={config}
-        />
+        {!showCreateEdge && (
+          <PaginatedEdgeSection
+            uid={node.aUid}
+            direction="out"
+            abTypes={outAbTypes}
+            canWrite={canWrite}
+            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
+            reloadKey={edgeReloadKey}
+            viewRegistry={viewRegistry}
+            config={config}
+          />
+        )}
       </section>
 
       {/* Incoming Edges */}
@@ -340,6 +344,8 @@ export function NodeDetailContent({
           <div className="mb-4">
             <EdgeEditor
               schema={schema}
+              viewRegistry={viewRegistry}
+              config={config}
               defaultUid={node.aUid}
               defaultType={node.aType}
               direction="in"
@@ -352,17 +358,19 @@ export function NodeDetailContent({
             />
           </div>
         )}
-        <PaginatedEdgeSection
-          uid={node.aUid}
-          direction="in"
-          abTypes={inAbTypes}
-          inverseLabelMap={inverseLabelMap}
-          canWrite={canWrite}
-          onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
-          reloadKey={edgeReloadKey}
-          viewRegistry={viewRegistry}
-          config={config}
-        />
+        {!showCreateIncomingEdge && (
+          <PaginatedEdgeSection
+            uid={node.aUid}
+            direction="in"
+            abTypes={inAbTypes}
+            inverseLabelMap={inverseLabelMap}
+            canWrite={canWrite}
+            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
+            reloadKey={edgeReloadKey}
+            viewRegistry={viewRegistry}
+            config={config}
+          />
+        )}
       </section>
 
       {/* Traversal from this node */}
