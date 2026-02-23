@@ -4,8 +4,6 @@ import { createRegistry } from '../../src/registry.js';
 import { RegistryViolationError } from '../../src/errors.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 import { tourData, riderData } from '../helpers/fixtures.js';
-import { z } from 'zod';
-
 describe('batch operations', () => {
   const db = getTestFirestore();
   let g: ReturnType<typeof createGraphClient>;
@@ -51,7 +49,7 @@ describe('batch operations', () => {
 
   it('registry violation during enqueue prevents commit', async () => {
     const registry = createRegistry([
-      { aType: 'rider', abType: 'is', bType: 'rider', dataSchema: z.object({ name: z.string() }) },
+      { aType: 'rider', abType: 'is', bType: 'rider', jsonSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } },
     ]);
     const gWithRegistry = createGraphClient(db, uniqueCollectionPath(), { registry });
 

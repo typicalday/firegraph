@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["date"],
+  "properties": {
+    "date": { "type": "string" },
+    "maxCapacity": { "type": "integer", "minimum": 0 }
+  }
+}

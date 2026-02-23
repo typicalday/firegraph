@@ -55,9 +55,44 @@ export interface RegistryEntry {
   aType: string;
   abType: string;
   bType: string;
-  dataSchema?: { parse: (data: unknown) => unknown };
+  /** JSON Schema object for the data payload. */
+  jsonSchema?: object;
   description?: string;
   inverseLabel?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Entity Discovery Types
+// ---------------------------------------------------------------------------
+
+/** Topology declaration for an edge (from edge.json). */
+export interface EdgeTopology {
+  from: string | string[];
+  to: string | string[];
+  inverseLabel?: string;
+}
+
+/** A discovered entity from the per-entity folder convention. */
+export interface DiscoveredEntity {
+  kind: 'node' | 'edge';
+  name: string;
+  /** Parsed JSON Schema for the data payload. */
+  schema: object;
+  /** Edge topology (only for edges). */
+  topology?: EdgeTopology;
+  description?: string;
+  /** View defaults from meta.json. */
+  viewDefaults?: import('./config.js').ViewResolverConfig;
+  /** Absolute path to views.ts if present. */
+  viewsPath?: string;
+  /** Sample data from sample.json. */
+  sampleData?: Record<string, unknown>;
+}
+
+/** Result of scanning an entities directory. */
+export interface DiscoveryResult {
+  nodes: Map<string, DiscoveredEntity>;
+  edges: Map<string, DiscoveredEntity>;
 }
 
 export interface GraphClientOptions {

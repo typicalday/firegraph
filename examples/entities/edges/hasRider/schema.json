@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["status", "bookedAt"],
+  "properties": {
+    "status": { "type": "string", "enum": ["pending", "confirmed", "cancelled"] },
+    "bookedAt": { "type": "string" }
+  },
+  "additionalProperties": false
+}

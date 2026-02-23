@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["order"],
+  "properties": {
+    "order": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

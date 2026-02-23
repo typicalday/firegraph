@@ -254,8 +254,8 @@ class HasRiderCard extends HTMLElement {
 // ═══════════════════════════════════════════════════════════════
 // 3. Register views with sample data
 //
-// sampleData is a single object per entity type — it matches the Zod
-// schema from the registry and is shared across all views. The View
+// sampleData is a single object per entity type — it matches the JSON
+// Schema from the registry and is shared across all views. The View
 // Gallery (/views) renders every view with this same data.
 // ═══════════════════════════════════════════════════════════════
 

@@ -1,31 +1,91 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const subcommand = process.argv[2];
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith('--')) {
+      const key = argv[i].slice(2);
+      const next = argv[i + 1];
+      if (next && !next.startsWith('--')) {
+        args[key] = next;
+        i++;
+      } else {
+        args[key] = true;
+      }
+    }
+  }
+  return args;
+}
 
 if (subcommand === 'editor') {
   process.env.NODE_ENV = 'production';
   // Pass remaining args through (strip 'editor' subcommand)
   process.argv = [process.argv[0], process.argv[1], ...process.argv.slice(3)];
   await import(path.join(__dirname, '..', 'dist', 'editor', 'server', 'index.mjs'));
+} else if (subcommand === 'codegen') {
+  const args = parseArgs(process.argv.slice(3));
+  const entitiesDir = path.resolve(args.entities || './entities');
+  const outPath = args.out || null;
+
+  const { discoverEntities } = await import(path.join(__dirname, '..', 'dist', 'index.js'));
+  const { generateTypes } = await import(path.join(__dirname, '..', 'dist', 'codegen', 'index.js'));
+
+  try {
+    const { result, warnings } = discoverEntities(entitiesDir);
+    for (const w of warnings) {
+      console.warn(`  warning: ${w.message}`);
+    }
+
+    const nodeCount = result.nodes.size;
+    const edgeCount = result.edges.size;
+
+    if (nodeCount === 0 && edgeCount === 0) {
+      console.error(`No entities found in ${entitiesDir}`);
+      process.exit(1);
+    }
+
+    const output = await generateTypes(result);
+
+    if (outPath) {
+      const resolved = path.resolve(outPath);
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      fs.writeFileSync(resolved, output, 'utf-8');
+      console.log(`Generated ${nodeCount} node type(s) + ${edgeCount} edge type(s) → ${resolved}`);
+    } else {
+      process.stdout.write(output);
+    }
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
 } else if (subcommand === '--help' || subcommand === '-h' || !subcommand) {
   console.log('');
   console.log('  Usage: firegraph <command> [options]');
   console.log('');
   console.log('  Commands:');
   console.log('    editor    Launch the Firegraph Editor UI');
+  console.log('    codegen   Generate TypeScript types from entity schemas');
   console.log('');
   console.log('  Editor options:');
   console.log('    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)');
-  console.log('    --registry <path>      Path to TypeScript file exporting a GraphRegistry');
-  console.log('    --views <path>         Path to TypeScript file exporting views via defineViews()');
+  console.log('    --entities <path>      Path to entities directory');
+  console.log('    --registry <path>      Path to TypeScript file exporting a GraphRegistry (deprecated)');
+  console.log('    --views <path>         Path to TypeScript file exporting views via defineViews() (deprecated)');
   console.log('    --project <id>         GCP project ID (default: auto-detect via ADC)');
   console.log('    --collection <path>    Firestore collection path (default: graph)');
   console.log('    --port <number>        Server port (default: 3883)');
   console.log('    --emulator [host:port] Use Firestore emulator');
   console.log('    --readonly             Force read-only mode');
+  console.log('');
+  console.log('  Codegen options:');
+  console.log('    --entities <path>      Path to entities directory (default: ./entities)');
+  console.log('    --out <path>           Output file path (default: stdout)');
   console.log('');
   console.log('  Config file:');
   console.log('    Create a firegraph.config.ts in your project root to avoid passing');
@@ -34,8 +94,9 @@ if (subcommand === 'editor') {
   console.log('  Examples:');
   console.log('    npx firegraph editor                                  # uses firegraph.config.ts');
   console.log('    npx firegraph editor --config ./custom-config.ts      # explicit config file');
-  console.log('    npx firegraph editor --registry ./src/registry.ts     # CLI flags (no config file)');
-  console.log('    npx firegraph editor --readonly                       # override config file setting');
+  console.log('    npx firegraph editor --entities ./entities            # per-entity convention');
+  console.log('    npx firegraph codegen --entities ./entities           # types to stdout');
+  console.log('    npx firegraph codegen --entities ./entities --out src/generated/types.ts');
   console.log('');
 } else {
   console.error(`Unknown command: ${subcommand}`);

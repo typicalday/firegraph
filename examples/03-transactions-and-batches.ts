@@ -6,44 +6,66 @@
  */
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { z } from 'zod';
 import { createGraphClient, createRegistry, generateId } from '../src/index.js';
 
 initializeApp({ projectId: 'demo-firegraph' });
 const db = getFirestore();
 
-// ── Schema + Registry ───────────────────────────────────────────
+// ── JSON Schema + Registry ──────────────────────────────────────
 
-const tourDataSchema = z.object({
-  name: z.string().min(1),
-  region: z.string(),
-});
+const tourSchema = {
+  type: 'object',
+  required: ['name', 'region'],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    region: { type: 'string' },
+  },
+  additionalProperties: false,
+};
 
-const departureDataSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  maxCapacity: z.number().int().positive(),
-  registeredRiders: z.number().int().min(0),
-});
+const departureSchema = {
+  type: 'object',
+  required: ['date', 'maxCapacity', 'registeredRiders'],
+  properties: {
+    date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    maxCapacity: { type: 'integer', exclusiveMinimum: 0 },
+    registeredRiders: { type: 'integer', minimum: 0 },
+  },
+  additionalProperties: false,
+};
 
-const riderDataSchema = z.object({
-  displayName: z.string().min(1),
-  email: z.string().email(),
-});
+const riderSchema = {
+  type: 'object',
+  required: ['displayName', 'email'],
+  properties: {
+    displayName: { type: 'string', minLength: 1 },
+    email: { type: 'string', format: 'email' },
+  },
+  additionalProperties: false,
+};
 
-const orderedEdgeData = z.object({
-  order: z.number().int().min(0),
-});
+const orderedEdgeSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'integer', minimum: 0 } },
+  additionalProperties: false,
+};
 
-const bookingEdgeData = z.object({
-  status: z.enum(['pending', 'confirmed', 'cancelled']),
-});
+const bookingEdgeSchema = {
+  type: 'object',
+  required: ['status'],
+  properties: {
+    status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled'] },
+  },
+  additionalProperties: false,
+};
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      dataSchema: tourDataSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', dataSchema: departureDataSchema, description: 'Departure entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     dataSchema: riderDataSchema,     description: 'Rider entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', dataSchema: orderedEdgeData, description: 'Tour has a departure' },
-  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     dataSchema: bookingEdgeData, description: 'Departure has a rider' },
+  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a rider' },
 ]);
 
 const g = createGraphClient(db, 'examples/txn/graph', { registry });

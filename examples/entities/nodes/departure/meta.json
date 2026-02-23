@@ -1,0 +1,8 @@
+{
+  "description": "A specific departure date for a tour",
+  "viewDefaults": {
+    "default": "badge",
+    "listing": "badge",
+    "detail": "badge"
+  }
+}

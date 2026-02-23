@@ -7,6 +7,8 @@ export { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';
 export { createTraversal } from './traverse.js';
 export { defineViews } from './views.js';
 export { defineConfig, resolveView } from './config.js';
+export { discoverEntities } from './discover.js';
+export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
 
 export {
   FiregraphError,
@@ -17,6 +19,8 @@ export {
   InvalidQueryError,
   TraversalError,
 } from './errors.js';
+
+export { DiscoveryError } from './discover.js';
 
 export type {
   GraphRecord,
@@ -39,6 +43,9 @@ export type {
   HopResult,
   TraversalResult,
   TraversalBuilder,
+  EdgeTopology,
+  DiscoveredEntity,
+  DiscoveryResult,
 } from './types.js';
 
 export type {
@@ -56,3 +63,10 @@ export type {
   ViewResolverConfig,
   ViewDefaultsConfig,
 } from './config.js';
+
+export type { FieldMeta } from './json-schema.js';
+
+export type { DiscoveryWarning, DiscoverResult } from './discover.js';
+
+export { generateTypes } from './codegen/index.js';
+export type { CodegenOptions } from './codegen/index.js';

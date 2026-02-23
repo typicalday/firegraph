@@ -1,0 +1,5 @@
+{
+  "from": "departure",
+  "to": "rider",
+  "inverseLabel": "riderOn"
+}

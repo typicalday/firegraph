@@ -6,27 +6,26 @@
  */
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { z } from 'zod';
 import { createGraphClient, createRegistry, createTraversal } from '../src/index.js';
 
 initializeApp({ projectId: 'demo-firegraph' });
 const db = getFirestore();
 
-// ── Schema + Registry ───────────────────────────────────────────
+// ── JSON Schema + Registry ──────────────────────────────────────
 
-const tourDataSchema = z.object({ name: z.string().min(1) });
-const departureDataSchema = z.object({ date: z.string() });
-const riderDataSchema = z.object({ displayName: z.string().min(1) });
+const tourSchema = { type: 'object', required: ['name'], properties: { name: { type: 'string', minLength: 1 } }, additionalProperties: false };
+const departureSchema = { type: 'object', required: ['date'], properties: { date: { type: 'string' } }, additionalProperties: false };
+const riderSchema = { type: 'object', required: ['displayName'], properties: { displayName: { type: 'string', minLength: 1 } }, additionalProperties: false };
 
-const orderedEdgeData = z.object({ order: z.number().int().min(0) });
-const riderEdgeData = z.object({ status: z.enum(['pending', 'confirmed', 'cancelled']) });
+const orderedEdgeSchema = { type: 'object', required: ['order'], properties: { order: { type: 'integer', minimum: 0 } }, additionalProperties: false };
+const riderEdgeSchema = { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled'] } }, additionalProperties: false };
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      dataSchema: tourDataSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', dataSchema: departureDataSchema, description: 'Departure entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     dataSchema: riderDataSchema,     description: 'Rider entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', dataSchema: orderedEdgeData, description: 'Tour has a departure' },
-  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     dataSchema: riderEdgeData,   description: 'Departure has a rider' },
+  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     jsonSchema: riderEdgeSchema,   description: 'Departure has a rider' },
 ]);
 
 const g = createGraphClient(db, 'examples/traverse/graph', { registry });

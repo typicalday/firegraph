@@ -8,6 +8,7 @@ import { importJiti } from './jiti-import.js';
  * to avoid import-path issues in the bundled editor server.
  */
 export interface LoadedConfig {
+  entities?: string;
   registry?: string;
   views?: string;
   project?: string;

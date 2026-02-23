@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "required": ["date", "maxCapacity", "registeredRiders"],
+  "properties": {
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "maxCapacity": { "type": "integer", "exclusiveMinimum": 0 },
+    "registeredRiders": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

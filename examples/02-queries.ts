@@ -6,31 +6,43 @@
  */
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { z } from 'zod';
 import { createGraphClient, createRegistry } from '../src/index.js';
 
 initializeApp({ projectId: 'demo-firegraph' });
 const db = getFirestore();
 
-// ── Schema + Registry ───────────────────────────────────────────
+// ── JSON Schema + Registry ──────────────────────────────────────
 
-const tourDataSchema = z.object({
-  name: z.string().min(1),
-  region: z.string(),
-});
+const tourSchema = {
+  type: 'object',
+  required: ['name', 'region'],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    region: { type: 'string' },
+  },
+  additionalProperties: false,
+};
 
-const departureDataSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+const departureSchema = {
+  type: 'object',
+  required: ['date'],
+  properties: {
+    date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+  },
+  additionalProperties: false,
+};
 
-const orderedEdgeData = z.object({
-  order: z.number().int().min(0),
-});
+const orderedEdgeSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'integer', minimum: 0 } },
+  additionalProperties: false,
+};
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      dataSchema: tourDataSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', dataSchema: departureDataSchema, description: 'Departure entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', dataSchema: orderedEdgeData, description: 'Tour has a departure' },
+  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
 ]);
 
 const g = createGraphClient(db, 'examples/queries/graph', { registry });

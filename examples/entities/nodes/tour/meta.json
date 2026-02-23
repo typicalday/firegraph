@@ -1,0 +1,9 @@
+{
+  "description": "A cycling tour with difficulty and capacity settings",
+  "viewDefaults": {
+    "default": "card",
+    "listing": "card",
+    "detail": "detail",
+    "inline": "card"
+  }
+}

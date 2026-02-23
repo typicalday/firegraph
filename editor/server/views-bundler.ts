@@ -1,6 +1,7 @@
 import { build, type Plugin } from 'esbuild';
 import path from 'path';
 import crypto from 'crypto';
+import type { DiscoveryResult } from '../../src/types.js';
 
 export interface ViewBundle {
   code: string;
@@ -84,6 +85,81 @@ export async function bundleViews(viewsPath: string): Promise<ViewBundle> {
 
   const result = await build({
     entryPoints: [absolutePath],
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: 'es2022',
+    write: false,
+    minify: true,
+    sourcemap: false,
+    plugins: [firegraphBrowserShim()],
+  });
+
+  const code = result.outputFiles[0].text;
+  const hash = crypto.createHash('sha256').update(code).digest('hex').slice(0, 12);
+
+  return { code, hash };
+}
+
+/**
+ * Bundle multiple per-entity view files into a single browser-compatible ES module.
+ * Creates a synthetic entry point that imports all view files and calls defineViews().
+ */
+export async function bundleEntityViews(discovery: DiscoveryResult): Promise<ViewBundle | null> {
+  // Collect all view file paths with their entity info
+  const nodeViews: Array<{ name: string; absPath: string }> = [];
+  const edgeViews: Array<{ name: string; absPath: string }> = [];
+
+  for (const [name, entity] of discovery.nodes) {
+    if (entity.viewsPath) {
+      nodeViews.push({ name, absPath: path.resolve(entity.viewsPath) });
+    }
+  }
+  for (const [name, entity] of discovery.edges) {
+    if (entity.viewsPath) {
+      edgeViews.push({ name, absPath: path.resolve(entity.viewsPath) });
+    }
+  }
+
+  if (nodeViews.length === 0 && edgeViews.length === 0) return null;
+
+  // Generate synthetic entry that imports all views and calls defineViews()
+  const imports: string[] = [];
+  const nodeEntries: string[] = [];
+  const edgeEntries: string[] = [];
+
+  nodeViews.forEach(({ name, absPath }, i) => {
+    const varName = `nodeViews_${i}`;
+    imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
+    nodeEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+  });
+
+  edgeViews.forEach(({ name, absPath }, i) => {
+    const varName = `edgeViews_${i}`;
+    imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
+    edgeEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+  });
+
+  const syntheticEntry = `
+${imports.join('\n')}
+import { defineViews } from 'firegraph';
+
+defineViews({
+  nodes: {
+${nodeEntries.join(',\n')}
+  },
+  edges: {
+${edgeEntries.join(',\n')}
+  }
+});
+`;
+
+  const result = await build({
+    stdin: {
+      contents: syntheticEntry,
+      resolveDir: process.cwd(),
+      loader: 'ts',
+    },
     bundle: true,
     format: 'esm',
     platform: 'browser',

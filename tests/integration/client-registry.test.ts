@@ -1,12 +1,23 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { z } from 'zod';
 import { createGraphClient } from '../../src/client.js';
 import { createRegistry } from '../../src/registry.js';
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
-const tourSchema = z.object({ name: z.string(), difficulty: z.string().optional() });
-const edgeSchema = z.object({ order: z.number() });
+const tourSchema = {
+  type: 'object',
+  required: ['name'],
+  properties: {
+    name: { type: 'string' },
+    difficulty: { type: 'string' },
+  },
+};
+
+const edgeSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'number' } },
+};
 
 describe('client with registry', () => {
   const db = getTestFirestore();
@@ -14,8 +25,8 @@ describe('client with registry', () => {
 
   beforeEach(() => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },
-      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', dataSchema: edgeSchema },
+      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ]);
     g = createGraphClient(db, uniqueCollectionPath(), { registry });
   });

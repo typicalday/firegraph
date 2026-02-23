@@ -1,0 +1,7 @@
+{
+  "description": "A cycling tour",
+  "viewDefaults": {
+    "default": "card",
+    "detail": "detail"
+  }
+}

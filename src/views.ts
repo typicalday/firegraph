@@ -54,7 +54,7 @@ export interface EntityViewConfig {
   views: ViewComponentClass[];
   /**
    * Optional sample data for the gallery. A single object matching
-   * the entity's Zod schema — shared across all views.
+   * the entity's JSON Schema — shared across all views.
    */
   sampleData?: Record<string, unknown>;
 }

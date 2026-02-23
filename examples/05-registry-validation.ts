@@ -3,7 +3,7 @@
  *
  * Shows that firegraph validates the full document on every write:
  * - Triple (aType, abType, bType) is validated by the registry lookup
- * - Data payload is validated by the Zod schema
+ * - Data payload is validated by JSON Schema (via ajv)
  * - UIDs are user-controlled strings
  * - Timestamps are set by the library
  *
@@ -15,7 +15,6 @@
  */
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { z } from 'zod';
 import {
   createGraphClient,
   createRegistry,
@@ -27,74 +26,130 @@ initializeApp({ projectId: 'demo-firegraph' });
 const db = getFirestore();
 
 // ═══════════════════════════════════════════════════════════════
-// 1. Define node data schemas
+// 1. Define node data schemas (JSON Schema)
 // ═══════════════════════════════════════════════════════════════
 
-const tourDataSchema = z.object({
-  name: z.string().min(1),
-  difficulty: z.enum(['easy', 'medium', 'hard']),
-  maxRiders: z.number().int().positive(),
-});
+const tourSchema = {
+  type: 'object',
+  required: ['name', 'difficulty', 'maxRiders'],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+    maxRiders: { type: 'integer', exclusiveMinimum: 0 },
+  },
+  additionalProperties: false,
+};
 
-const departureDataSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  maxCapacity: z.number().int().positive(),
-  registeredRiders: z.number().int().min(0),
-  status: z.enum(['draft', 'open', 'closed', 'completed']),
-});
+const departureSchema = {
+  type: 'object',
+  required: ['date', 'maxCapacity', 'registeredRiders', 'status'],
+  properties: {
+    date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    maxCapacity: { type: 'integer', exclusiveMinimum: 0 },
+    registeredRiders: { type: 'integer', minimum: 0 },
+    status: { type: 'string', enum: ['draft', 'open', 'closed', 'completed'] },
+  },
+  additionalProperties: false,
+};
 
-const userDataSchema = z.object({
-  email: z.string().email(),
-  displayName: z.string().min(1),
-  roles: z.array(z.enum(['customer', 'tourLeader', 'admin'])),
-  authProvider: z.enum(['email', 'google', 'strava']),
-});
+const userSchema = {
+  type: 'object',
+  required: ['email', 'displayName', 'roles', 'authProvider'],
+  properties: {
+    email: { type: 'string', format: 'email' },
+    displayName: { type: 'string', minLength: 1 },
+    roles: { type: 'array', items: { type: 'string', enum: ['customer', 'tourLeader', 'admin'] } },
+    authProvider: { type: 'string', enum: ['email', 'google', 'strava'] },
+  },
+  additionalProperties: false,
+};
 
-const bookingDataSchema = z.object({
-  status: z.enum(['pending', 'confirmed', 'cancelled', 'completed']),
-  bookingReference: z.string(),
-  totalAmount: z.number().positive(),
-  currency: z.string().length(3),
-  lineItems: z.array(z.object({
-    description: z.string(),
-    quantity: z.number().int().positive(),
-    unitPrice: z.number().positive(),
-  })),
-});
+const bookingSchema = {
+  type: 'object',
+  required: ['status', 'bookingReference', 'totalAmount', 'currency', 'lineItems'],
+  properties: {
+    status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled', 'completed'] },
+    bookingReference: { type: 'string' },
+    totalAmount: { type: 'number', exclusiveMinimum: 0 },
+    currency: { type: 'string', minLength: 3, maxLength: 3 },
+    lineItems: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['description', 'quantity', 'unitPrice'],
+        properties: {
+          description: { type: 'string' },
+          quantity: { type: 'integer', exclusiveMinimum: 0 },
+          unitPrice: { type: 'number', exclusiveMinimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
 
-const riderDataSchema = z.object({
-  displayName: z.string().min(1),
-  dietaryRequirements: z.string().optional(),
-  emergencyContact: z.object({
-    name: z.string(),
-    phone: z.string(),
-  }).optional(),
-});
+const riderSchema = {
+  type: 'object',
+  required: ['displayName'],
+  properties: {
+    displayName: { type: 'string', minLength: 1 },
+    dietaryRequirements: { type: 'string' },
+    emergencyContact: {
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        phone: { type: 'string' },
+      },
+    },
+  },
+  additionalProperties: false,
+};
 
-const operatorDataSchema = z.object({
-  companyName: z.string().min(1),
-  country: z.string().length(2),
-  contactEmail: z.string().email(),
-});
+const operatorSchema = {
+  type: 'object',
+  required: ['companyName', 'country', 'contactEmail'],
+  properties: {
+    companyName: { type: 'string', minLength: 1 },
+    country: { type: 'string', minLength: 2, maxLength: 2 },
+    contactEmail: { type: 'string', format: 'email' },
+  },
+  additionalProperties: false,
+};
 
 // ═══════════════════════════════════════════════════════════════
 // 2. Define edge data schemas
 // ═══════════════════════════════════════════════════════════════
 
-const orderedEdgeData = z.object({
-  order: z.number().int().min(0),
-});
+const orderedEdgeSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'integer', minimum: 0 } },
+  additionalProperties: false,
+};
 
-const emptyEdgeData = z.object({}).strict();
+const emptyEdgeSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+};
 
-const primaryContactEdgeData = z.object({
-  isPrimaryContact: z.boolean(),
-});
+const primaryContactEdgeSchema = {
+  type: 'object',
+  required: ['isPrimaryContact'],
+  properties: { isPrimaryContact: { type: 'boolean' } },
+  additionalProperties: false,
+};
 
-const operatorAgreementEdgeData = z.object({
-  netCostPerRider: z.number().positive(),
-  currency: z.string().length(3),
-});
+const operatorAgreementEdgeSchema = {
+  type: 'object',
+  required: ['netCostPerRider', 'currency'],
+  properties: {
+    netCostPerRider: { type: 'number', exclusiveMinimum: 0 },
+    currency: { type: 'string', minLength: 3, maxLength: 3 },
+  },
+  additionalProperties: false,
+};
 
 // ═══════════════════════════════════════════════════════════════
 // 3. Build the registry — every node and edge must be declared
@@ -102,21 +157,21 @@ const operatorAgreementEdgeData = z.object({
 
 const registry = createRegistry([
   // Node types (abType: 'is')
-  { aType: 'tour',      abType: 'is', bType: 'tour',      dataSchema: tourDataSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', dataSchema: departureDataSchema, description: 'Departure entity' },
-  { aType: 'user',      abType: 'is', bType: 'user',      dataSchema: userDataSchema,      description: 'User entity' },
-  { aType: 'booking',   abType: 'is', bType: 'booking',   dataSchema: bookingDataSchema,   description: 'Booking entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     dataSchema: riderDataSchema,     description: 'Rider on a booking' },
-  { aType: 'operator',  abType: 'is', bType: 'operator',  dataSchema: operatorDataSchema,  description: 'Operator partner' },
+  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'user',      abType: 'is', bType: 'user',      jsonSchema: userSchema,      description: 'User entity' },
+  { aType: 'booking',   abType: 'is', bType: 'booking',   jsonSchema: bookingSchema,   description: 'Booking entity' },
+  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider on a booking' },
+  { aType: 'operator',  abType: 'is', bType: 'operator',  jsonSchema: operatorSchema,  description: 'Operator partner' },
 
   // Edge types (inverseLabel is a display-only label for when viewing incoming edges)
-  { aType: 'tour',    abType: 'hasDeparture',        bType: 'departure', dataSchema: orderedEdgeData,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
-  { aType: 'tour',    abType: 'hasItineraryDay',     bType: 'tour',      dataSchema: orderedEdgeData,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
-  { aType: 'tour',    abType: 'fulfilledByOperator', bType: 'operator',  dataSchema: operatorAgreementEdgeData, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
-  { aType: 'user',    abType: 'placedBooking',       bType: 'booking',   dataSchema: emptyEdgeData,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
-  { aType: 'booking', abType: 'bookedForTour',       bType: 'tour',      dataSchema: emptyEdgeData,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
-  { aType: 'booking', abType: 'bookedForDeparture',  bType: 'departure', dataSchema: emptyEdgeData,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
-  { aType: 'booking', abType: 'includesRider',       bType: 'rider',     dataSchema: primaryContactEdgeData,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
+  { aType: 'tour',    abType: 'hasDeparture',        bType: 'departure', jsonSchema: orderedEdgeSchema,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
+  { aType: 'tour',    abType: 'hasItineraryDay',     bType: 'tour',      jsonSchema: orderedEdgeSchema,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
+  { aType: 'tour',    abType: 'fulfilledByOperator', bType: 'operator',  jsonSchema: operatorAgreementEdgeSchema, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
+  { aType: 'user',    abType: 'placedBooking',       bType: 'booking',   jsonSchema: emptyEdgeSchema,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
+  { aType: 'booking', abType: 'bookedForTour',       bType: 'tour',      jsonSchema: emptyEdgeSchema,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
+  { aType: 'booking', abType: 'bookedForDeparture',  bType: 'departure', jsonSchema: emptyEdgeSchema,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
+  { aType: 'booking', abType: 'includesRider',       bType: 'rider',     jsonSchema: primaryContactEdgeSchema,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
 ]);
 
 const g = createGraphClient(db, 'examples/registry/graph', { registry });
@@ -168,13 +223,13 @@ async function main() {
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
-  // Invalid data — Zod catches bad values BEFORE Firestore write
+  // Invalid data — JSON Schema catches bad values BEFORE Firestore write
   // ═══════════════════════════════════════════════════════════════
   try {
     await g.putNode('tour', 'bad-tour', {
-      name: '',              // fails z.string().min(1)
-      difficulty: 'extreme', // fails z.enum()
-      maxRiders: -5,         // fails z.number().positive()
+      name: '',              // fails minLength: 1
+      difficulty: 'extreme', // fails enum
+      maxRiders: -5,         // fails exclusiveMinimum: 0
     });
   } catch (err) {
     if (err instanceof ValidationError) {
@@ -204,10 +259,9 @@ async function main() {
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
-  // Strict edge data — extra fields rejected
+  // Strict edge data — extra fields rejected (additionalProperties: false)
   // ═══════════════════════════════════════════════════════════════
   try {
-    // emptyEdgeData uses .strict(), so extra fields are rejected
     await g.putEdge('user', 'user1', 'placedBooking', 'booking', 'booking2', {
       sneakyField: 'should not be here',
     });

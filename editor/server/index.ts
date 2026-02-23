@@ -6,18 +6,21 @@ import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import type { Firestore } from 'firebase-admin/firestore';
 import { createGraphClient } from '../../src/index.js';
-import type { GraphClient, GraphRegistry } from '../../src/types.js';
+import type { GraphClient, GraphRegistry, DiscoveryResult } from '../../src/types.js';
+import { createRegistry } from '../../src/registry.js';
 import { loadRegistry } from './registry-loader.js';
 import { introspectRegistry } from './schema-introspect.js';
 import type { SchemaMetadata } from './schema-introspect.js';
 import { loadViews } from './views-loader.js';
-import { bundleViews } from './views-bundler.js';
+import { bundleViews, bundleEntityViews } from './views-bundler.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import { loadConfig } from './config-loader.js';
 import type { LoadedConfig } from './config-loader.js';
 import { validateSchemaViews } from './schema-views-validator.js';
 import type { SchemaViewWarning } from './schema-views-validator.js';
+import { buildViewRegistryFromDiscovery, mergeViewDefaults } from './entities-loader.js';
+import { discoverEntities } from '../../src/discover.js';
 import * as trpcExpress from '@trpc/server/adapters/express';
 import { appRouter, createContext } from './trpc.js';
 
@@ -27,6 +30,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface CliArgs {
   configPath?: string;
+  entitiesPath?: string;
   project?: string;
   collection?: string;
   port?: number;
@@ -39,6 +43,7 @@ interface CliArgs {
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   let configPath: string | undefined;
+  let entitiesPath: string | undefined;
   let project: string | undefined;
   let collection: string | undefined;
   let port: number | undefined;
@@ -51,6 +56,8 @@ function parseArgs(): CliArgs {
     const arg = args[i];
     if (arg.startsWith('--config=')) configPath = arg.split('=')[1];
     else if (arg === '--config' && args[i + 1]) configPath = args[++i];
+    else if (arg.startsWith('--entities=')) entitiesPath = arg.split('=')[1];
+    else if (arg === '--entities' && args[i + 1]) entitiesPath = args[++i];
     else if (arg.startsWith('--project=')) project = arg.split('=')[1];
     else if (arg === '--project' && args[i + 1]) project = args[++i];
     else if (arg.startsWith('--collection=')) collection = arg.split('=')[1];
@@ -73,7 +80,7 @@ function parseArgs(): CliArgs {
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
 
-  return { configPath, project, collection, port, emulator, registryPath, viewsPath, readonly };
+  return { configPath, entitiesPath, project, collection, port, emulator, registryPath, viewsPath, readonly };
 }
 
 const cliArgs = parseArgs();
@@ -83,6 +90,7 @@ const cliArgs = parseArgs();
 let resolvedProject: string | undefined;
 let resolvedCollection: string;
 let resolvedEmulator: string | undefined;
+let resolvedEntitiesPath: string | undefined;
 let resolvedRegistryPath: string | undefined;
 let resolvedViewsPath: string | undefined;
 let resolvedReadonly: boolean;
@@ -113,14 +121,13 @@ async function init() {
   resolvedProject = cliArgs.project ?? fileConfig.project;
   resolvedCollection = cliArgs.collection ?? fileConfig.collection ?? 'graph';
   resolvedEmulator = cliArgs.emulator ?? fileConfig.emulator;
+  resolvedEntitiesPath = cliArgs.entitiesPath ?? fileConfig.entities;
   resolvedRegistryPath = cliArgs.registryPath ?? fileConfig.registry;
   resolvedViewsPath = cliArgs.viewsPath ?? fileConfig.views;
   resolvedReadonly = cliArgs.readonly || (fileConfig.editor?.readonly ?? false);
 
   const isProduction = process.env.NODE_ENV === 'production';
   resolvedPort = cliArgs.port ?? fileConfig.editor?.port ?? (isProduction ? 3883 : 3884);
-
-  viewDefaultsData = fileConfig.viewDefaults ?? null;
 
   // 3. Init Firebase with merged values
   if (resolvedEmulator) {
@@ -145,31 +152,80 @@ async function init() {
 
   db = getFirestore();
 
-  // 4. Validate required fields
-  if (!resolvedRegistryPath) {
+  // 4. Load entities (entities mode) or registry (legacy mode)
+  if (resolvedEntitiesPath) {
+    await initEntitiesMode(fileConfig);
+  } else if (resolvedRegistryPath) {
+    await initLegacyMode(fileConfig);
+  } else {
     console.error('');
-    console.error('  Error: registry path is required.');
+    console.error('  Error: entities directory or registry path is required.');
     console.error('');
-    console.error('  Provide it via firegraph.config.ts or the --registry flag:');
+    console.error('  Provide via firegraph.config.ts or CLI flags:');
     console.error('');
-    console.error('    // firegraph.config.ts');
+    console.error('    // firegraph.config.ts (recommended)');
+    console.error('    export default defineConfig({ entities: "./entities" });');
+    console.error('');
+    console.error('    // or legacy mode:');
     console.error('    export default defineConfig({ registry: "./src/registry.ts" });');
-    console.error('');
-    console.error('    // or CLI:');
-    console.error('    npx firegraph editor --registry ./src/registry.ts');
     console.error('');
     process.exit(1);
   }
 
-  // 5. Load registry
+  // 5. Create graph client
+  graphClient = createGraphClient(db, resolvedCollection, { registry });
+}
+
+async function initEntitiesMode(fileConfig: LoadedConfig) {
+  console.log(`  Discovering entities from ${resolvedEntitiesPath}...`);
+  const { result: discovery, warnings } = discoverEntities(resolvedEntitiesPath!);
+
+  if (warnings.length > 0) {
+    for (const w of warnings) {
+      console.log(`    [warn] ${w.message}`);
+    }
+  }
+
+  // Build registry from discovery
+  registry = createRegistry(discovery);
+  schemaMetadata = introspectRegistry(registry);
+  console.log(
+    `  Entities loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
+  );
+
+  // Build view registry from per-entity view files
+  viewRegistry = await buildViewRegistryFromDiscovery(discovery);
+  if (viewRegistry) {
+    const nodeViewCount = Object.values(viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
+    const edgeViewCount = Object.values(viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
+    console.log(`  Views loaded: ${nodeViewCount} node views, ${edgeViewCount} edge views`);
+
+    // Bundle views for browser
+    console.log(`  Bundling views for browser...`);
+    viewBundle = await bundleEntityViews(discovery);
+    if (viewBundle) {
+      console.log(`  Views bundled (${(viewBundle.code.length / 1024).toFixed(1)} KB)`);
+    }
+  }
+
+  // Merge view defaults: entity meta.json + config overrides
+  viewDefaultsData = mergeViewDefaults(discovery, fileConfig.viewDefaults);
+
+  // Cross-validate
+  crossValidate();
+}
+
+async function initLegacyMode(fileConfig: LoadedConfig) {
+  console.warn('  [deprecated] Using legacy registry mode. Migrate to per-entity folder convention with `entities` config.');
+
   console.log(`  Loading registry from ${resolvedRegistryPath}...`);
-  registry = await loadRegistry(resolvedRegistryPath);
+  registry = await loadRegistry(resolvedRegistryPath!);
   schemaMetadata = introspectRegistry(registry);
   console.log(
     `  Registry loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
   );
 
-  // 6. Load views if provided
+  // Load views if provided
   if (resolvedViewsPath) {
     console.log(`  Loading views from ${resolvedViewsPath}...`);
     viewRegistry = await loadViews(resolvedViewsPath);
@@ -182,7 +238,11 @@ async function init() {
     console.log(`  Views bundled (${(viewBundle.code.length / 1024).toFixed(1)} KB)`);
   }
 
-  // 6b. Cross-validate views against registry
+  viewDefaultsData = fileConfig.viewDefaults ?? null;
+  crossValidate();
+}
+
+function crossValidate() {
   try {
     schemaViewWarnings = validateSchemaViews(
       schemaMetadata,
@@ -200,9 +260,6 @@ async function init() {
     console.error('  Warning: schema/views validation failed:', err instanceof Error ? err.message : String(err));
     schemaViewWarnings = [];
   }
-
-  // 7. Create graph client
-  graphClient = createGraphClient(db, resolvedCollection, { registry });
 }
 
 // --- Express app ---
@@ -270,7 +327,12 @@ async function start() {
     if (resolvedEmulator) {
       console.log(`  Emulator:   ${resolvedEmulator}`);
     }
-    console.log(`  Registry:   ${resolvedRegistryPath}`);
+    if (resolvedEntitiesPath) {
+      console.log(`  Entities:   ${resolvedEntitiesPath}`);
+    }
+    if (resolvedRegistryPath) {
+      console.log(`  Registry:   ${resolvedRegistryPath}`);
+    }
     if (resolvedViewsPath) {
       console.log(`  Views:      ${resolvedViewsPath}`);
     }

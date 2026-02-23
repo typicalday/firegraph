@@ -1,10 +1,10 @@
 import { defineConfig } from 'firegraph';
 
 export default defineConfig({
-  // Path to your registry file (relative to this config file's directory)
-  registry: './05-registry-validation.ts',
+  // Path to entities directory (per-entity folder convention)
+  entities: './entities',
 
-  // Path to your views file
+  // Path to your views file (legacy, use per-entity views.ts instead)
   views: './07-model-views.ts',
 
   // GCP project ID

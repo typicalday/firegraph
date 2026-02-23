@@ -26,7 +26,10 @@ All records live in a single Firestore collection. Document IDs:
 | `src/batch.ts` | `GraphBatchImpl` — atomic batch writes |
 | `src/query.ts` | Query planner: routes `FindEdgesParams` to either `get` (direct doc lookup) or `query` (filtered scan) strategy |
 | `src/traverse.ts` | Multi-hop graph traversal with budget enforcement and concurrency control |
-| `src/registry.ts` | Optional schema registry for type-safe edge validation (works with Zod) |
+| `src/registry.ts` | Optional schema registry for type-safe edge validation (JSON Schema via ajv) |
+| `src/json-schema.ts` | JSON Schema validation (ajv) and introspection (JSON Schema → `FieldMeta[]`) |
+| `src/discover.ts` | Convention-based entity auto-discovery from per-entity folders |
+| `src/codegen/index.ts` | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`) |
 | `src/config.ts` | `defineConfig()`, `resolveView()` — project config file types and view resolution |
 | `src/views.ts` | `defineViews()` — framework-agnostic model view definitions (Web Components) |
 | `src/record.ts` | Builds `GraphRecord` objects with server timestamps |
@@ -73,13 +76,120 @@ pnpm emulator:stop      # kill emulator
 
 - tsup with `esm` + `cjs` dual format
 - Target: Node 18+
-- External: `firebase-admin`, `zod`
-- Entry: `src/index.ts`
+- External: `firebase-admin`, `json-schema-to-typescript`
+- Entry: `src/index.ts`, `src/codegen/index.ts`
 
 ### Dependencies
 
-- **Runtime**: `nanoid` (ID generation)
-- **Peer**: `firebase-admin` (required), `zod` (optional, for registry schemas)
+- **Runtime**: `nanoid` (ID generation), `ajv` (JSON Schema validation)
+- **Peer**: `firebase-admin` (required)
+- **Dev**: `json-schema-to-typescript` (codegen CLI)
+
+### Per-Entity Folder Convention
+
+Entities (nodes and edges) are organized in a convention-based directory structure:
+
+```
+entities/
+  nodes/
+    task/
+      schema.json        # JSON Schema for data payload (required)
+      views.ts           # Web Component view classes (optional)
+      sample.json        # Sample data for view gallery (optional)
+      meta.json          # Description, view defaults (optional)
+    agent/
+      schema.json
+  edges/
+    hasStep/
+      schema.json        # JSON Schema for edge data payload (required)
+      edge.json          # Topology: from/to + inverseLabel (required)
+      views.ts           # (optional)
+```
+
+**File formats:**
+
+`schema.json` — Standard JSON Schema describing the `data` payload:
+```json
+{
+  "type": "object",
+  "required": ["title", "status"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["created", "active", "completed"] }
+  },
+  "additionalProperties": false
+}
+```
+
+`edge.json` — Topology declaration (replaces old `{ aType, abType, bType }` triples):
+```json
+{ "from": "task", "to": "step", "inverseLabel": "stepOf" }
+```
+`from`/`to` accept string or string[] for edges connecting multiple node types.
+
+`meta.json` — Optional description and view defaults:
+```json
+{ "description": "A unit of work", "viewDefaults": { "default": "card", "detail": "detail" } }
+```
+
+`views.ts` — Per-entity Web Component view classes. **Must `export default` an array of view classes:**
+```typescript
+class TaskCard extends HTMLElement {
+  static viewName = 'card';
+  static description = 'Compact task card';
+  private _data: Record<string, unknown> = {};
+  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
+  get data() { return this._data; }
+  connectedCallback() { this.render(); }
+  private render() {
+    this.innerHTML = `<strong>${this._data.title ?? ''}</strong>`;
+  }
+}
+
+class TaskRow extends HTMLElement {
+  static viewName = 'row';
+  // ...
+}
+
+// IMPORTANT: Must be a default export of an array — named exports are NOT discovered.
+export default [TaskCard, TaskRow];
+```
+
+View files can import shared helpers from a sibling or parent `shared.ts`. The editor loads views via two mechanisms:
+- **Server (metadata):** `jiti` imports the file; expects `exported.default` (array) or `exported.views` (array)
+- **Browser (bundle):** esbuild creates a synthetic entry using default imports from each entity's views.ts
+
+See `examples/entities/nodes/tour/views.ts` and `examples/entities/edges/hasDeparture/views.ts` for working examples.
+
+Discovery is handled by `discoverEntities(entitiesDir)` from `src/discover.ts`. It returns a `DiscoveryResult` with `nodes` and `edges` maps, plus warnings for dangling topology references.
+
+### Codegen CLI
+
+Generate TypeScript types from entity JSON Schemas:
+
+```bash
+npx firegraph codegen --entities ./entities                        # types to stdout
+npx firegraph codegen --entities ./entities --out src/types.ts     # write to file
+```
+
+Naming convention: `{PascalName}Data` for nodes (e.g. `TaskData`), `{PascalName}EdgeData` for edges (e.g. `HasStepEdgeData`).
+
+### Schema Validation
+
+Registry validation uses JSON Schema (via ajv). Each `RegistryEntry` has an optional `jsonSchema` field:
+
+```typescript
+createRegistry([
+  { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+  { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema, inverseLabel: 'departureOf' },
+]);
+```
+
+Alternatively, pass a `DiscoveryResult` directly:
+```typescript
+const { result } = discoverEntities('./entities');
+const registry = createRegistry(result);
+```
 
 ### Inverse Labels
 
@@ -87,8 +197,8 @@ Edge entries support an optional `inverseLabel` field — a display-only label f
 
 ```typescript
 createRegistry([
-  { aType: 'project', abType: 'hasTask', bType: 'task', inverseLabel: 'taskOf' },
-  { aType: 'task',    abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+  { aType: 'project', abType: 'hasTask', bType: 'task', jsonSchema: taskEdgeSchema, inverseLabel: 'taskOf' },
+  { aType: 'task',    abType: 'hasStep', bType: 'step', jsonSchema: stepEdgeSchema, inverseLabel: 'stepOf' },
 ]);
 ```
 
@@ -101,7 +211,7 @@ The label flows through: `RegistryEntry.inverseLabel` → `introspectRegistry()`
 
 ## Editor
 
-The `editor/` directory contains a full-stack web UI for browsing and editing graph data. It is registry-aware: when given a path to a project's registry file, it introspects Zod schemas to generate forms and validates all writes through the registry.
+The `editor/` directory contains a full-stack web UI for browsing and editing graph data. It is registry-aware: when given an entities directory or registry file, it introspects JSON Schemas to generate forms and validates all writes through the registry.
 
 ### Editor Architecture
 
@@ -110,7 +220,9 @@ The `editor/` directory contains a full-stack web UI for browsing and editing gr
 | `editor/server/index.ts` | Express server — reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
 | `editor/server/config-loader.ts` | Discovers and loads `firegraph.config.ts` via `jiti` |
 | `editor/server/registry-loader.ts` | Dynamic TypeScript import of user's registry file via `jiti` |
-| `editor/server/schema-introspect.ts` | Walks Zod `._def` tree to extract field metadata (`FieldMeta[]`) |
+| `editor/server/schema-introspect.ts` | Converts JSON Schema → `FieldMeta[]` for form generation |
+| `editor/server/entities-loader.ts` | Wraps `discoverEntities()` for editor: loads views, merges defaults |
+| `editor/server/schema-views-validator.ts` | Validates sample data against JSON Schemas, detects orphaned views |
 | `editor/server/views-loader.ts` | Dynamic import of user's views file via `jiti` (metadata extraction) |
 | `editor/server/views-bundler.ts` | esbuild bundles views file into browser-loadable ES module |
 | `editor/src/` | React 19 + React Router + Tailwind CSS frontend |
@@ -129,24 +241,25 @@ pnpm build:editor      # build editor only (client + server)
 pnpm dev:editor        # dev mode (Express :3884 + Vite :3883)
 npx firegraph editor   # run production editor (auto-discovers firegraph.config.ts)
 npx firegraph editor --config ./custom.ts   # explicit config path
-npx firegraph editor --registry ./src/registry.ts  # CLI flags (no config file)
+npx firegraph editor --entities ./entities  # per-entity folder convention
+npx firegraph codegen --entities ./entities --out src/types.ts  # generate TS types
 ```
 
 ### Editor Build Pipeline
 
 - **Client**: Vite → `dist/editor/client/` (React SPA)
-- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, zod, jiti, esbuild external)
-- **CLI**: `bin/firegraph.mjs` dispatches subcommands (`editor`)
+- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, jiti, esbuild external)
+- **CLI**: `bin/firegraph.mjs` dispatches subcommands (`editor`, `codegen`)
 
 ### Model Views
 
 Model views let projects define **multiple, purpose-driven visual representations** for each entity type. Instead of always displaying raw JSON, the editor can render nodes and edges through custom views tailored to specific use cases — an "executive summary" for a user, a "card" for compact display, a "timeline entry" for a departure.
 
-Views are **framework-agnostic**: they are standard Web Components (Custom Elements), not React components. They work in any environment that supports the DOM. The data contract for each view is the `data` shape defined by the entity's Zod schema in the registry.
+Views are **framework-agnostic**: they are standard Web Components (Custom Elements), not React components. They work in any environment that supports the DOM. The data contract for each view is the `data` shape defined by the entity's JSON Schema.
 
 #### Concept
 
-Every firegraph record has a `data: Record<string, unknown>` payload whose shape is defined by the registry's Zod schema. A view is simply a different way to render that same data. One entity type can have many views, each showing the data from a different angle or for a different audience.
+Every firegraph record has a `data: Record<string, unknown>` payload whose shape is defined by the entity's JSON Schema. A view is simply a different way to render that same data. One entity type can have many views, each showing the data from a different angle or for a different audience.
 
 ```
 Registry schema (contract)     Views (presentation)
@@ -180,7 +293,7 @@ class UserCard extends HTMLElement {
   private _data: Record<string, unknown> = {};
 
   // The editor sets this property when rendering the view.
-  // The data shape matches the registry's Zod schema for this entity type.
+  // The data shape matches the entity's JSON Schema.
   set data(value: Record<string, unknown>) {
     this._data = value;
     this.render();
@@ -261,7 +374,9 @@ interface ViewMeta {
 
 #### Creating a Views File
 
-Create a TypeScript file in your project (e.g. `src/views.ts`). It must export a `ViewRegistry` — either as the default export, a named `views` export, or any named export.
+**Preferred: Per-entity `views.ts` files** (see "Per-Entity Folder Convention" above). Each entity's `views.ts` exports a default array of view classes. Sample data lives in `sample.json` next to it.
+
+**Legacy: Monolithic views file** using `defineViews()`. Create a TypeScript file in your project (e.g. `src/views.ts`). It must export a `ViewRegistry` — either as the default export, a named `views` export, or any named export.
 
 ```typescript
 // src/views.ts
@@ -364,18 +479,14 @@ npx firegraph editor   # auto-discovers firegraph.config.ts
 Or pass flags directly:
 
 ```bash
-# Development
-pnpm dev:editor -- --registry ./src/registry.ts --views ./src/views.ts
-
-# Production
-npx firegraph editor --registry ./src/registry.ts --views ./src/views.ts --collection graph
+# Per-entity convention (recommended)
+npx firegraph editor --entities ./entities --collection graph
 
 # With emulator
-npx firegraph editor \
-  --registry ./src/registry.ts \
-  --views ./src/views.ts \
-  --emulator \
-  --project demo-project
+npx firegraph editor --entities ./entities --emulator --project demo-project
+
+# Legacy (deprecated) — explicit registry and views files
+npx firegraph editor --registry ./src/registry.ts --views ./src/views.ts
 ```
 
 The `--views` flag/config is optional. Without it, the editor works exactly as before (JSON view only). With it, the editor loads views and shows view switchers wherever views are registered.
@@ -467,8 +578,13 @@ Projects can create a `firegraph.config.ts` (or `.js`/`.mjs`) in their root to c
 import { defineConfig } from 'firegraph';
 
 export default defineConfig({
-  registry: './src/registry.ts',
-  views: './src/views.ts',
+  // Per-entity folder convention (recommended)
+  entities: './entities',
+
+  // Legacy: explicit registry and views files (deprecated)
+  // registry: './src/registry.ts',
+  // views: './src/views.ts',
+
   project: 'my-project',
   collection: 'graph',
   emulator: '127.0.0.1:8080',
@@ -535,7 +651,7 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 - All source in `src/`, all tests in `tests/`
 - `.js` extensions in imports (ESM resolution)
 - Prefer interfaces over classes for public API surfaces
-- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`, `defineViews`, `defineConfig`) over `new`
+- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`, `defineViews`, `defineConfig`, `discoverEntities`) over `new`
 - Errors extend `FiregraphError` with a string `code`
 - No default exports
 - Internal modules live in `src/internal/`

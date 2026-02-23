@@ -53,9 +53,17 @@ export interface ViewDefaultsConfig {
 
 /** Project-level firegraph configuration. */
 export interface FiregraphConfig {
-  /** Path to TypeScript file exporting a GraphRegistry. */
+  /** Path to entities directory (per-entity folder convention). */
+  entities?: string;
+  /**
+   * Path to TypeScript file exporting a GraphRegistry.
+   * @deprecated Use `entities` with the per-entity folder convention instead.
+   */
   registry?: string;
-  /** Path to TypeScript file exporting views via defineViews(). */
+  /**
+   * Path to TypeScript file exporting views via defineViews().
+   * @deprecated Use per-entity `views.ts` files inside the entities directory instead.
+   */
   views?: string;
   /** GCP project ID. */
   project?: string;

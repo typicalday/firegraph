@@ -6,7 +6,7 @@ await build({
   platform: 'node',
   format: 'esm',
   outfile: 'dist/editor/server/index.mjs',
-  external: ['firebase-admin', 'zod', 'jiti', 'esbuild'],
+  external: ['firebase-admin', 'jiti', 'esbuild'],
   // jiti and esbuild must be external because they use native binaries / dynamic
   // requires that break when bundled. Consumers need them installed.
   target: 'node18',

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { z } from 'zod';
 import { createRegistry } from '../../src/registry.js';
 import { validateSchemaViews } from '../../editor/server/schema-views-validator.js';
 import type { SchemaMetadata } from '../../editor/server/schema-introspect.js';
@@ -47,6 +46,27 @@ function makeViewMetaMulti(viewNames: string[]): EntityViewMeta {
     })),
   };
 }
+
+const tourJsonSchema = {
+  type: 'object',
+  required: ['name'],
+  properties: { name: { type: 'string' } },
+};
+
+const tourJsonSchemaWithNumber = {
+  type: 'object',
+  required: ['name', 'maxRiders'],
+  properties: {
+    name: { type: 'string' },
+    maxRiders: { type: 'number' },
+  },
+};
+
+const edgeJsonSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'number' } },
+};
 
 // --- Tests ---
 
@@ -117,10 +137,9 @@ describe('validateSchemaViews', () => {
 
   describe('sample data validation', () => {
     it('passes when sample data matches schema', () => {
-      const tourSchema = z.object({ name: z.string() });
       const schema = makeSchemaMetadata(['tour'], []);
       const registry = createRegistry([
-        { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },
+        { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourJsonSchema },
       ]);
       const viewReg: ViewRegistry = {
         nodes: {
@@ -136,10 +155,9 @@ describe('validateSchemaViews', () => {
     });
 
     it('emits warning for invalid sample data', () => {
-      const tourSchema = z.object({ name: z.string(), maxRiders: z.number() });
       const schema = makeSchemaMetadata(['tour'], []);
       const registry = createRegistry([
-        { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },
+        { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourJsonSchemaWithNumber },
       ]);
       const viewReg: ViewRegistry = {
         nodes: {
@@ -157,11 +175,10 @@ describe('validateSchemaViews', () => {
       expect(invalid[0].severity).toBe('warn');
     });
 
-    it('validates edge sample data against Zod schema', () => {
-      const edgeSchema = z.object({ order: z.number() });
+    it('validates edge sample data against JSON schema', () => {
       const schema = makeSchemaMetadata([], [{ aType: 'tour', abType: 'hasDeparture', bType: 'departure' }]);
       const registry = createRegistry([
-        { aType: 'tour', abType: 'hasDeparture', bType: 'departure', dataSchema: edgeSchema },
+        { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeJsonSchema },
       ]);
       const viewReg: ViewRegistry = {
         nodes: {},
@@ -178,7 +195,7 @@ describe('validateSchemaViews', () => {
       expect(result[0].entityKind).toBe('edge');
     });
 
-    it('skips validation when no dataSchema exists', () => {
+    it('skips validation when no jsonSchema exists', () => {
       const schema = makeSchemaMetadata(['tour'], []);
       const registry = createRegistry([
         { aType: 'tour', abType: 'is', bType: 'tour' },
@@ -335,10 +352,9 @@ describe('validateSchemaViews', () => {
 
   describe('multiple warnings', () => {
     it('accumulates warnings from all checks', () => {
-      const tourSchema = z.object({ name: z.string() });
       const schema = makeSchemaMetadata(['tour'], []);
       const registry = createRegistry([
-        { aType: 'tour', abType: 'is', bType: 'tour', dataSchema: tourSchema },
+        { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourJsonSchema },
       ]);
       const viewReg: ViewRegistry = {
         nodes: {

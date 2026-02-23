@@ -2,6 +2,7 @@ import type { SchemaMetadata } from './schema-introspect.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { LoadedConfig } from './config-loader.js';
 import type { GraphRegistry } from '../../src/types.js';
+import { compileSchema } from '../../src/json-schema.js';
 
 export type SchemaViewWarningCode =
   | 'ORPHANED_NODE_VIEW'
@@ -80,14 +81,15 @@ function validateSampleData(
   for (const [entityType, meta] of Object.entries(entities)) {
     if (!meta.sampleData) continue;
 
-    // Validate the single sampleData object against the Zod schema
+    // Find the registry entry to get the JSON Schema
     const entry = kind === 'node'
       ? registry.lookup(entityType, 'is', entityType)
       : findEdgeEntry(registry, entityType);
 
-    if (entry?.dataSchema) {
+    if (entry?.jsonSchema) {
       try {
-        entry.dataSchema.parse(meta.sampleData);
+        const validate = compileSchema(entry.jsonSchema);
+        validate(meta.sampleData);
       } catch (err: unknown) {
         const detail = err instanceof Error ? err.message : String(err);
         warnings.push({
@@ -159,7 +161,7 @@ function validateViewDefaults(
 function findEdgeEntry(
   registry: GraphRegistry,
   abType: string,
-): { dataSchema?: { parse: (data: unknown) => unknown } } | undefined {
+): { jsonSchema?: object } | undefined {
   for (const entry of registry.entries()) {
     if (entry.abType === abType && entry.abType !== 'is') {
       return entry;
