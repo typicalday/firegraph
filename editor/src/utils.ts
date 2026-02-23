@@ -73,24 +73,24 @@ export function truncateData(data: Record<string, unknown>, maxLength = 80): str
 }
 
 /**
- * Resolve the best view name for an entity given its data and config.
+ * Resolve the best view name for an entity given its config and display context.
  * Mirrors `resolveView` from `src/config.ts` — duplicated to avoid cross-build imports.
+ *
+ * Priority: context-specific default > global default > 'json'.
  */
 export function resolveViewForEntity(
-  data: Record<string, unknown>,
-  resolverConfig: { default?: string; rules?: Array<{ when: Record<string, unknown>; view: string }> } | undefined,
+  resolverConfig: { default?: string; listing?: string; detail?: string; inline?: string } | undefined,
   availableViews: Array<{ viewName: string; tagName: string }>,
+  context?: 'listing' | 'detail' | 'inline',
 ): string {
   const availableNames = new Set(availableViews.map((v) => v.viewName));
 
   if (!resolverConfig) return 'json';
 
-  if (resolverConfig.rules) {
-    for (const rule of resolverConfig.rules) {
-      const matches = Object.entries(rule.when).every(([k, v]) => data[k] === v);
-      if (matches && availableNames.has(rule.view)) {
-        return rule.view;
-      }
+  if (context) {
+    const contextDefault = resolverConfig[context];
+    if (contextDefault && availableNames.has(contextDefault)) {
+      return contextDefault;
     }
   }
 

@@ -13,12 +13,7 @@
  *   collection: 'graph',
  *   viewDefaults: {
  *     nodes: {
- *       task: {
- *         default: 'card',
- *         rules: [
- *           { when: { status: 'completed' }, view: 'summary' },
- *         ],
- *       },
+ *       task: { default: 'card', listing: 'row', detail: 'detail' },
  *     },
  *   },
  * });
@@ -29,20 +24,19 @@
 // View Resolution Types
 // ---------------------------------------------------------------------------
 
-/** A single conditional view rule. First match wins. */
-export interface ViewRule {
-  /** Field-value conditions that must ALL match the entity's data. */
-  when: Record<string, unknown>;
-  /** View name to show when conditions match. */
-  view: string;
-}
+/** Display contexts where views can appear. */
+export type ViewContext = 'listing' | 'detail' | 'inline';
 
 /** View resolution configuration for a single entity type. */
 export interface ViewResolverConfig {
   /** Default view name (e.g. 'card'). Falls back to 'json' if unset. */
   default?: string;
-  /** Ordered rules — first match wins. */
-  rules?: ViewRule[];
+  /** View to use in NodeBrowser listing rows. */
+  listing?: string;
+  /** View to use on the NodeDetail page. */
+  detail?: string;
+  /** View to use for inline/embedded previews (edge rows, traversal). */
+  inline?: string;
 }
 
 /** Declarative view defaults, keyed by entity type. */
@@ -78,7 +72,7 @@ export interface FiregraphConfig {
     readonly?: boolean;
   };
 
-  /** Declarative view resolution rules. */
+  /** Declarative view defaults per entity type. */
   viewDefaults?: ViewDefaultsConfig;
 }
 
@@ -104,28 +98,27 @@ export function defineConfig(config: FiregraphConfig): FiregraphConfig {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve which view to show for a given entity's data.
+ * Resolve which view to show for a given entity.
  *
- * 1. Evaluates rules in order — first rule where ALL `when` pairs match wins.
- * 2. Falls back to `resolverConfig.default` if no rule matched.
+ * 1. If `context` is provided and a context-specific default exists, use it.
+ * 2. Falls back to `resolverConfig.default`.
  * 3. Ultimate fallback: `'json'`.
  *
  * Only returns view names that exist in `availableViewNames`.
  */
 export function resolveView(
-  data: Record<string, unknown>,
   resolverConfig: ViewResolverConfig | undefined,
   availableViewNames: string[],
+  context?: ViewContext,
 ): string {
   if (!resolverConfig) return 'json';
 
   const available = new Set(availableViewNames);
 
-  if (resolverConfig.rules) {
-    for (const rule of resolverConfig.rules) {
-      if (matchesConditions(data, rule.when) && available.has(rule.view)) {
-        return rule.view;
-      }
+  if (context) {
+    const contextDefault = resolverConfig[context];
+    if (contextDefault && available.has(contextDefault)) {
+      return contextDefault;
     }
   }
 
@@ -134,14 +127,4 @@ export function resolveView(
   }
 
   return 'json';
-}
-
-function matchesConditions(
-  data: Record<string, unknown>,
-  when: Record<string, unknown>,
-): boolean {
-  for (const [key, expected] of Object.entries(when)) {
-    if (data[key] !== expected) return false;
-  }
-  return true;
 }

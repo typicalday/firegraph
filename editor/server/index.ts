@@ -16,6 +16,8 @@ import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import { loadConfig } from './config-loader.js';
 import type { LoadedConfig } from './config-loader.js';
+import { validateSchemaViews } from './schema-views-validator.js';
+import type { SchemaViewWarning } from './schema-views-validator.js';
 import * as trpcExpress from '@trpc/server/adapters/express';
 import { appRouter, createContext } from './trpc.js';
 
@@ -96,6 +98,7 @@ let schemaMetadata: SchemaMetadata;
 let graphClient: GraphClient;
 let viewRegistry: ViewRegistry | null = null;
 let viewBundle: ViewBundle | null = null;
+let schemaViewWarnings: SchemaViewWarning[] = [];
 
 async function init() {
   // 1. Load config file (if any)
@@ -179,6 +182,25 @@ async function init() {
     console.log(`  Views bundled (${(viewBundle.code.length / 1024).toFixed(1)} KB)`);
   }
 
+  // 6b. Cross-validate views against registry
+  try {
+    schemaViewWarnings = validateSchemaViews(
+      schemaMetadata,
+      viewRegistry,
+      viewDefaultsData ?? null,
+      registry,
+    );
+    if (schemaViewWarnings.length > 0) {
+      console.log(`  Warnings: ${schemaViewWarnings.length} schema/views issue(s) detected`);
+      for (const w of schemaViewWarnings) {
+        console.log(`    [${w.severity}] ${w.message}`);
+      }
+    }
+  } catch (err) {
+    console.error('  Warning: schema/views validation failed:', err instanceof Error ? err.message : String(err));
+    schemaViewWarnings = [];
+  }
+
   // 7. Create graph client
   graphClient = createGraphClient(db, resolvedCollection, { registry });
 }
@@ -222,6 +244,7 @@ async function start() {
         readonly: resolvedReadonly,
         projectId: resolvedProject,
         viewDefaults: viewDefaultsData,
+        schemaViewWarnings,
       }),
     }),
   );

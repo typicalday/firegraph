@@ -105,14 +105,14 @@ export interface AppConfig {
 
 // --- View resolution types (mirrors src/config.ts for client use) ---
 
-export interface ViewRule {
-  when: Record<string, unknown>;
-  view: string;
-}
+/** Display contexts where views can appear. */
+export type ViewContext = 'listing' | 'detail' | 'inline';
 
 export interface ViewResolverConfig {
   default?: string;
-  rules?: ViewRule[];
+  listing?: string;
+  detail?: string;
+  inline?: string;
 }
 
 export interface ViewDefaultsConfig {
@@ -130,11 +130,22 @@ export interface ViewMeta {
 
 export interface EntityViewMeta {
   views: ViewMeta[];
-  sampleData?: Record<string, Record<string, unknown>>;
+  sampleData?: Record<string, unknown>;
 }
 
 export interface ViewRegistryData {
   nodes: Record<string, EntityViewMeta>;
   edges: Record<string, EntityViewMeta>;
   hasViews: boolean;
+}
+
+// --- Schema/views validation warnings ---
+
+export interface SchemaViewWarning {
+  code: string;
+  severity: 'warn' | 'info';
+  message: string;
+  entityType: string;
+  entityKind: 'node' | 'edge';
+  viewName?: string;
 }

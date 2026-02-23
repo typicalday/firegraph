@@ -52,7 +52,7 @@ export type {
 
 export type {
   FiregraphConfig,
-  ViewRule,
+  ViewContext,
   ViewResolverConfig,
   ViewDefaultsConfig,
 } from './config.js';

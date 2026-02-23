@@ -13,6 +13,7 @@ export default function App() {
   const { data: schema, error: schemaError, isLoading: schemaLoading } = trpc.getSchema.useQuery();
   const { data: config, error: configError, isLoading: configLoading } = trpc.getConfig.useQuery();
   const { data: viewsData, error: viewsError, isLoading: viewsLoading } = trpc.getViews.useQuery();
+  const { data: warningsData } = trpc.getWarnings.useQuery();
 
   const loading = schemaLoading || configLoading || viewsLoading;
   const error = schemaError || configError || viewsError;
@@ -67,10 +68,10 @@ export default function App() {
   const viewRegistry: ViewRegistryData = viewsData ?? { nodes: {}, edges: {}, hasViews: false };
 
   return (
-    <Layout schema={schema!} config={config!} viewRegistry={viewRegistry}>
+    <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
       <Routes>
         <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />
-        <Route path="/browse/:type" element={<NodeBrowser schema={schema!} />} />
+        <Route path="/browse/:type" element={<NodeBrowser schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
         <Route path="/node/:uid" element={<NodeDetail schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
         <Route path="/traverse" element={<TraversalBuilder schema={schema!} />} />
         <Route path="/views" element={<ViewGallery viewRegistry={viewRegistry} schema={schema!} />} />

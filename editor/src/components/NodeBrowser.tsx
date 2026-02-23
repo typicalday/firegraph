@@ -1,12 +1,15 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import type { Schema, GraphRecord } from '../types';
+import type { Schema, GraphRecord, ViewRegistryData, AppConfig } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, formatTimestamp, truncateData } from '../utils';
+import { getTypeBadgeColor, formatTimestamp, truncateData, resolveViewForEntity } from '../utils';
+import CustomView from './CustomView';
 import NodeEditor from './NodeEditor';
 
 interface Props {
   schema: Schema;
+  viewRegistry?: ViewRegistryData | null;
+  config?: AppConfig;
   onDataChanged?: () => void;
 }
 
@@ -18,7 +21,7 @@ const SORT_FIELDS = [
 ];
 const FILTER_OPS = ['==', '!=', '<', '<=', '>', '>='];
 
-export default function NodeBrowser({ schema, onDataChanged }: Props) {
+export default function NodeBrowser({ schema, viewRegistry, config, onDataChanged }: Props) {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
@@ -106,6 +109,10 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
   // Get field names from schema for the filter dropdown
   const nodeSchema = schema.nodeSchemas?.find((ns) => ns.aType === type && ns.isNodeEntry);
   const fieldNames = nodeSchema?.fields?.map((f) => f.name) ?? [];
+
+  // View setup for listing rows
+  const listingViews = viewRegistry?.nodes[type!]?.views ?? [];
+  const listingResolverConfig = config?.viewDefaults?.nodes?.[type!];
 
   const canWrite = !schema.readonly;
 
@@ -349,9 +356,7 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs text-slate-400 font-mono">
-                        {truncateData(node.data, 100)}
-                      </span>
+                      <NodeListingCell node={node} views={listingViews} resolverConfig={listingResolverConfig} />
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-500">
                       {formatTimestamp(node.createdAt)}
@@ -388,5 +393,34 @@ export default function NodeBrowser({ schema, onDataChanged }: Props) {
         </>
       )}
     </div>
+  );
+}
+
+function NodeListingCell({
+  node,
+  views,
+  resolverConfig,
+}: {
+  node: GraphRecord;
+  views: Array<{ viewName: string; tagName: string }>;
+  resolverConfig?: { default?: string; listing?: string; detail?: string; inline?: string };
+}) {
+  if (views.length > 0) {
+    const viewName = resolveViewForEntity(resolverConfig, views, 'listing');
+    if (viewName !== 'json') {
+      const match = views.find((v) => v.viewName === viewName);
+      if (match) {
+        return (
+          <div>
+            <CustomView tagName={match.tagName} data={node.data as Record<string, unknown>} />
+          </div>
+        );
+      }
+    }
+  }
+  return (
+    <span className="text-xs text-slate-400 font-mono">
+      {truncateData(node.data, 100)}
+    </span>
   );
 }

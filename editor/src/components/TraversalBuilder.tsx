@@ -86,7 +86,7 @@ export default function TraversalBuilder({ schema }: Props) {
   const [startNodeType, setStartNodeType] = useState<string>('');
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold mb-1">Graph Traversal</h1>
         <p className="text-sm text-slate-400">
@@ -885,7 +885,7 @@ function HopEdgeRow({
   const initialEdgeView = () => {
     const rc = config?.viewDefaults?.edges?.[edge.abType];
     if (rc && edgeViews.length > 0) {
-      const resolved = resolveViewForEntity(edge.data, rc, edgeViews);
+      const resolved = resolveViewForEntity(rc, edgeViews, 'inline');
       if (resolved !== 'json') {
         const match = edgeViews.find((v) => v.viewName === resolved);
         if (match) return match.tagName;
@@ -899,7 +899,7 @@ function HopEdgeRow({
   const initialNodeView = () => {
     const rc = config?.viewDefaults?.nodes?.[targetType];
     if (rc && nodeViews.length > 0) {
-      const resolved = resolveViewForEntity({}, rc, nodeViews);
+      const resolved = resolveViewForEntity(rc, nodeViews, 'inline');
       if (resolved !== 'json') {
         const match = nodeViews.find((v) => v.viewName === resolved);
         if (match) return match.tagName;
@@ -925,7 +925,7 @@ function HopEdgeRow({
       if (resolved) {
         const rc = config?.viewDefaults?.nodes?.[targetType];
         if (rc && nodeViews.length > 0) {
-          const viewName = resolveViewForEntity(resolved.data, rc, nodeViews);
+          const viewName = resolveViewForEntity(rc, nodeViews, 'inline');
           if (viewName !== 'json') {
             const match = nodeViews.find((v) => v.viewName === viewName);
             if (match) setNodeViewMode(match.tagName);

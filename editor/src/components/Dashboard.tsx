@@ -9,7 +9,7 @@ interface Props {
 
 export default function Dashboard({ schema, config }: Props) {
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold mb-1">Graph Overview</h1>

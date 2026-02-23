@@ -102,7 +102,7 @@ export function NodeDetailContent({
     const views = viewRegistry?.nodes[node.aType]?.views ?? [];
     const resolverConfig = config.viewDefaults?.nodes?.[node.aType];
     if (resolverConfig && views.length > 0) {
-      const resolved = resolveViewForEntity(node.data, resolverConfig, views);
+      const resolved = resolveViewForEntity(resolverConfig, views, 'detail');
       if (resolved !== 'json') {
         const match = views.find((v) => v.viewName === resolved);
         if (match) setActiveView(match.tagName);
@@ -187,7 +187,7 @@ export function NodeDetailContent({
 
   if (editing) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 max-w-6xl mx-auto">
         <NodeEditor
           schema={schema}
           existingNode={node}
@@ -219,7 +219,7 @@ export function NodeDetailContent({
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
@@ -705,7 +705,7 @@ function EdgeRow({
   const initialEdgeView = () => {
     const rc = config.viewDefaults?.edges?.[edge.abType];
     if (rc && edgeViews.length > 0) {
-      const resolved = resolveViewForEntity(edge.data, rc, edgeViews);
+      const resolved = resolveViewForEntity(rc, edgeViews, 'inline');
       if (resolved !== 'json') {
         const match = edgeViews.find((v) => v.viewName === resolved);
         if (match) return match.tagName;
@@ -719,7 +719,7 @@ function EdgeRow({
   const initialNodeView = () => {
     const rc = config.viewDefaults?.nodes?.[targetType];
     if (rc && nodeViews.length > 0) {
-      const resolved = resolveViewForEntity({}, rc, nodeViews);
+      const resolved = resolveViewForEntity(rc, nodeViews, 'inline');
       if (resolved !== 'json') {
         const match = nodeViews.find((v) => v.viewName === resolved);
         if (match) return match.tagName;
@@ -743,7 +743,7 @@ function EdgeRow({
       if (resolvedNode) {
         const rc = config.viewDefaults?.nodes?.[targetType];
         if (rc && nodeViews.length > 0) {
-          const resolved = resolveViewForEntity(resolvedNode.data, rc, nodeViews);
+          const resolved = resolveViewForEntity(rc, nodeViews, 'inline');
           if (resolved !== 'json') {
             const match = nodeViews.find((v) => v.viewName === resolved);
             if (match) setNodeViewMode(match.tagName);
@@ -763,7 +763,7 @@ function EdgeRow({
       if (resolved) {
         const rc = config.viewDefaults?.nodes?.[targetType];
         if (rc && nodeViews.length > 0) {
-          const viewName = resolveViewForEntity(resolved.data, rc, nodeViews);
+          const viewName = resolveViewForEntity(rc, nodeViews, 'inline');
           if (viewName !== 'json') {
             const match = nodeViews.find((v) => v.viewName === viewName);
             if (match) setNodeViewMode(match.tagName);

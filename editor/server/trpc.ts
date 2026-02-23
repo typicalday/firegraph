@@ -8,6 +8,7 @@ import type { SchemaMetadata } from './schema-introspect.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import type { LoadedConfig } from './config-loader.js';
+import type { SchemaViewWarning } from './schema-views-validator.js';
 import { z } from 'zod';
 
 // --- Context ---
@@ -23,6 +24,7 @@ export interface TRPCContext {
   readonly: boolean;
   projectId: string | undefined;
   viewDefaults: LoadedConfig['viewDefaults'] | null;
+  schemaViewWarnings: SchemaViewWarning[];
 }
 
 export function createContext(deps: TRPCContext) {
@@ -103,6 +105,11 @@ export const appRouter = t.router({
     }
     return { ...ctx.viewRegistry, hasViews: true as const };
   }),
+
+  // --- Warnings ---
+  getWarnings: publicProcedure.query(({ ctx }) => ({
+    warnings: ctx.schemaViewWarnings,
+  })),
 
   // --- Browse Nodes ---
   getNodes: publicProcedure

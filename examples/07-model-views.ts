@@ -6,8 +6,24 @@
  *
  * Each view class:
  * - Extends HTMLElement
- * - Has a static `viewName` identifier
+ * - Has a static `viewName` identifier (e.g. 'row', 'card', 'detail')
  * - Receives data via a `data` property setter
+ *
+ * Common view types and their display contexts:
+ *
+ *   row     Compact, horizontal, single-line. Used in NodeBrowser table rows
+ *           (listing context). No borders — the table provides structure.
+ *
+ *   card    Self-contained compact card with background/border. Used for
+ *           inline previews in edge rows and traversal results (inline context).
+ *
+ *   detail  Full-height panel showing all data. Used on the node detail page
+ *           (detail context). No height constraints.
+ *
+ * All views for an entity type receive the same data object — one data model,
+ * rendered differently depending on the context.
+ *
+ * See docs/views.md for full design guidelines.
  *
  * To use views in the editor:
  *   npx firegraph editor --registry ./src/registry.ts --views ./examples/07-model-views.ts
@@ -237,6 +253,10 @@ class HasRiderCard extends HTMLElement {
 
 // ═══════════════════════════════════════════════════════════════
 // 3. Register views with sample data
+//
+// sampleData is a single object per entity type — it matches the Zod
+// schema from the registry and is shared across all views. The View
+// Gallery (/views) renders every view with this same data.
 // ═══════════════════════════════════════════════════════════════
 
 export default defineViews({
@@ -244,27 +264,18 @@ export default defineViews({
     tour: {
       views: [TourCard, TourDetail],
       sampleData: {
-        card: {
-          name: 'Dolomites Classic',
-          difficulty: 'hard',
-          maxRiders: 30,
-        },
-        detail: {
-          name: 'Dolomites Classic',
-          difficulty: 'hard',
-          maxRiders: 30,
-          description: 'A challenging multi-day cycling tour through the Italian Dolomites.',
-        },
+        name: 'Dolomites Classic',
+        difficulty: 'hard',
+        maxRiders: 30,
+        description: 'A challenging multi-day cycling tour through the Italian Dolomites.',
       },
     },
     departure: {
       views: [DepartureBadge],
       sampleData: {
-        badge: {
-          date: '2025-07-15',
-          maxSpots: 20,
-          priceUsd: 2499,
-        },
+        date: '2025-07-15',
+        maxSpots: 20,
+        priceUsd: 2499,
       },
     },
   },
@@ -272,21 +283,17 @@ export default defineViews({
     hasDeparture: {
       views: [HasDepartureTimeline],
       sampleData: {
-        timeline: {
-          scheduledDate: '2025-07-15',
-          status: 'confirmed',
-          notes: 'Weather looks great, all guides confirmed.',
-        },
+        scheduledDate: '2025-07-15',
+        status: 'confirmed',
+        notes: 'Weather looks great, all guides confirmed.',
       },
     },
     hasRider: {
       views: [HasRiderCard],
       sampleData: {
-        card: {
-          seatNumber: 7,
-          confirmed: true,
-          dietaryNotes: 'Vegetarian',
-        },
+        seatNumber: 7,
+        confirmed: true,
+        dietaryNotes: 'Vegetarian',
       },
     },
   },

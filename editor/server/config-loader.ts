@@ -18,8 +18,8 @@ export interface LoadedConfig {
     readonly?: boolean;
   };
   viewDefaults?: {
-    nodes?: Record<string, { default?: string; rules?: Array<{ when: Record<string, unknown>; view: string }> }>;
-    edges?: Record<string, { default?: string; rules?: Array<{ when: Record<string, unknown>; view: string }> }>;
+    nodes?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
+    edges?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
   };
 }
 

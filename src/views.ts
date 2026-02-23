@@ -53,10 +53,10 @@ export interface EntityViewConfig {
   /** View component classes to register. */
   views: ViewComponentClass[];
   /**
-   * Optional sample data for the Storybook gallery, keyed by viewName.
-   * If a viewName is not present the gallery will use an empty object.
+   * Optional sample data for the gallery. A single object matching
+   * the entity's Zod schema — shared across all views.
    */
-  sampleData?: Record<string, Record<string, unknown>>;
+  sampleData?: Record<string, unknown>;
 }
 
 /** Input shape accepted by `defineViews()`. */
@@ -80,7 +80,7 @@ export interface ViewMeta {
 /** Serialisable metadata for all views of a single entity type. */
 export interface EntityViewMeta {
   views: ViewMeta[];
-  sampleData?: Record<string, Record<string, unknown>>;
+  sampleData?: Record<string, unknown>;
 }
 
 /** The resolved view registry returned by `defineViews()`. */
