@@ -69,6 +69,7 @@ export function NodeDetailContent({
   const [editing, setEditing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCreateEdge, setShowCreateEdge] = useState(false);
+  const [showCreateIncomingEdge, setShowCreateIncomingEdge] = useState(false);
   const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; abType: string; bUid: string } | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -92,6 +93,7 @@ export function NodeDetailContent({
   useEffect(() => {
     setEditing(false);
     setShowCreateEdge(false);
+    setShowCreateIncomingEdge(false);
     setViewInitialized(false);
     setMutationError(null);
   }, [uid]);
@@ -294,8 +296,9 @@ export function NodeDetailContent({
           <div className="mb-4">
             <EdgeEditor
               schema={schema}
-              defaultAUid={node.aUid}
-              defaultAType={node.aType}
+              defaultUid={node.aUid}
+              defaultType={node.aType}
+              direction="out"
               onSaved={() => {
                 setShowCreateEdge(false);
                 reloadEdges();
@@ -319,7 +322,36 @@ export function NodeDetailContent({
 
       {/* Incoming Edges */}
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
-        <h2 className="text-sm font-semibold mb-3">Incoming Edges</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Incoming Edges</h2>
+          {canWrite && !showCreateIncomingEdge && inAbTypes.length > 0 && (
+            <button
+              onClick={() => setShowCreateIncomingEdge(true)}
+              className="px-3 py-1 bg-indigo-600/20 text-indigo-400 rounded-lg text-xs hover:bg-indigo-600/30 transition-colors flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Add Edge
+            </button>
+          )}
+        </div>
+        {showCreateIncomingEdge && (
+          <div className="mb-4">
+            <EdgeEditor
+              schema={schema}
+              defaultUid={node.aUid}
+              defaultType={node.aType}
+              direction="in"
+              onSaved={() => {
+                setShowCreateIncomingEdge(false);
+                reloadEdges();
+                onDataChanged?.();
+              }}
+              onCancel={() => setShowCreateIncomingEdge(false)}
+            />
+          </div>
+        )}
         <PaginatedEdgeSection
           uid={node.aUid}
           direction="in"

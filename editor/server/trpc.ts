@@ -521,6 +521,44 @@ export const appRouter = t.router({
       }
     }),
 
+  // --- Write: Create Edge + Target Node atomically ---
+  createEdgeWithNode: writeProcedure
+    .input(z.object({
+      aType: z.string(),
+      abType: z.string(),
+      bType: z.string(),
+      /** Which side is the new node: 'b' (outgoing) or 'a' (incoming) */
+      newNodeSide: z.enum(['a', 'b']).default('b'),
+      /** The UID of the existing node (the "fixed" side) */
+      existingUid: z.string(),
+      /** Optional UID for the new node (auto-generated if omitted) */
+      newNodeUid: z.string().optional(),
+      edgeData: z.record(z.string(), z.unknown()),
+      nodeData: z.record(z.string(), z.unknown()),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const newUid = input.newNodeUid || generateId();
+        const newNodeType = input.newNodeSide === 'b' ? input.bType : input.aType;
+        const aUid = input.newNodeSide === 'a' ? newUid : input.existingUid;
+        const bUid = input.newNodeSide === 'b' ? newUid : input.existingUid;
+
+        await ctx.graphClient.runTransaction(async (tx) => {
+          await tx.putNode(newNodeType, newUid, input.nodeData);
+          await tx.putEdge(
+            input.aType, aUid, input.abType,
+            input.bType, bUid, input.edgeData,
+          );
+        });
+        return { success: true as const, uid: newUid };
+      } catch (err) {
+        if (err instanceof ValidationError || err instanceof RegistryViolationError) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: err.message });
+        }
+        throw err;
+      }
+    }),
+
   // --- Write: Delete Edge ---
   deleteEdge: writeProcedure
     .input(z.object({
