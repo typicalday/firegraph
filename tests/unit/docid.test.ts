@@ -13,7 +13,7 @@ describe('computeNodeDocId', () => {
 });
 
 describe('computeEdgeDocId', () => {
-  it('returns shard:aUid:abType:bUid format', () => {
+  it('returns shard:aUid:axbType:bUid format', () => {
     const docId = computeEdgeDocId('a1', 'hasDeparture', 'b2');
     const parts = docId.split(':');
     expect(parts).toHaveLength(4);

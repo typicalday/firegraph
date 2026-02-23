@@ -52,7 +52,7 @@ export default function Dashboard({ schema, config }: Props) {
           <h2 className="text-sm font-semibold mb-4">Relationships</h2>
           <div className="space-y-2">
             {schema.edgeTypes.map((et) => {
-              const key = `${et.aType}:${et.abType}:${et.bType}`;
+              const key = `${et.aType}:${et.axbType}:${et.bType}`;
               return (
                 <div
                   key={key}
@@ -62,7 +62,7 @@ export default function Dashboard({ schema, config }: Props) {
                     <span className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(et.aType)}`}>
                       {et.aType}
                     </span>
-                    <span className="text-indigo-400 text-xs">&mdash;{et.abType}&rarr;</span>
+                    <span className="text-indigo-400 text-xs">&mdash;{et.axbType}&rarr;</span>
                     <span className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(et.bType)}`}>
                       {et.bType}
                     </span>

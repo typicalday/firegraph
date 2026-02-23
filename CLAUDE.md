@@ -8,14 +8,14 @@ Firegraph is a TypeScript library that provides a graph data model on top of Fir
 
 ### Graph Model
 
-Every record in Firestore is a **triple**: `(aType, aUid) -[abType]-> (bType, bUid)`.
+Every record in Firestore is a **triple**: `(aType, aUid) -[axbType]-> (bType, bUid)`.
 
 - **Nodes** are stored as self-loops: `(tour, tour1) -[is]-> (tour, tour1)`. The special relation `is` (constant `NODE_RELATION`) marks a record as a node.
 - **Edges** are standard directed edges: `(tour, tour1) -[hasDeparture]-> (departure, dep1)`.
 
 All records live in a single Firestore collection. Document IDs:
 - Nodes: the UID itself (`tour1`)
-- Edges: `shard:aUid:abType:bUid` where shard is first hex char of SHA-256 hash (16-bucket distribution to avoid hotspots)
+- Edges: `shard:aUid:axbType:bUid` where shard is first hex char of SHA-256 hash (16-bucket distribution to avoid hotspots)
 
 ### Key Modules
 
@@ -123,7 +123,7 @@ entities/
 }
 ```
 
-`edge.json` — Topology declaration (replaces old `{ aType, abType, bType }` triples):
+`edge.json` — Topology declaration (replaces old `{ aType, axbType, bType }` triples):
 ```json
 { "from": "task", "to": "step", "inverseLabel": "stepOf" }
 ```
@@ -225,8 +225,8 @@ Registry validation uses JSON Schema (via ajv). Each `RegistryEntry` has an opti
 
 ```typescript
 createRegistry([
-  { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
-  { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema, inverseLabel: 'departureOf' },
+  { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
+  { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema, inverseLabel: 'departureOf' },
 ]);
 ```
 
@@ -242,15 +242,15 @@ Edge entries support an optional `inverseLabel` field — a display-only label f
 
 ```typescript
 createRegistry([
-  { aType: 'project', abType: 'hasTask', bType: 'task', jsonSchema: taskEdgeSchema, inverseLabel: 'taskOf' },
-  { aType: 'task',    abType: 'hasStep', bType: 'step', jsonSchema: stepEdgeSchema, inverseLabel: 'stepOf' },
+  { aType: 'project', axbType: 'hasTask', bType: 'task', jsonSchema: taskEdgeSchema, inverseLabel: 'taskOf' },
+  { aType: 'task',    axbType: 'hasStep', bType: 'step', jsonSchema: stepEdgeSchema, inverseLabel: 'stepOf' },
 ]);
 ```
 
 In the editor, incoming edges with an `inverseLabel` display:
 - `— stepOf →` (amber color, arrow reads left-to-right) instead of `← hasStep —`
 - Hovering the label shows a tooltip: "Inverse of: hasStep"
-- Without `inverseLabel`, the existing `← abType —` display is preserved
+- Without `inverseLabel`, the existing `← axbType —` display is preserved
 
 The label flows through: `RegistryEntry.inverseLabel` → `introspectRegistry()` → `GET /api/schema` → frontend `EdgeType.inverseLabel` → `NodeDetail.tsx` + `DrillBreadcrumb.tsx`.
 
@@ -382,7 +382,7 @@ import { defineViews } from 'firegraph';
 ```typescript
 interface ViewRegistryInput {
   nodes?: Record<string, EntityViewConfig>;  // keyed by aType
-  edges?: Record<string, EntityViewConfig>;  // keyed by abType
+  edges?: Record<string, EntityViewConfig>;  // keyed by axbType
 }
 
 interface EntityViewConfig {
@@ -412,7 +412,7 @@ interface ViewMeta {
 ```
 
 **Dual-environment behaviour:**
-- **Browser**: `defineViews()` calls `customElements.define()` for each view class, registering it with a deterministic tag name. The tag name format is `fg-{entityType}-{viewName}` for nodes and `fg-edge-{abType}-{viewName}` for edges.
+- **Browser**: `defineViews()` calls `customElements.define()` for each view class, registering it with a deterministic tag name. The tag name format is `fg-{entityType}-{viewName}` for nodes and `fg-edge-{axbType}-{viewName}` for edges.
 - **Node.js (server)**: `defineViews()` only returns metadata. No DOM APIs are called. This is how the editor server extracts view metadata without a browser.
 
 #### Creating a Views File
@@ -457,7 +457,7 @@ class UserProfile extends HTMLElement {
   }
 }
 
-// Edge view example — keyed by abType
+// Edge view example — keyed by axbType
 class ManagesEntry extends HTMLElement {
   static viewName = 'summary';
   static description = 'Management relationship summary';
@@ -493,7 +493,7 @@ export default defineViews({
 
 **Key points:**
 - Node views are keyed by `aType` (the entity type name from your registry)
-- Edge views are keyed by `abType` (the relation name from your registry)
+- Edge views are keyed by `axbType` (the relation name from your registry)
 - `sampleData` is keyed by `viewName` — each view can have its own sample data for the gallery
 - `sampleData` is optional — the gallery will show an empty object if not provided, and you can paste data in manually
 
@@ -563,7 +563,7 @@ Without per-entity `views.ts` files, the editor shows raw JSON. With views, it s
 
 **Node detail page** (`/node/:uid`): The "Data" section header gains a `ViewSwitcher` toolbar showing `[JSON] [card] [profile]`. Clicking a view name replaces the `JsonView` with a `CustomView` wrapper that creates the corresponding custom element and sets its `.data` property.
 
-**Edge rows**: When viewing a node's outgoing or incoming edges, each edge row can switch between JSON and custom views if views are registered for that edge's `abType`. Resolved inline nodes also show view switchers if views are registered for their `aType`.
+**Edge rows**: When viewing a node's outgoing or incoming edges, each edge row can switch between JSON and custom views if views are registered for that edge's `axbType`. Resolved inline nodes also show view switchers if views are registered for their `aType`.
 
 **View Gallery page** (`/views`): A Storybook-like page accessible from the sidebar (the "Views" link appears only when views are loaded). It lists all entity types with views, showing:
 - Entity type badge (node/edge) and name
@@ -680,7 +680,7 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 
 ### Query Planning
 
-`buildEdgeQueryPlan` checks if all three identifying fields (`aUid`, `abType`, `bUid`) are present. If so, it returns a `get` strategy (single doc lookup). Otherwise, it builds Firestore `where` filters from whichever fields are provided.
+`buildEdgeQueryPlan` checks if all three identifying fields (`aUid`, `axbType`, `bUid`) are present. If so, it returns a `get` strategy (single doc lookup). Otherwise, it builds Firestore `where` filters from whichever fields are provided.
 
 ### Adapter Pattern
 
@@ -688,4 +688,4 @@ Three adapters (`FirestoreAdapter`, `TransactionAdapter`, `BatchAdapter`) provid
 
 ### Traversal
 
-`createTraversal(reader, startUid)` returns a builder. `.follow(abType, opts)` adds hops. `.run(opts)` executes sequentially hop-by-hop, with parallel fan-out within each hop controlled by a semaphore. Budget (`maxReads`) is checked before each Firestore call.
+`createTraversal(reader, startUid)` returns a builder. `.follow(axbType, opts)` adds hops. `.run(opts)` executes sequentially hop-by-hop, with parallel fan-out within each hop controlled by a semaphore. Budget (`maxReads`) is checked before each Firestore call.

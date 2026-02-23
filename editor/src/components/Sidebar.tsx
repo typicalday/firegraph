@@ -149,12 +149,12 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
           ) : (
             schema.edgeTypes.map((et) => (
               <div
-                key={`${et.aType}:${et.abType}:${et.bType}`}
+                key={`${et.aType}:${et.axbType}:${et.bType}`}
                 className="px-3 py-1.5 text-[11px] text-slate-500"
               >
                 <span className="text-slate-400">{et.aType}</span>
                 <span className="text-indigo-400 mx-1">&rarr;</span>
-                <span className="text-indigo-400">{et.abType}</span>
+                <span className="text-indigo-400">{et.axbType}</span>
                 <span className="text-indigo-400 mx-1">&rarr;</span>
                 <span className="text-slate-400">{et.bType}</span>
               </div>

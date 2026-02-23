@@ -31,7 +31,7 @@ export function validateSchemaViews(
   const warnings: SchemaViewWarning[] = [];
 
   const knownNodeTypes = new Set(schemaMetadata.nodeTypes.map((n) => n.aType));
-  const knownEdgeAbTypes = new Set(schemaMetadata.edgeTypes.map((e) => e.abType));
+  const knownEdgeAxbTypes = new Set(schemaMetadata.edgeTypes.map((e) => e.axbType));
 
   // 1. Orphaned node views
   for (const entityType of Object.keys(viewRegistry.nodes)) {
@@ -47,13 +47,13 @@ export function validateSchemaViews(
   }
 
   // 2. Orphaned edge views
-  for (const abType of Object.keys(viewRegistry.edges)) {
-    if (!knownEdgeAbTypes.has(abType)) {
+  for (const axbType of Object.keys(viewRegistry.edges)) {
+    if (!knownEdgeAxbTypes.has(axbType)) {
       warnings.push({
         code: 'ORPHANED_EDGE_VIEW',
         severity: 'warn',
-        message: `Edge view registered for "${abType}" but no matching edge type exists in the registry.`,
-        entityType: abType,
+        message: `Edge view registered for "${axbType}" but no matching edge type exists in the registry.`,
+        entityType: axbType,
         entityKind: 'edge',
       });
     }
@@ -160,10 +160,10 @@ function validateViewDefaults(
 
 function findEdgeEntry(
   registry: GraphRegistry,
-  abType: string,
+  axbType: string,
 ): { jsonSchema?: object } | undefined {
   for (const entry of registry.entries()) {
-    if (entry.abType === abType && entry.abType !== 'is') {
+    if (entry.axbType === axbType && entry.axbType !== 'is') {
       return entry;
     }
   }

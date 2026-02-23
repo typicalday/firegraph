@@ -3,7 +3,7 @@ import type { Timestamp, FieldValue, WhereFilterOp } from 'firebase-admin/firest
 export interface GraphRecord {
   aType: string;
   aUid: string;
-  abType: string;
+  axbType: string;
   bType: string;
   bUid: string;
   data: Record<string, unknown>;
@@ -14,7 +14,7 @@ export interface GraphRecord {
 export interface StoredGraphRecord {
   aType: string;
   aUid: string;
-  abType: string;
+  axbType: string;
   bType: string;
   bUid: string;
   data: Record<string, unknown>;
@@ -25,7 +25,7 @@ export interface StoredGraphRecord {
 export interface FindEdgesParams {
   aType?: string;
   aUid?: string;
-  abType?: string;
+  axbType?: string;
   bType?: string;
   bUid?: string;
   limit?: number;
@@ -53,7 +53,7 @@ export interface QueryFilter {
 
 export interface RegistryEntry {
   aType: string;
-  abType: string;
+  axbType: string;
   bType: string;
   /** JSON Schema object for the data payload. */
   jsonSchema?: object;
@@ -100,15 +100,15 @@ export interface GraphClientOptions {
 }
 
 export interface GraphRegistry {
-  validate(aType: string, abType: string, bType: string, data: unknown): void;
-  lookup(aType: string, abType: string, bType: string): RegistryEntry | undefined;
+  validate(aType: string, axbType: string, bType: string, data: unknown): void;
+  lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined;
   entries(): ReadonlyArray<RegistryEntry>;
 }
 
 export interface GraphReader {
   getNode(uid: string): Promise<StoredGraphRecord | null>;
-  getEdge(aUid: string, abType: string, bUid: string): Promise<StoredGraphRecord | null>;
-  edgeExists(aUid: string, abType: string, bUid: string): Promise<boolean>;
+  getEdge(aUid: string, axbType: string, bUid: string): Promise<StoredGraphRecord | null>;
+  edgeExists(aUid: string, axbType: string, bUid: string): Promise<boolean>;
   findEdges(params: FindEdgesParams): Promise<StoredGraphRecord[]>;
   findNodes(params: FindNodesParams): Promise<StoredGraphRecord[]>;
 }
@@ -118,14 +118,14 @@ export interface GraphWriter {
   putEdge(
     aType: string,
     aUid: string,
-    abType: string,
+    axbType: string,
     bType: string,
     bUid: string,
     data: Record<string, unknown>,
   ): Promise<void>;
   updateNode(uid: string, data: Record<string, unknown>): Promise<void>;
   removeNode(uid: string): Promise<void>;
-  removeEdge(aUid: string, abType: string, bUid: string): Promise<void>;
+  removeEdge(aUid: string, axbType: string, bUid: string): Promise<void>;
 }
 
 export interface GraphClient extends GraphReader, GraphWriter {
@@ -140,7 +140,7 @@ export interface GraphBatch extends GraphWriter {
 }
 
 export interface HopDefinition {
-  abType: string;
+  axbType: string;
   direction?: 'forward' | 'reverse';
   aType?: string;
   bType?: string;
@@ -156,7 +156,7 @@ export interface TraversalOptions {
 }
 
 export interface HopResult {
-  abType: string;
+  axbType: string;
   depth: number;
   edges: StoredGraphRecord[];
   sourceCount: number;
@@ -171,6 +171,6 @@ export interface TraversalResult {
 }
 
 export interface TraversalBuilder {
-  follow(abType: string, options?: Omit<HopDefinition, 'abType'>): TraversalBuilder;
+  follow(axbType: string, options?: Omit<HopDefinition, 'axbType'>): TraversalBuilder;
   run(options?: TraversalOptions): Promise<TraversalResult>;
 }

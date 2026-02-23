@@ -84,7 +84,7 @@ export const appRouter = t.router({
     }));
     const edgeTypes = ctx.schemaMetadata.edgeTypes.map((e) => ({
       aType: e.aType,
-      abType: e.abType,
+      axbType: e.axbType,
       bType: e.bType,
       description: e.description,
       inverseLabel: e.inverseLabel,
@@ -142,7 +142,7 @@ export const appRouter = t.router({
         effectiveSortBy = input.sortBy.startsWith('data.') ? input.sortBy : `data.${input.sortBy}`;
       }
 
-      let query: Query = col.where('abType', '==', NODE_RELATION);
+      let query: Query = col.where('axbType', '==', NODE_RELATION);
 
       if (input.type) {
         query = query.where('aType', '==', input.type);
@@ -208,12 +208,12 @@ export const appRouter = t.router({
       const outSnapshot = await col.where('aUid', '==', input.uid).limit(edgeLimit + 1).get();
       const outEdges = outSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
-        .filter((e) => e.abType !== NODE_RELATION);
+        .filter((e) => e.axbType !== NODE_RELATION);
 
       const inSnapshot = await col.where('bUid', '==', input.uid).limit(edgeLimit + 1).get();
       const inEdges = inSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
-        .filter((e) => e.abType !== NODE_RELATION);
+        .filter((e) => e.axbType !== NODE_RELATION);
 
       return { node, outEdges, inEdges };
     }),
@@ -239,7 +239,7 @@ export const appRouter = t.router({
     .input(z.object({
       aType: z.string().optional(),
       aUid: z.string().optional(),
-      abType: z.string().optional(),
+      axbType: z.string().optional(),
       bType: z.string().optional(),
       bUid: z.string().optional(),
       limit: z.number().min(1).max(200).default(25),
@@ -251,15 +251,15 @@ export const appRouter = t.router({
 
       if (input.aType) query = query.where('aType', '==', input.aType);
       if (input.aUid) query = query.where('aUid', '==', input.aUid);
-      if (input.abType) query = query.where('abType', '==', input.abType);
+      if (input.axbType) query = query.where('axbType', '==', input.axbType);
       if (input.bType) query = query.where('bType', '==', input.bType);
       if (input.bUid) query = query.where('bUid', '==', input.bUid);
 
-      if (!input.abType) {
-        query = query.where('abType', '!=', NODE_RELATION);
+      if (!input.axbType) {
+        query = query.where('axbType', '!=', NODE_RELATION);
       }
 
-      query = query.orderBy('abType').limit(input.limit + 1);
+      query = query.orderBy('axbType').limit(input.limit + 1);
 
       if (input.startAfter) {
         query = query.startAfter(input.startAfter);
@@ -273,7 +273,7 @@ export const appRouter = t.router({
 
       let nextCursor: string | null = null;
       if (hasMore && docs.length > 0) {
-        nextCursor = String(docs[docs.length - 1].data().abType);
+        nextCursor = String(docs[docs.length - 1].data().axbType);
       }
 
       return { edges, hasMore, nextCursor };
@@ -284,7 +284,7 @@ export const appRouter = t.router({
     .input(z.object({
       startUid: z.string().min(1),
       hops: z.array(z.object({
-        abType: z.string(),
+        axbType: z.string(),
         direction: z.enum(['forward', 'reverse']).default('forward'),
         limit: z.number().default(10),
         aType: z.string().optional(),
@@ -309,7 +309,7 @@ export const appRouter = t.router({
       let sourceUids = [input.startUid];
 
       interface HopResultData {
-        abType: string;
+        axbType: string;
         direction: string;
         depth: number;
         edges: Record<string, unknown>[];
@@ -326,7 +326,7 @@ export const appRouter = t.router({
 
         if (sourceUids.length === 0 || truncated) {
           hopResults.push({
-            abType: hop.abType, direction, depth,
+            axbType: hop.axbType, direction, depth,
             edges: [], sourceCount: 0, truncated,
           });
           continue;
@@ -348,7 +348,7 @@ export const appRouter = t.router({
             if (totalReads >= input.maxReads) return [];
             totalReads++;
 
-            let query: Query = col.where('abType', '==', hop.abType);
+            let query: Query = col.where('axbType', '==', hop.axbType);
 
             if (direction === 'forward') {
               query = query.where('aUid', '==', uid);
@@ -386,7 +386,7 @@ export const appRouter = t.router({
         }
 
         hopResults.push({
-          abType: hop.abType, direction, depth,
+          axbType: hop.axbType, direction, depth,
           edges: hopEdges, sourceCount, truncated: hopTruncated,
         });
 
@@ -429,7 +429,7 @@ export const appRouter = t.router({
       const aUidSnapshot = await col.where('aUid', '==', q).limit(input.limit).get();
       for (const doc of aUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
-        if (!results.some((r) => r.aUid === record.aUid && r.abType === record.abType && r.bUid === record.bUid)) {
+        if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
           results.push({ ...record, _matchType: 'aUid' });
         }
       }
@@ -437,7 +437,7 @@ export const appRouter = t.router({
       const bUidSnapshot = await col.where('bUid', '==', q).limit(input.limit).get();
       for (const doc of bUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
-        if (!results.some((r) => r.aUid === record.aUid && r.abType === record.abType && r.bUid === record.bUid)) {
+        if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
           results.push({ ...record, _matchType: 'bUid' });
         }
       }
@@ -462,11 +462,11 @@ export const appRouter = t.router({
   checkEdge: publicProcedure
     .input(z.object({
       aUid: z.string().min(1),
-      abType: z.string().min(1),
+      axbType: z.string().min(1),
       bUid: z.string().min(1),
     }))
     .query(async ({ ctx, input }) => {
-      const docId = computeEdgeDocId(input.aUid, input.abType, input.bUid);
+      const docId = computeEdgeDocId(input.aUid, input.axbType, input.bUid);
       const doc = await ctx.db.collection(ctx.collection).doc(docId).get();
       return { exists: doc.exists };
     }),
@@ -527,7 +527,7 @@ export const appRouter = t.router({
     .input(z.object({
       aType: z.string(),
       aUid: z.string(),
-      abType: z.string(),
+      axbType: z.string(),
       bType: z.string(),
       bUid: z.string(),
       data: z.record(z.string(), z.unknown()),
@@ -535,7 +535,7 @@ export const appRouter = t.router({
     .mutation(async ({ ctx, input }) => {
       try {
         await ctx.graphClient.putEdge(
-          input.aType, input.aUid, input.abType,
+          input.aType, input.aUid, input.axbType,
           input.bType, input.bUid, input.data || {},
         );
         return { success: true as const };
@@ -551,7 +551,7 @@ export const appRouter = t.router({
   createEdgeWithNode: writeProcedure
     .input(z.object({
       aType: z.string(),
-      abType: z.string(),
+      axbType: z.string(),
       bType: z.string(),
       /** Which side is the new node: 'b' (outgoing) or 'a' (incoming) */
       newNodeSide: z.enum(['a', 'b']).default('b'),
@@ -572,13 +572,13 @@ export const appRouter = t.router({
         // Pre-check: does the node and/or edge already exist?
         const [existingNode, existingEdge] = await Promise.all([
           ctx.graphClient.getNode(newUid),
-          ctx.graphClient.getEdge(aUid, input.abType, bUid),
+          ctx.graphClient.getEdge(aUid, input.axbType, bUid),
         ]);
 
         if (existingNode && existingEdge) {
           throw new TRPCError({
             code: 'CONFLICT',
-            message: `Both node "${newUid}" and edge ${aUid} —[${input.abType}]→ ${bUid} already exist.`,
+            message: `Both node "${newUid}" and edge ${aUid} —[${input.axbType}]→ ${bUid} already exist.`,
           });
         }
 
@@ -588,7 +588,7 @@ export const appRouter = t.router({
           }
           // putEdge is an upsert — if edge exists, it updates updatedAt + data
           await tx.putEdge(
-            input.aType, aUid, input.abType,
+            input.aType, aUid, input.axbType,
             input.bType, bUid, input.edgeData,
           );
         });
@@ -606,11 +606,11 @@ export const appRouter = t.router({
   deleteEdge: writeProcedure
     .input(z.object({
       aUid: z.string(),
-      abType: z.string(),
+      axbType: z.string(),
       bUid: z.string(),
     }))
     .mutation(async ({ ctx, input }) => {
-      await ctx.graphClient.removeEdge(input.aUid, input.abType, input.bUid);
+      await ctx.graphClient.removeEdge(input.aUid, input.axbType, input.bUid);
       return { success: true as const };
     }),
 });

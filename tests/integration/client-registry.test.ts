@@ -25,8 +25,8 @@ describe('client with registry', () => {
 
   beforeEach(() => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
-      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ]);
     g = createGraphClient(db, uniqueCollectionPath(), { registry });
   });

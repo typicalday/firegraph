@@ -11,7 +11,7 @@ export function buildNodeRecord(
   return {
     aType,
     aUid: uid,
-    abType: NODE_RELATION,
+    axbType: NODE_RELATION,
     bType: aType,
     bUid: uid,
     data,
@@ -23,7 +23,7 @@ export function buildNodeRecord(
 export function buildEdgeRecord(
   aType: string,
   aUid: string,
-  abType: string,
+  axbType: string,
   bType: string,
   bUid: string,
   data: Record<string, unknown>,
@@ -32,7 +32,7 @@ export function buildEdgeRecord(
   return {
     aType,
     aUid,
-    abType,
+    axbType,
     bType,
     bUid,
     data,

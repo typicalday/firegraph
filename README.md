@@ -38,7 +38,7 @@ await g.putNode('departure', depId, { date: '2025-07-15', maxCapacity: 30 });
 await g.putEdge('tour', tourId, 'hasDeparture', 'departure', depId, { order: 0 });
 
 // Query edges
-const departures = await g.findEdges({ aUid: tourId, abType: 'hasDeparture' });
+const departures = await g.findEdges({ aUid: tourId, axbType: 'hasDeparture' });
 ```
 
 ## Core Concepts
@@ -48,7 +48,7 @@ const departures = await g.findEdges({ aUid: tourId, abType: 'hasDeparture' });
 Firegraph stores everything as **triples** in a single Firestore collection:
 
 ```
-(aType, aUid) -[abType]-> (bType, bUid)
+(aType, aUid) -[axbType]-> (bType, bUid)
 ```
 
 - **Nodes** are self-referencing edges with the special relation `is`:
@@ -61,7 +61,7 @@ Every record carries a `data` payload (arbitrary JSON), plus `createdAt` and `up
 ### Document IDs
 
 - **Nodes**: The UID itself (e.g., `tour1`)
-- **Edges**: `shard:aUid:abType:bUid` where the shard prefix (0–f) is derived from SHA-256, distributing writes across 16 buckets to avoid Firestore hotspots
+- **Edges**: `shard:aUid:axbType:bUid` where the shard prefix (0–f) is derived from SHA-256, distributing writes across 16 buckets to avoid Firestore hotspots
 
 ## API Reference
 
@@ -119,22 +119,22 @@ await g.removeEdge('tour1', 'hasDeparture', 'dep1');
 
 ### Querying Edges
 
-`findEdges` accepts any combination of filters. When all three identifiers (`aUid`, `abType`, `bUid`) are provided, it uses a direct document lookup instead of a query scan.
+`findEdges` accepts any combination of filters. When all three identifiers (`aUid`, `axbType`, `bUid`) are provided, it uses a direct document lookup instead of a query scan.
 
 ```typescript
 // Forward: all departures of a tour
-await g.findEdges({ aUid: 'tour1', abType: 'hasDeparture' });
+await g.findEdges({ aUid: 'tour1', axbType: 'hasDeparture' });
 
 // Reverse: all tours that have this departure
-await g.findEdges({ abType: 'hasDeparture', bUid: 'dep1' });
+await g.findEdges({ axbType: 'hasDeparture', bUid: 'dep1' });
 
 // Type-scoped: all hasDeparture edges from any tour
-await g.findEdges({ aType: 'tour', abType: 'hasDeparture' });
+await g.findEdges({ aType: 'tour', axbType: 'hasDeparture' });
 
 // With limit and ordering
 await g.findEdges({
   aUid: 'tour1',
-  abType: 'hasDeparture',
+  axbType: 'hasDeparture',
   limit: 5,
   orderBy: { field: 'data.order', direction: 'asc' },
 });
@@ -250,7 +250,7 @@ import { z } from 'zod';
 const registry = createRegistry([
   {
     aType: 'tour',
-    abType: 'is',
+    axbType: 'is',
     bType: 'tour',
     dataSchema: z.object({
       name: z.string(),
@@ -259,7 +259,7 @@ const registry = createRegistry([
   },
   {
     aType: 'tour',
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
     bType: 'departure',
     // No dataSchema = any data allowed for this edge type
   },
@@ -358,7 +358,7 @@ All data lives in one Firestore collection. Each document has these fields:
 |-------|------|-------------|
 | `aType` | string | Source node type |
 | `aUid` | string | Source node ID |
-| `abType` | string | Relationship type (`is` for nodes) |
+| `axbType` | string | Relationship type (`is` for nodes) |
 | `bType` | string | Target node type |
 | `bUid` | string | Target node ID |
 | `data` | object | User payload |
@@ -369,7 +369,7 @@ All data lives in one Firestore collection. Each document has these fields:
 
 When you call `findEdges`, the query planner decides the strategy:
 
-1. **Direct get** — If `aUid`, `abType`, and `bUid` are all provided, the edge document ID can be computed directly. This is a single-document read (fastest).
+1. **Direct get** — If `aUid`, `axbType`, and `bUid` are all provided, the edge document ID can be computed directly. This is a single-document read (fastest).
 2. **Filtered query** — Otherwise, a Firestore query is built from whichever fields are provided, with optional `limit` and `orderBy` applied server-side.
 
 ### Traversal Execution

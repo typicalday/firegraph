@@ -2,7 +2,7 @@
  * Schema registry — how validation works end-to-end
  *
  * Shows that firegraph validates the full document on every write:
- * - Triple (aType, abType, bType) is validated by the registry lookup
+ * - Triple (aType, axbType, bType) is validated by the registry lookup
  * - Data payload is validated by JSON Schema (via ajv)
  * - UIDs are user-controlled strings
  * - Timestamps are set by the library
@@ -156,22 +156,22 @@ const operatorAgreementEdgeSchema = {
 // ═══════════════════════════════════════════════════════════════
 
 const registry = createRegistry([
-  // Node types (abType: 'is')
-  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'user',      abType: 'is', bType: 'user',      jsonSchema: userSchema,      description: 'User entity' },
-  { aType: 'booking',   abType: 'is', bType: 'booking',   jsonSchema: bookingSchema,   description: 'Booking entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider on a booking' },
-  { aType: 'operator',  abType: 'is', bType: 'operator',  jsonSchema: operatorSchema,  description: 'Operator partner' },
+  // Node types (axbType: 'is')
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'user',      axbType: 'is', bType: 'user',      jsonSchema: userSchema,      description: 'User entity' },
+  { aType: 'booking',   axbType: 'is', bType: 'booking',   jsonSchema: bookingSchema,   description: 'Booking entity' },
+  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider on a booking' },
+  { aType: 'operator',  axbType: 'is', bType: 'operator',  jsonSchema: operatorSchema,  description: 'Operator partner' },
 
   // Edge types (inverseLabel is a display-only label for when viewing incoming edges)
-  { aType: 'tour',    abType: 'hasDeparture',        bType: 'departure', jsonSchema: orderedEdgeSchema,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
-  { aType: 'tour',    abType: 'hasItineraryDay',     bType: 'tour',      jsonSchema: orderedEdgeSchema,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
-  { aType: 'tour',    abType: 'fulfilledByOperator', bType: 'operator',  jsonSchema: operatorAgreementEdgeSchema, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
-  { aType: 'user',    abType: 'placedBooking',       bType: 'booking',   jsonSchema: emptyEdgeSchema,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
-  { aType: 'booking', abType: 'bookedForTour',       bType: 'tour',      jsonSchema: emptyEdgeSchema,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
-  { aType: 'booking', abType: 'bookedForDeparture',  bType: 'departure', jsonSchema: emptyEdgeSchema,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
-  { aType: 'booking', abType: 'includesRider',       bType: 'rider',     jsonSchema: primaryContactEdgeSchema,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
+  { aType: 'tour',    axbType: 'hasDeparture',        bType: 'departure', jsonSchema: orderedEdgeSchema,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
+  { aType: 'tour',    axbType: 'hasItineraryDay',     bType: 'tour',      jsonSchema: orderedEdgeSchema,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
+  { aType: 'tour',    axbType: 'fulfilledByOperator', bType: 'operator',  jsonSchema: operatorAgreementEdgeSchema, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
+  { aType: 'user',    axbType: 'placedBooking',       bType: 'booking',   jsonSchema: emptyEdgeSchema,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
+  { aType: 'booking', axbType: 'bookedForTour',       bType: 'tour',      jsonSchema: emptyEdgeSchema,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
+  { aType: 'booking', axbType: 'bookedForDeparture',  bType: 'departure', jsonSchema: emptyEdgeSchema,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
+  { aType: 'booking', axbType: 'includesRider',       bType: 'rider',     jsonSchema: primaryContactEdgeSchema,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
 ]);
 
 const g = createGraphClient(db, 'examples/registry/graph', { registry });

@@ -3,8 +3,8 @@ import { compileSchema } from './json-schema.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type { GraphRegistry, RegistryEntry, DiscoveryResult } from './types.js';
 
-function tripleKey(aType: string, abType: string, bType: string): string {
-  return `${aType}:${abType}:${bType}`;
+function tripleKey(aType: string, axbType: string, bType: string): string {
+  return `${aType}:${axbType}:${bType}`;
 }
 
 /**
@@ -14,8 +14,8 @@ function tripleKey(aType: string, abType: string, bType: string): string {
  * ```ts
  * // From explicit entries (programmatic)
  * const registry = createRegistry([
- *   { aType: 'user', abType: 'is', bType: 'user', jsonSchema: userSchema },
- *   { aType: 'user', abType: 'follows', bType: 'user', jsonSchema: followsSchema },
+ *   { aType: 'user', axbType: 'is', bType: 'user', jsonSchema: userSchema },
+ *   { aType: 'user', axbType: 'follows', bType: 'user', jsonSchema: followsSchema },
  * ]);
  *
  * // From discovery result (folder convention)
@@ -39,23 +39,23 @@ export function createRegistry(
   const entryList: ReadonlyArray<RegistryEntry> = Object.freeze([...entries]);
 
   for (const entry of entries) {
-    const key = tripleKey(entry.aType, entry.abType, entry.bType);
+    const key = tripleKey(entry.aType, entry.axbType, entry.bType);
     const validator = entry.jsonSchema
-      ? compileSchema(entry.jsonSchema, `(${entry.aType}) -[${entry.abType}]-> (${entry.bType})`)
+      ? compileSchema(entry.jsonSchema, `(${entry.aType}) -[${entry.axbType}]-> (${entry.bType})`)
       : undefined;
     map.set(key, { entry, validate: validator });
   }
 
   return {
-    lookup(aType: string, abType: string, bType: string): RegistryEntry | undefined {
-      return map.get(tripleKey(aType, abType, bType))?.entry;
+    lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined {
+      return map.get(tripleKey(aType, axbType, bType))?.entry;
     },
 
-    validate(aType: string, abType: string, bType: string, data: unknown): void {
-      const rec = map.get(tripleKey(aType, abType, bType));
+    validate(aType: string, axbType: string, bType: string, data: unknown): void {
+      const rec = map.get(tripleKey(aType, axbType, bType));
 
       if (!rec) {
-        throw new RegistryViolationError(aType, abType, bType);
+        throw new RegistryViolationError(aType, axbType, bType);
       }
 
       if (rec.validate) {
@@ -64,7 +64,7 @@ export function createRegistry(
         } catch (err: unknown) {
           if (err instanceof ValidationError) throw err;
           throw new ValidationError(
-            `Data validation failed for (${aType}) -[${abType}]-> (${bType})`,
+            `Data validation failed for (${aType}) -[${axbType}]-> (${bType})`,
             err,
           );
         }
@@ -89,7 +89,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
   for (const [name, entity] of discovery.nodes) {
     entries.push({
       aType: name,
-      abType: NODE_RELATION,
+      axbType: NODE_RELATION,
       bType: name,
       jsonSchema: entity.schema,
       description: entity.description,
@@ -97,7 +97,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
   }
 
   // Edges → expand from/to into one triple per combination
-  for (const [abType, entity] of discovery.edges) {
+  for (const [axbType, entity] of discovery.edges) {
     const topology = entity.topology;
     if (!topology) continue;
 
@@ -108,7 +108,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
       for (const bType of toTypes) {
         entries.push({
           aType,
-          abType,
+          axbType,
           bType,
           jsonSchema: entity.schema,
           description: entity.description,

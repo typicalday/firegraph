@@ -40,13 +40,13 @@ class GraphClientImpl implements GraphClient {
     return this.adapter.getDoc(docId);
   }
 
-  async getEdge(aUid: string, abType: string, bUid: string): Promise<StoredGraphRecord | null> {
-    const docId = computeEdgeDocId(aUid, abType, bUid);
+  async getEdge(aUid: string, axbType: string, bUid: string): Promise<StoredGraphRecord | null> {
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
     return this.adapter.getDoc(docId);
   }
 
-  async edgeExists(aUid: string, abType: string, bUid: string): Promise<boolean> {
-    const record = await this.getEdge(aUid, abType, bUid);
+  async edgeExists(aUid: string, axbType: string, bUid: string): Promise<boolean> {
+    const record = await this.getEdge(aUid, axbType, bUid);
     return record !== null;
   }
 
@@ -80,16 +80,16 @@ class GraphClientImpl implements GraphClient {
   async putEdge(
     aType: string,
     aUid: string,
-    abType: string,
+    axbType: string,
     bType: string,
     bUid: string,
     data: Record<string, unknown>,
   ): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, abType, bType, data);
+      this.registry.validate(aType, axbType, bType, data);
     }
-    const docId = computeEdgeDocId(aUid, abType, bUid);
-    const record = buildEdgeRecord(aType, aUid, abType, bType, bUid, data);
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
+    const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);
     await this.adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
@@ -106,8 +106,8 @@ class GraphClientImpl implements GraphClient {
     await this.adapter.deleteDoc(docId);
   }
 
-  async removeEdge(aUid: string, abType: string, bUid: string): Promise<void> {
-    const docId = computeEdgeDocId(aUid, abType, bUid);
+  async removeEdge(aUid: string, axbType: string, bUid: string): Promise<void> {
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
     await this.adapter.deleteDoc(docId);
   }
 

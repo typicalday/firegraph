@@ -87,19 +87,19 @@ const emptyEdge = z.object({});
 
 // 3. Register every valid triple
 export const registry = createRegistry([
-  // Nodes — abType 'is' marks a node entry
-  { aType: 'tour',      abType: 'is', bType: 'tour',      dataSchema: tourSchema,      description: 'A cycling tour' },
-  { aType: 'departure', abType: 'is', bType: 'departure', dataSchema: departureSchema, description: 'A scheduled departure' },
+  // Nodes — axbType 'is' marks a node entry
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      dataSchema: tourSchema,      description: 'A cycling tour' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', dataSchema: departureSchema, description: 'A scheduled departure' },
 
   // Edges — define valid relationships
-  { aType: 'tour', abType: 'hasDeparture', bType: 'departure', dataSchema: orderEdge,  description: 'Tour has a departure' },
-  { aType: 'tour', abType: 'hasGuide',     bType: 'user',      dataSchema: emptyEdge,  description: 'Tour has a guide' },
+  { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', dataSchema: orderEdge,  description: 'Tour has a departure' },
+  { aType: 'tour', axbType: 'hasGuide',     bType: 'user',      dataSchema: emptyEdge,  description: 'Tour has a guide' },
 ]);
 ```
 
 **Key rules:**
-- Nodes are registered with `abType: 'is'` and `aType === bType`
-- Every edge triple `(aType, abType, bType)` must be explicitly registered
+- Nodes are registered with `axbType: 'is'` and `aType === bType`
+- Every edge triple `(aType, axbType, bType)` must be explicitly registered
 - `dataSchema` is optional but recommended — without it, any data payload is accepted
 - `description` is optional but shows up in the editor UI for context
 
@@ -202,13 +202,13 @@ If validation fails (Zod rejects the data or the triple isn't registered), the e
 2. Select the edge type (filtered to valid triples for this node type)
 3. Enter the target node UID
 4. Fill in any edge data fields
-5. Submit — calls `graphClient.putEdge(aType, aUid, abType, bType, bUid, data)`
+5. Submit — calls `graphClient.putEdge(aType, aUid, axbType, bType, bUid, data)`
 
 ### Deleting Edges
 
 1. On a node's detail page, find the edge in the outgoing/incoming lists
 2. Click the delete button on the edge row
-3. Confirm — calls `graphClient.removeEdge(aUid, abType, bUid)`
+3. Confirm — calls `graphClient.removeEdge(aUid, axbType, bUid)`
 
 ## Using with the Firestore Emulator
 
@@ -238,14 +238,14 @@ The editor server exposes these endpoints (useful if you want to script interact
 | `GET` | `/api/schema` | Full schema with field metadata from registry (zero Firestore reads) |
 | `GET` | `/api/nodes?type=X&limit=25&sortBy=aUid&sortDir=asc` | Browse nodes by type with sorting, filtering, pagination |
 | `GET` | `/api/node/:uid` | Single node with outgoing and incoming edges |
-| `GET` | `/api/edges?aType=X&abType=Y` | Query edges with optional filters |
+| `GET` | `/api/edges?aType=X&axbType=Y` | Query edges with optional filters |
 | `GET` | `/api/search?q=term` | Search by UID (exact match + aUid/bUid lookups) |
 | `POST` | `/api/traverse` | Multi-hop graph traversal |
 | `POST` | `/api/node` | Create a node `{ aType, uid?, data }` |
 | `PUT` | `/api/node/:uid` | Update a node `{ data }` |
 | `DELETE` | `/api/node/:uid` | Delete a node |
-| `POST` | `/api/edge` | Create an edge `{ aType, aUid, abType, bType, bUid, data }` |
-| `DELETE` | `/api/edge` | Delete an edge `{ aUid, abType, bUid }` |
+| `POST` | `/api/edge` | Create an edge `{ aType, aUid, axbType, bType, bUid, data }` |
+| `DELETE` | `/api/edge` | Delete an edge `{ aUid, axbType, bUid }` |
 
 ### Browse endpoint query params
 
@@ -311,10 +311,10 @@ const stepData = z.object({
 // ... more schemas ...
 
 export const iveRegistry = createRegistry([
-  { aType: 'task', abType: 'is', bType: 'task', dataSchema: taskData },
-  { aType: 'step', abType: 'is', bType: 'step', dataSchema: stepData },
-  { aType: 'task', abType: 'hasStep', bType: 'step', dataSchema: z.object({ order: z.number().int().min(0) }) },
-  { aType: 'step', abType: 'blockedBy', bType: 'step', dataSchema: z.object({}) },
+  { aType: 'task', axbType: 'is', bType: 'task', dataSchema: taskData },
+  { aType: 'step', axbType: 'is', bType: 'step', dataSchema: stepData },
+  { aType: 'task', axbType: 'hasStep', bType: 'step', dataSchema: z.object({ order: z.number().int().min(0) }) },
+  { aType: 'step', axbType: 'blockedBy', bType: 'step', dataSchema: z.object({}) },
   // ... more entries ...
 ]);
 ```

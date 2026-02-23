@@ -48,8 +48,8 @@ class TraversalBuilderImpl implements TraversalBuilder {
     private readonly startUid: string,
   ) {}
 
-  follow(abType: string, options?: Omit<HopDefinition, 'abType'>): TraversalBuilder {
-    this.hops.push({ abType, ...options });
+  follow(axbType: string, options?: Omit<HopDefinition, 'axbType'>): TraversalBuilder {
+    this.hops.push({ axbType, ...options });
     return this;
   }
 
@@ -73,7 +73,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
 
       if (sourceUids.length === 0) {
         hopResults.push({
-          abType: hop.abType,
+          axbType: hop.axbType,
           depth,
           edges: [],
           sourceCount: 0,
@@ -102,7 +102,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
           totalReads++;
 
           const direction = hop.direction ?? 'forward';
-          const params: FindEdgesParams = { abType: hop.abType };
+          const params: FindEdgesParams = { axbType: hop.axbType };
 
           if (direction === 'forward') {
             params.aUid = uid;
@@ -142,7 +142,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
       await Promise.all(tasks.map((task) => task()));
 
       hopResults.push({
-        abType: hop.abType,
+        axbType: hop.axbType,
         depth,
         edges: returnIntermediates ? [...hopEdges] : hopEdges,
         sourceCount,

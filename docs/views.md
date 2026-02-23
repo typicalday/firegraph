@@ -218,9 +218,9 @@ export default defineViews({
 ```
 
 - **Node views** are keyed by `aType`
-- **Edge views** are keyed by `abType`
+- **Edge views** are keyed by `axbType`
 - **`sampleData`** is a single object matching the entity's Zod schema — it's shared across all views for that entity type (one data model, many presentations)
-- Tag names are auto-generated: `fg-{type}-{viewName}` for nodes, `fg-edge-{abType}-{viewName}` for edges
+- Tag names are auto-generated: `fg-{type}-{viewName}` for nodes, `fg-edge-{axbType}-{viewName}` for edges
 
 ## Configuring View Defaults
 

@@ -104,18 +104,18 @@ export async function buildViewRegistryFromDiscovery(
     totalViews += viewMetas.length;
   }
 
-  for (const [abType, entity] of discovery.edges) {
+  for (const [axbType, entity] of discovery.edges) {
     if (!entity.viewsPath) continue;
     const viewClasses = await loadViewClasses(entity.viewsPath);
     if (viewClasses.length === 0) continue;
 
     const viewMetas: ViewMeta[] = viewClasses.map((vc) => ({
-      tagName: `fg-edge-${sanitizeTagPart(abType)}-${sanitizeTagPart(vc.viewName)}`,
+      tagName: `fg-edge-${sanitizeTagPart(axbType)}-${sanitizeTagPart(vc.viewName)}`,
       viewName: vc.viewName,
       description: vc.description,
     }));
 
-    edges[abType] = {
+    edges[axbType] = {
       views: viewMetas,
       sampleData: entity.sampleData,
     };

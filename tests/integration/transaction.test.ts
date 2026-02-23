@@ -87,7 +87,7 @@ describe('transactions', () => {
     await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1 });
 
     const edges = await g.runTransaction(async (tx) => {
-      return tx.findEdges({ aUid: 'tour1', abType: 'hasDeparture' });
+      return tx.findEdges({ aUid: 'tour1', axbType: 'hasDeparture' });
     });
 
     expect(edges).toHaveLength(2);

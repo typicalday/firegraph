@@ -161,10 +161,10 @@ class DepartureBadge extends HTMLElement {
 
 /**
  * Edge views work identically to node views — they receive the edge's
- * `data` payload (not the firegraph fields like aUid/bUid/abType).
+ * `data` payload (not the firegraph fields like aUid/bUid/axbType).
  *
- * Edge views are keyed by `abType` in defineViews().
- * Tag names follow the pattern: fg-edge-{abType}-{viewName}
+ * Edge views are keyed by `axbType` in defineViews().
+ * Tag names follow the pattern: fg-edge-{axbType}-{viewName}
  */
 
 class HasDepartureTimeline extends HTMLElement {

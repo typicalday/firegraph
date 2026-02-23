@@ -40,9 +40,9 @@ const orderedEdgeSchema = {
 };
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
 ]);
 
 const g = createGraphClient(db, 'examples/queries/graph', { registry });
@@ -63,7 +63,7 @@ async function main() {
   // ── Forward lookup: all departures of tour1 ───────────────────
   const tour1Deps = await g.findEdges({
     aUid: 'tour1',
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
   });
   console.log(
     'tour1 departures:',
@@ -73,7 +73,7 @@ async function main() {
 
   // ── Reverse lookup: which tours include dep1? ─────────────────
   const dep1Tours = await g.findEdges({
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
     bUid: 'dep1',
   });
   console.log(
@@ -85,7 +85,7 @@ async function main() {
   // ── Type-scoped: all hasDeparture edges from any tour ─────────
   const allTourDeps = await g.findEdges({
     aType: 'tour',
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
   });
   console.log('All tour→departure edges:', allTourDeps.length);
   // → 4
@@ -93,7 +93,7 @@ async function main() {
   // ── With limit ────────────────────────────────────────────────
   const limited = await g.findEdges({
     aUid: 'tour1',
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
     limit: 2,
   });
   console.log(
@@ -104,7 +104,7 @@ async function main() {
   // ── Exact edge lookup (uses direct doc get — fastest) ─────────
   const exact = await g.findEdges({
     aUid: 'tour1',
-    abType: 'hasDeparture',
+    axbType: 'hasDeparture',
     bUid: 'dep1',
   });
   console.log('Exact edge:', exact.length === 1 ? 'found' : 'not found');

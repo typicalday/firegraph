@@ -40,7 +40,7 @@ describe('traversal integration', () => {
         .run();
 
       expect(result.nodes).toHaveLength(3);
-      expect(result.nodes.every((e) => e.abType === 'hasDeparture')).toBe(true);
+      expect(result.nodes.every((e) => e.axbType === 'hasDeparture')).toBe(true);
       expect(result.totalReads).toBe(1);
       expect(result.truncated).toBe(false);
     });
@@ -54,10 +54,10 @@ describe('traversal integration', () => {
         .run();
 
       expect(result.nodes.length).toBeGreaterThanOrEqual(4);
-      expect(result.nodes.every((e) => e.abType === 'hasRider')).toBe(true);
+      expect(result.nodes.every((e) => e.axbType === 'hasRider')).toBe(true);
       expect(result.hops).toHaveLength(2);
-      expect(result.hops[0].abType).toBe('hasDeparture');
-      expect(result.hops[1].abType).toBe('hasRider');
+      expect(result.hops[0].axbType).toBe('hasDeparture');
+      expect(result.hops[1].axbType).toBe('hasRider');
     });
   });
 
@@ -128,9 +128,9 @@ describe('traversal integration', () => {
 
       expect(result.hops).toHaveLength(2);
       expect(result.hops[0].edges.length).toBeGreaterThan(0);
-      expect(result.hops[0].edges.every((e) => e.abType === 'hasDeparture')).toBe(true);
+      expect(result.hops[0].edges.every((e) => e.axbType === 'hasDeparture')).toBe(true);
       expect(result.hops[1].edges.length).toBeGreaterThan(0);
-      expect(result.hops[1].edges.every((e) => e.abType === 'hasRider')).toBe(true);
+      expect(result.hops[1].edges.every((e) => e.axbType === 'hasRider')).toBe(true);
     });
   });
 
@@ -162,9 +162,9 @@ describe('traversal integration', () => {
 
   describe('limit/orderBy on findEdges', () => {
     it('findEdges gains limit support', async () => {
-      const edges = await g.findEdges({ aUid: 'tour1', abType: 'hasDeparture', limit: 1 });
+      const edges = await g.findEdges({ aUid: 'tour1', axbType: 'hasDeparture', limit: 1 });
       expect(edges).toHaveLength(1);
-      expect(edges[0].abType).toBe('hasDeparture');
+      expect(edges[0].axbType).toBe('hasDeparture');
     });
   });
 });

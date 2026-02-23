@@ -7,7 +7,7 @@ function makeEdge(overrides: Partial<StoredGraphRecord>): StoredGraphRecord {
   return {
     aType: 'a',
     aUid: 'a1',
-    abType: 'rel',
+    axbType: 'rel',
     bType: 'b',
     bUid: 'b1',
     data: {},
@@ -52,7 +52,7 @@ describe('createTraversal', () => {
 
     it('applies default options (limit=10, maxReads=100, concurrency=5)', async () => {
       const edges = Array.from({ length: 15 }, (_, i) =>
-        makeEdge({ aUid: 'start', bUid: `b${i}`, abType: 'rel' }),
+        makeEdge({ aUid: 'start', bUid: `b${i}`, axbType: 'rel' }),
       );
       const reader = createMockReader(async () => edges);
 
@@ -82,11 +82,11 @@ describe('createTraversal', () => {
   describe('single hop', () => {
     it('returns edges from forward hop', async () => {
       const edges = [
-        makeEdge({ aUid: 'tour1', bUid: 'dep1', abType: 'hasDeparture' }),
-        makeEdge({ aUid: 'tour1', bUid: 'dep2', abType: 'hasDeparture' }),
+        makeEdge({ aUid: 'tour1', bUid: 'dep1', axbType: 'hasDeparture' }),
+        makeEdge({ aUid: 'tour1', bUid: 'dep2', axbType: 'hasDeparture' }),
       ];
       const reader = createMockReader(async (params) => {
-        if (params.aUid === 'tour1' && params.abType === 'hasDeparture') return edges;
+        if (params.aUid === 'tour1' && params.axbType === 'hasDeparture') return edges;
         return [];
       });
 
@@ -104,10 +104,10 @@ describe('createTraversal', () => {
 
     it('returns edges from reverse hop', async () => {
       const edges = [
-        makeEdge({ aUid: 'dep1', bUid: 'rider1', abType: 'hasRider' }),
+        makeEdge({ aUid: 'dep1', bUid: 'rider1', axbType: 'hasRider' }),
       ];
       const reader = createMockReader(async (params) => {
-        if (params.bUid === 'rider1' && params.abType === 'hasRider') return edges;
+        if (params.bUid === 'rider1' && params.axbType === 'hasRider') return edges;
         return [];
       });
 
@@ -126,18 +126,18 @@ describe('createTraversal', () => {
   describe('multi-hop', () => {
     it('chains two hops correctly', async () => {
       const reader = createMockReader(async (params) => {
-        if (params.aUid === 'tour1' && params.abType === 'hasDep') {
+        if (params.aUid === 'tour1' && params.axbType === 'hasDep') {
           return [
-            makeEdge({ aUid: 'tour1', bUid: 'dep1', abType: 'hasDep' }),
-            makeEdge({ aUid: 'tour1', bUid: 'dep2', abType: 'hasDep' }),
+            makeEdge({ aUid: 'tour1', bUid: 'dep1', axbType: 'hasDep' }),
+            makeEdge({ aUid: 'tour1', bUid: 'dep2', axbType: 'hasDep' }),
           ];
         }
-        if (params.abType === 'hasRider') {
+        if (params.axbType === 'hasRider') {
           if (params.aUid === 'dep1') {
-            return [makeEdge({ aUid: 'dep1', bUid: 'rider1', abType: 'hasRider' })];
+            return [makeEdge({ aUid: 'dep1', bUid: 'rider1', axbType: 'hasRider' })];
           }
           if (params.aUid === 'dep2') {
-            return [makeEdge({ aUid: 'dep2', bUid: 'rider2', abType: 'hasRider' })];
+            return [makeEdge({ aUid: 'dep2', bUid: 'rider2', axbType: 'hasRider' })];
           }
         }
         return [];
@@ -173,13 +173,13 @@ describe('createTraversal', () => {
   describe('budget enforcement', () => {
     it('stops when maxReads is reached', async () => {
       const reader = createMockReader(async (params) => {
-        if (params.abType === 'hasDep') {
+        if (params.axbType === 'hasDep') {
           return Array.from({ length: 5 }, (_, i) =>
-            makeEdge({ aUid: params.aUid!, bUid: `dep${i}`, abType: 'hasDep' }),
+            makeEdge({ aUid: params.aUid!, bUid: `dep${i}`, axbType: 'hasDep' }),
           );
         }
-        if (params.abType === 'hasRider') {
-          return [makeEdge({ aUid: params.aUid!, bUid: `rider-${params.aUid}`, abType: 'hasRider' })];
+        if (params.axbType === 'hasRider') {
+          return [makeEdge({ aUid: params.aUid!, bUid: `rider-${params.aUid}`, axbType: 'hasRider' })];
         }
         return [];
       });
@@ -281,14 +281,14 @@ describe('createTraversal', () => {
   describe('deduplication', () => {
     it('deduplicates source UIDs between hops', async () => {
       const reader = createMockReader(async (params) => {
-        if (params.abType === 'rel1') {
+        if (params.axbType === 'rel1') {
           return [
-            makeEdge({ aUid: 'start', bUid: 'shared', abType: 'rel1' }),
-            makeEdge({ aUid: 'start', bUid: 'shared', abType: 'rel1' }),
+            makeEdge({ aUid: 'start', bUid: 'shared', axbType: 'rel1' }),
+            makeEdge({ aUid: 'start', bUid: 'shared', axbType: 'rel1' }),
           ];
         }
-        if (params.abType === 'rel2') {
-          return [makeEdge({ aUid: params.aUid!, bUid: 'end', abType: 'rel2' })];
+        if (params.axbType === 'rel2') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'end', axbType: 'rel2' })];
         }
         return [];
       });
@@ -307,11 +307,11 @@ describe('createTraversal', () => {
   describe('returnIntermediates', () => {
     it('hops always contain edges regardless of returnIntermediates', async () => {
       const reader = createMockReader(async (params) => {
-        if (params.abType === 'rel1') {
-          return [makeEdge({ aUid: 'start', bUid: 'mid', abType: 'rel1' })];
+        if (params.axbType === 'rel1') {
+          return [makeEdge({ aUid: 'start', bUid: 'mid', axbType: 'rel1' })];
         }
-        if (params.abType === 'rel2') {
-          return [makeEdge({ aUid: 'mid', bUid: 'end', abType: 'rel2' })];
+        if (params.axbType === 'rel2') {
+          return [makeEdge({ aUid: 'mid', bUid: 'end', axbType: 'rel2' })];
         }
         return [];
       });
@@ -338,17 +338,17 @@ describe('createTraversal', () => {
       let maxConcurrent = 0;
 
       const edges = Array.from({ length: 5 }, (_, i) =>
-        makeEdge({ aUid: 'start', bUid: `n${i}`, abType: 'rel1' }),
+        makeEdge({ aUid: 'start', bUid: `n${i}`, axbType: 'rel1' }),
       );
 
       const reader = createMockReader(async (params) => {
-        if (params.abType === 'rel1') return edges;
-        if (params.abType === 'rel2') {
+        if (params.axbType === 'rel1') return edges;
+        if (params.axbType === 'rel2') {
           concurrent++;
           maxConcurrent = Math.max(maxConcurrent, concurrent);
           await new Promise((r) => setTimeout(r, 10));
           concurrent--;
-          return [makeEdge({ aUid: params.aUid!, bUid: `end-${params.aUid}`, abType: 'rel2' })];
+          return [makeEdge({ aUid: params.aUid!, bUid: `end-${params.aUid}`, axbType: 'rel2' })];
         }
         return [];
       });

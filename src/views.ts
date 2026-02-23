@@ -63,7 +63,7 @@ export interface EntityViewConfig {
 export interface ViewRegistryInput {
   /** Node views keyed by aType (e.g. 'user', 'tour'). */
   nodes?: Record<string, EntityViewConfig>;
-  /** Edge views keyed by abType (e.g. 'hasDeparture'). */
+  /** Edge views keyed by axbType (e.g. 'hasDeparture'). */
   edges?: Record<string, EntityViewConfig>;
 }
 
@@ -158,10 +158,10 @@ export function defineViews(input: ViewRegistryInput): ViewRegistry {
   }
 
   // --- edges ---
-  for (const [abType, config] of Object.entries(input.edges ?? {})) {
+  for (const [axbType, config] of Object.entries(input.edges ?? {})) {
     const viewMetas: ViewMeta[] = [];
     for (const ViewClass of config.views) {
-      const tagName = `fg-edge-${sanitizeTagPart(abType)}-${sanitizeTagPart(ViewClass.viewName)}`;
+      const tagName = `fg-edge-${sanitizeTagPart(axbType)}-${sanitizeTagPart(ViewClass.viewName)}`;
       viewMetas.push({
         tagName,
         viewName: ViewClass.viewName,
@@ -171,7 +171,7 @@ export function defineViews(input: ViewRegistryInput): ViewRegistry {
         registry.define(tagName, ViewClass);
       }
     }
-    edges[abType] = {
+    edges[axbType] = {
       views: viewMetas,
       sampleData: config.sampleData,
     };

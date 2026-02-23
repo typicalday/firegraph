@@ -64,7 +64,7 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const inverseLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
     for (const et of schema.edgeTypes) {
-      if (et.inverseLabel) map[et.abType] = et.inverseLabel;
+      if (et.inverseLabel) map[et.axbType] = et.inverseLabel;
     }
     return map;
   }, [schema.edgeTypes]);

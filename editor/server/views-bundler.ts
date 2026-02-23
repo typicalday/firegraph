@@ -72,14 +72,14 @@ export function defineViews(input) {
     nodes[entityType] = { views: viewMetas, sampleData: config.sampleData };
   }
 
-  for (const [abType, config] of Object.entries(input.edges ?? {})) {
+  for (const [axbType, config] of Object.entries(input.edges ?? {})) {
     const viewMetas = [];
     for (const ViewClass of config.views) {
-      const tagName = 'fg-edge-' + sanitizeTagPart(abType) + '-' + sanitizeTagPart(ViewClass.viewName);
+      const tagName = 'fg-edge-' + sanitizeTagPart(axbType) + '-' + sanitizeTagPart(ViewClass.viewName);
       viewMetas.push({ tagName, viewName: ViewClass.viewName, description: ViewClass.description });
       if (registry && !registry.get(tagName)) registry.define(tagName, ViewClass);
     }
-    edges[abType] = { views: viewMetas, sampleData: config.sampleData };
+    edges[axbType] = { views: viewMetas, sampleData: config.sampleData };
   }
 
   return { nodes, edges };

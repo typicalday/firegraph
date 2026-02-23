@@ -15,10 +15,10 @@ describe('buildNodeRecord', () => {
     expect(record.bUid).toBe('abc');
   });
 
-  it('sets abType to NODE_RELATION ("is")', () => {
+  it('sets axbType to NODE_RELATION ("is")', () => {
     const record = buildNodeRecord('tour', 'abc', {});
-    expect(record.abType).toBe(NODE_RELATION);
-    expect(record.abType).toBe('is');
+    expect(record.axbType).toBe(NODE_RELATION);
+    expect(record.axbType).toBe('is');
   });
 
   it('stores data in the data field', () => {
@@ -47,9 +47,9 @@ describe('buildEdgeRecord', () => {
     expect(record.bUid).toBe('b2');
   });
 
-  it('stores the relationship type in abType', () => {
+  it('stores the relationship type in axbType', () => {
     const record = buildEdgeRecord('tour', 'a1', 'hasDeparture', 'departure', 'b2', {});
-    expect(record.abType).toBe('hasDeparture');
+    expect(record.axbType).toBe('hasDeparture');
   });
 
   it('stores data in the data field', () => {

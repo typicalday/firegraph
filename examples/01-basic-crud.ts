@@ -66,13 +66,13 @@ const bookingEdgeSchema = {
 
 const registry = createRegistry([
   // Nodes
-  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
 
   // Edges
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure date' },
-  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a booked rider' },
+  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure date' },
+  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a booked rider' },
 ]);
 
 const g = createGraphClient(db, 'examples/crud/graph', { registry });

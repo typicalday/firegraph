@@ -29,9 +29,9 @@ function getAvailableEdgeTypes(
   return filtered.length > 0 ? filtered : schema.edgeTypes;
 }
 
-/** Unique abType strings from a list of edge types */
-function uniqueAbTypes(edgeTypes: EdgeType[]): string[] {
-  return [...new Set(edgeTypes.map((et) => et.abType))];
+/** Unique axbType strings from a list of edge types */
+function uniqueAxbTypes(edgeTypes: EdgeType[]): string[] {
+  return [...new Set(edgeTypes.map((et) => et.axbType))];
 }
 
 interface TypeFlowEntry {
@@ -49,7 +49,7 @@ function inferTypeFlow(
   let currentType = startType;
 
   for (const hop of hops) {
-    const matching = schema.edgeTypes.filter((et) => et.abType === hop.abType);
+    const matching = schema.edgeTypes.filter((et) => et.axbType === hop.axbType);
     let targetType: string | undefined;
 
     if (currentType && matching.length > 0) {
@@ -61,7 +61,7 @@ function inferTypeFlow(
         targetType = match?.aType;
       }
     } else if (matching.length === 1) {
-      // Only one entry for this abType — infer target even without known source
+      // Only one entry for this axbType — infer target even without known source
       targetType = hop.direction === 'forward' ? matching[0].bType : matching[0].aType;
     }
 
@@ -73,8 +73,8 @@ function inferTypeFlow(
 }
 
 /** Get schema fields for an edge type's data schema */
-function getFieldsForEdgeType(schema: Schema, abType: string): FieldMeta[] {
-  const entry = schema.edgeSchemas?.find((es) => es.abType === abType && !es.isNodeEntry);
+function getFieldsForEdgeType(schema: Schema, axbType: string): FieldMeta[] {
+  const entry = schema.edgeSchemas?.find((es) => es.axbType === axbType && !es.isNodeEntry);
   return entry?.fields ?? [];
 }
 
@@ -140,17 +140,17 @@ interface TraversalPanelProps {
 /** Reusable traversal panel — used standalone and embedded in NodeDetail */
 export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, config }: TraversalPanelProps) {
   // Initialize first hop with a sensible default based on startNodeType
-  const initialAbType = useMemo(() => {
+  const initialAxbType = useMemo(() => {
     if (startNodeType) {
       const available = getAvailableEdgeTypes(schema, startNodeType, 'forward');
-      const types = uniqueAbTypes(available);
-      return types[0] || schema.edgeTypes[0]?.abType || '';
+      const types = uniqueAxbTypes(available);
+      return types[0] || schema.edgeTypes[0]?.axbType || '';
     }
-    return schema.edgeTypes[0]?.abType || '';
+    return schema.edgeTypes[0]?.axbType || '';
   }, [schema, startNodeType]);
 
   const [hops, setHops] = useState<HopDef[]>([
-    { abType: initialAbType, direction: 'forward', limit: 10 },
+    { axbType: initialAxbType, direction: 'forward', limit: 10 },
   ]);
   const [maxReads, setMaxReads] = useState(100);
   const [concurrency, setConcurrency] = useState(5);
@@ -172,8 +172,8 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
   const addHop = () => {
     const lastTarget = typeFlow[typeFlow.length - 1]?.targetType;
     const available = getAvailableEdgeTypes(schema, lastTarget, 'forward');
-    const types = uniqueAbTypes(available);
-    setHops([...hops, { abType: types[0] || '', direction: 'forward', limit: 10 }]);
+    const types = uniqueAxbTypes(available);
+    setHops([...hops, { axbType: types[0] || '', direction: 'forward', limit: 10 }]);
   };
 
   const removeHop = (index: number) => {
@@ -194,15 +194,15 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
       const updated = [...prev];
       updated[index] = { ...updated[index], ...updates };
 
-      // If direction changed, revalidate abType against filtered options
+      // If direction changed, revalidate axbType against filtered options
       if ('direction' in updates) {
         const flow = inferTypeFlow(schema, startNodeType, updated);
         const sourceType = flow[index]?.sourceType;
-        const available = uniqueAbTypes(
+        const available = uniqueAxbTypes(
           getAvailableEdgeTypes(schema, sourceType, updated[index].direction),
         );
-        if (available.length > 0 && !available.includes(updated[index].abType)) {
-          updated[index] = { ...updated[index], abType: available[0] };
+        if (available.length > 0 && !available.includes(updated[index].axbType)) {
+          updated[index] = { ...updated[index], axbType: available[0] };
         }
       }
 
@@ -253,9 +253,9 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
             const sourceType = flow?.sourceType;
             const targetType = flow?.targetType;
             const availableEdges = getAvailableEdgeTypes(schema, sourceType, hop.direction);
-            const abTypes = uniqueAbTypes(availableEdges);
+            const axbTypes = uniqueAxbTypes(availableEdges);
             const isAdvOpen = expandedAdvanced.has(i);
-            const fields = getFieldsForEdgeType(schema, hop.abType);
+            const fields = getFieldsForEdgeType(schema, hop.axbType);
 
             return (
               <div key={i} className="bg-slate-800/50 rounded-lg">
@@ -282,11 +282,11 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
                   </select>
 
                   <select
-                    value={hop.abType}
-                    onChange={(e) => updateHop(i, { abType: e.target.value })}
+                    value={hop.axbType}
+                    onChange={(e) => updateHop(i, { axbType: e.target.value })}
                     className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 max-w-xs"
                   >
-                    {abTypes.map((ab) => (
+                    {axbTypes.map((ab) => (
                       <option key={ab} value={ab}>{ab}</option>
                     ))}
                   </select>
@@ -405,7 +405,7 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
                 <span className="text-slate-600">
                   {hop.direction === 'forward' ? '\u2192' : '\u2190'}
                 </span>
-                <span className="text-emerald-400">{hop.abType || '?'}</span>
+                <span className="text-emerald-400">{hop.axbType || '?'}</span>
                 {target && (
                   <>
                     <span className="text-slate-600">{'\u2192'}</span>
@@ -646,7 +646,7 @@ function reconstructPath(
   const frames: DrillFrame[] = chain.map(({ edge, direction }) => ({
     uid: direction === 'forward' ? edge.bUid : edge.aUid,
     nodeType: direction === 'forward' ? edge.bType : edge.aType,
-    edgeType: edge.abType,
+    edgeType: edge.axbType,
     direction: direction === 'forward' ? 'out' as const : 'in' as const,
   }));
 
@@ -654,7 +654,7 @@ function reconstructPath(
   frames.push({
     uid: targetDir === 'forward' ? targetEdge.bUid : targetEdge.aUid,
     nodeType: targetDir === 'forward' ? targetEdge.bType : targetEdge.aType,
-    edgeType: targetEdge.abType,
+    edgeType: targetEdge.axbType,
     direction: targetDir === 'forward' ? 'out' : 'in',
   });
 
@@ -709,7 +709,7 @@ function TraversalResults({
           <div key={i} className="border-l-2 border-indigo-500/30 pl-4">
             <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
               <span className="text-slate-500">Hop {i + 1}:</span>
-              <span className="text-indigo-400 font-mono">{hop.abType}</span>
+              <span className="text-indigo-400 font-mono">{hop.axbType}</span>
               <span className="text-slate-600 text-xs">
                 ({hop.direction}, {hop.edges.length} edges from {hop.sourceCount} sources)
               </span>
@@ -733,7 +733,7 @@ function TraversalResults({
                   direction={hop.direction}
                   allHops={result.hops}
                   hopIndex={i}
-                  edgeViews={viewRegistry?.edges[edge.abType]?.views ?? []}
+                  edgeViews={viewRegistry?.edges[edge.axbType]?.views ?? []}
                   nodeViews={viewRegistry?.nodes[hop.direction === 'forward' ? edge.bType : edge.aType]?.views ?? []}
                   config={config}
                 />
@@ -816,7 +816,7 @@ function HopExploreModal({
         <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
           <h3 className="text-sm font-medium flex items-center gap-2">
             <span className="text-slate-400">Exploring Hop {hopIndex + 1}:</span>
-            <span className="text-indigo-400 font-mono">{hop.abType}</span>
+            <span className="text-indigo-400 font-mono">{hop.axbType}</span>
             <span className="text-slate-600 text-xs">
               ({hop.edges.length} edges{hop.edges.length > EXPLORE_MAX_LANES ? `, showing first ${EXPLORE_MAX_LANES}` : ''})
             </span>
@@ -883,7 +883,7 @@ function HopEdgeRow({
 
   // Resolve initial edge view from config defaults
   const initialEdgeView = () => {
-    const rc = config?.viewDefaults?.edges?.[edge.abType];
+    const rc = config?.viewDefaults?.edges?.[edge.axbType];
     if (rc && edgeViews.length > 0) {
       const resolved = resolveViewForEntity(rc, edgeViews, 'inline');
       if (resolved !== 'json') {
@@ -950,7 +950,7 @@ function HopEdgeRow({
         <span className="text-slate-600">
           {direction === 'forward' ? '\u2192' : '\u2190'}
         </span>
-        <span className="text-slate-600 font-mono text-[10px]">{edge.abType}</span>
+        <span className="text-slate-600 font-mono text-[10px]">{edge.axbType}</span>
       </div>
 
       {/* Target line with actions */}

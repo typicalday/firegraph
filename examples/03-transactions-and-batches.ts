@@ -61,11 +61,11 @@ const bookingEdgeSchema = {
 };
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
-  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a rider' },
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a rider' },
 ]);
 
 const g = createGraphClient(db, 'examples/txn/graph', { registry });
@@ -122,7 +122,7 @@ async function main() {
   const dep = await g.getNode('dep1');
   console.log('Registered riders:', dep?.data.registeredRiders);
 
-  const riders = await g.findEdges({ aUid: 'dep1', abType: 'hasRider' });
+  const riders = await g.findEdges({ aUid: 'dep1', axbType: 'hasRider' });
   console.log('Booked riders:', riders.length);
 
   // ═══════════════════════════════════════════════════════════════

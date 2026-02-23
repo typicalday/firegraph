@@ -211,7 +211,7 @@ export function discoverEntities(entitiesDir: string): DiscoverResult {
 
   // Validate topology references
   const nodeNames = new Set(nodes.keys());
-  for (const [abType, entity] of edges) {
+  for (const [axbType, entity] of edges) {
     const topology = entity.topology!;
     const fromTypes = Array.isArray(topology.from) ? topology.from : [topology.from];
     const toTypes = Array.isArray(topology.to) ? topology.to : [topology.to];
@@ -220,7 +220,7 @@ export function discoverEntities(entitiesDir: string): DiscoverResult {
       if (!nodeNames.has(ref)) {
         warnings.push({
           code: 'DANGLING_TOPOLOGY_REF',
-          message: `Edge "${abType}" references node type "${ref}" which was not found in the nodes directory`,
+          message: `Edge "${axbType}" references node type "${ref}" which was not found in the nodes directory`,
         });
       }
     }

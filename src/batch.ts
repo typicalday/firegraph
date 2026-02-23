@@ -23,16 +23,16 @@ export class GraphBatchImpl implements GraphBatch {
   async putEdge(
     aType: string,
     aUid: string,
-    abType: string,
+    axbType: string,
     bType: string,
     bUid: string,
     data: Record<string, unknown>,
   ): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, abType, bType, data);
+      this.registry.validate(aType, axbType, bType, data);
     }
-    const docId = computeEdgeDocId(aUid, abType, bUid);
-    const record = buildEdgeRecord(aType, aUid, abType, bType, bUid, data);
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
+    const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);
     this.adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
@@ -49,8 +49,8 @@ export class GraphBatchImpl implements GraphBatch {
     this.adapter.deleteDoc(docId);
   }
 
-  async removeEdge(aUid: string, abType: string, bUid: string): Promise<void> {
-    const docId = computeEdgeDocId(aUid, abType, bUid);
+  async removeEdge(aUid: string, axbType: string, bUid: string): Promise<void> {
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
     this.adapter.deleteDoc(docId);
   }
 

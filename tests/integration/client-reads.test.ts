@@ -40,7 +40,7 @@ describe('client reads', () => {
       const edge = await g.getEdge('tour1', 'hasDeparture', 'dep1');
       expect(edge).not.toBeNull();
       expect(edge!.aUid).toBe('tour1');
-      expect(edge!.abType).toBe('hasDeparture');
+      expect(edge!.axbType).toBe('hasDeparture');
       expect(edge!.bUid).toBe('dep1');
     });
 
@@ -63,43 +63,43 @@ describe('client reads', () => {
   });
 
   describe('findEdges', () => {
-    it('forward lookup: {aUid, abType} returns only matching edges', async () => {
-      const edges = await g.findEdges({ aUid: 'tour1', abType: 'hasDeparture' });
+    it('forward lookup: {aUid, axbType} returns only matching edges', async () => {
+      const edges = await g.findEdges({ aUid: 'tour1', axbType: 'hasDeparture' });
       expect(edges).toHaveLength(2);
       expect(edges.every((e) => e.aUid === 'tour1')).toBe(true);
-      expect(edges.every((e) => e.abType === 'hasDeparture')).toBe(true);
+      expect(edges.every((e) => e.axbType === 'hasDeparture')).toBe(true);
     });
 
-    it('reverse lookup: {abType, bUid} returns correct results', async () => {
-      const edges = await g.findEdges({ abType: 'hasDeparture', bUid: 'dep1' });
+    it('reverse lookup: {axbType, bUid} returns correct results', async () => {
+      const edges = await g.findEdges({ axbType: 'hasDeparture', bUid: 'dep1' });
       expect(edges).toHaveLength(2);
       expect(edges.every((e) => e.bUid === 'dep1')).toBe(true);
     });
 
-    it('smart optimization: {aUid, abType, bUid} returns same as getEdge', async () => {
-      const edges = await g.findEdges({ aUid: 'tour1', abType: 'hasDeparture', bUid: 'dep1' });
+    it('smart optimization: {aUid, axbType, bUid} returns same as getEdge', async () => {
+      const edges = await g.findEdges({ aUid: 'tour1', axbType: 'hasDeparture', bUid: 'dep1' });
       expect(edges).toHaveLength(1);
       expect(edges[0].aUid).toBe('tour1');
       expect(edges[0].bUid).toBe('dep1');
     });
 
     it('returns empty array when no matches', async () => {
-      const edges = await g.findEdges({ aUid: 'tour1', abType: 'nonexistentRelation' });
+      const edges = await g.findEdges({ aUid: 'tour1', axbType: 'nonexistentRelation' });
       expect(edges).toEqual([]);
     });
 
-    it('type-scoped forward: {aType, abType} returns edges from all entities of that type', async () => {
-      const edges = await g.findEdges({ aType: 'tour', abType: 'hasDeparture' });
+    it('type-scoped forward: {aType, axbType} returns edges from all entities of that type', async () => {
+      const edges = await g.findEdges({ aType: 'tour', axbType: 'hasDeparture' });
       expect(edges).toHaveLength(3);
       expect(edges.every((e) => e.aType === 'tour')).toBe(true);
-      expect(edges.every((e) => e.abType === 'hasDeparture')).toBe(true);
+      expect(edges.every((e) => e.axbType === 'hasDeparture')).toBe(true);
     });
 
-    it('type-scoped reverse: {abType, bType} returns edges pointing to all entities of that type', async () => {
-      const edges = await g.findEdges({ abType: 'bookedForDeparture', bType: 'departure' });
+    it('type-scoped reverse: {axbType, bType} returns edges pointing to all entities of that type', async () => {
+      const edges = await g.findEdges({ axbType: 'bookedForDeparture', bType: 'departure' });
       expect(edges).toHaveLength(1);
       expect(edges[0].bType).toBe('departure');
-      expect(edges[0].abType).toBe('bookedForDeparture');
+      expect(edges[0].axbType).toBe('bookedForDeparture');
     });
   });
 

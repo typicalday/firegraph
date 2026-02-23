@@ -5,14 +5,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "aUid", "order": "ASCENDING" },
-        { "fieldPath": "abType", "order": "ASCENDING" }
+        { "fieldPath": "axbType", "order": "ASCENDING" }
       ]
     },
     {
       "collectionGroup": "graph",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "abType", "order": "ASCENDING" },
+        { "fieldPath": "axbType", "order": "ASCENDING" },
         { "fieldPath": "bUid", "order": "ASCENDING" }
       ]
     },
@@ -21,14 +21,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "aType", "order": "ASCENDING" },
-        { "fieldPath": "abType", "order": "ASCENDING" }
+        { "fieldPath": "axbType", "order": "ASCENDING" }
       ]
     },
     {
       "collectionGroup": "graph",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "abType", "order": "ASCENDING" },
+        { "fieldPath": "axbType", "order": "ASCENDING" },
         { "fieldPath": "bType", "order": "ASCENDING" }
       ]
     }

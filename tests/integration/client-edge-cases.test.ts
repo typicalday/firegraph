@@ -53,7 +53,7 @@ describe('client edge cases', () => {
     await g.putEdge('user', 'u1', 'está-inscrito', 'event', 'e1', {});
     const edge = await g.getEdge('u1', 'está-inscrito', 'e1');
     expect(edge).not.toBeNull();
-    expect(edge!.abType).toBe('está-inscrito');
+    expect(edge!.axbType).toBe('está-inscrito');
   });
 
   it('createdAt and updatedAt are real Firestore Timestamps', async () => {

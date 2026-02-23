@@ -38,7 +38,7 @@ export interface ViewResolverConfig {
 export interface ViewDefaultsConfig {
   /** Node view defaults keyed by aType (e.g. 'user', 'task'). */
   nodes?: Record<string, ViewResolverConfig>;
-  /** Edge view defaults keyed by abType (e.g. 'hasDeparture'). */
+  /** Edge view defaults keyed by axbType (e.g. 'hasDeparture'). */
   edges?: Record<string, ViewResolverConfig>;
 }
 

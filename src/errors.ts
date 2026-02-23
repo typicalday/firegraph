@@ -16,8 +16,8 @@ export class NodeNotFoundError extends FiregraphError {
 }
 
 export class EdgeNotFoundError extends FiregraphError {
-  constructor(aUid: string, abType: string, bUid: string) {
-    super(`Edge not found: ${aUid} -[${abType}]-> ${bUid}`, 'EDGE_NOT_FOUND');
+  constructor(aUid: string, axbType: string, bUid: string) {
+    super(`Edge not found: ${aUid} -[${axbType}]-> ${bUid}`, 'EDGE_NOT_FOUND');
     this.name = 'EdgeNotFoundError';
   }
 }
@@ -33,9 +33,9 @@ export class ValidationError extends FiregraphError {
 }
 
 export class RegistryViolationError extends FiregraphError {
-  constructor(aType: string, abType: string, bType: string) {
+  constructor(aType: string, axbType: string, bType: string) {
     super(
-      `Unregistered triple: (${aType}) -[${abType}]-> (${bType})`,
+      `Unregistered triple: (${aType}) -[${axbType}]-> (${bType})`,
       'REGISTRY_VIOLATION',
     );
     this.name = 'RegistryViolationError';

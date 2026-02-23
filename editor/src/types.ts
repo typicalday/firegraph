@@ -5,7 +5,7 @@ export interface NodeType {
 
 export interface EdgeType {
   aType: string;
-  abType: string;
+  axbType: string;
   bType: string;
   description?: string;
   inverseLabel?: string;
@@ -29,7 +29,7 @@ export interface FieldMeta {
 
 export interface RegistryEntryMeta {
   aType: string;
-  abType: string;
+  axbType: string;
   bType: string;
   description?: string;
   inverseLabel?: string;
@@ -49,7 +49,7 @@ export interface Schema {
 export interface GraphRecord {
   aType: string;
   aUid: string;
-  abType: string;
+  axbType: string;
   bType: string;
   bUid: string;
   data: Record<string, unknown>;
@@ -71,7 +71,7 @@ export interface WhereClause {
 }
 
 export interface HopDef {
-  abType: string;
+  axbType: string;
   direction: 'forward' | 'reverse';
   limit: number;
   aType?: string;
@@ -81,7 +81,7 @@ export interface HopDef {
 }
 
 export interface HopResult {
-  abType: string;
+  axbType: string;
   direction: string;
   depth: number;
   edges: GraphRecord[];

@@ -70,7 +70,7 @@ export function NodeDetailContent({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCreateEdge, setShowCreateEdge] = useState(false);
   const [showCreateIncomingEdge, setShowCreateIncomingEdge] = useState(false);
-  const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; abType: string; bUid: string } | null>(null);
+  const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; axbType: string; bUid: string } | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
@@ -151,7 +151,7 @@ export function NodeDetailContent({
     if (!deletingEdge) return;
     deleteEdgeMutation.mutate({
       aUid: deletingEdge.aUid,
-      abType: deletingEdge.abType,
+      axbType: deletingEdge.axbType,
       bUid: deletingEdge.bUid,
     });
   };
@@ -204,19 +204,19 @@ export function NodeDetailContent({
     );
   }
 
-  // Collect unique abTypes from schema for filter dropdowns
-  const outAbTypes = schema.edgeTypes
+  // Collect unique axbTypes from schema for filter dropdowns
+  const outAxbTypes = schema.edgeTypes
     .filter((et) => et.aType === node.aType)
-    .map((et) => et.abType);
-  const inAbTypes = schema.edgeTypes
+    .map((et) => et.axbType);
+  const inAxbTypes = schema.edgeTypes
     .filter((et) => et.bType === node.aType)
-    .map((et) => et.abType);
+    .map((et) => et.axbType);
 
   // Build inverse label lookup for incoming edges
   const inverseLabelMap: Record<string, string> = {};
   for (const et of schema.edgeTypes) {
     if (et.inverseLabel) {
-      inverseLabelMap[et.abType] = et.inverseLabel;
+      inverseLabelMap[et.axbType] = et.inverseLabel;
     }
   }
 
@@ -314,9 +314,9 @@ export function NodeDetailContent({
           <PaginatedEdgeSection
             uid={node.aUid}
             direction="out"
-            abTypes={outAbTypes}
+            axbTypes={outAxbTypes}
             canWrite={canWrite}
-            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
+            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })}
             reloadKey={edgeReloadKey}
             viewRegistry={viewRegistry}
             config={config}
@@ -328,7 +328,7 @@ export function NodeDetailContent({
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold">Incoming Edges</h2>
-          {canWrite && !showCreateIncomingEdge && inAbTypes.length > 0 && (
+          {canWrite && !showCreateIncomingEdge && inAxbTypes.length > 0 && (
             <button
               onClick={() => setShowCreateIncomingEdge(true)}
               className="px-3 py-1 bg-indigo-600/20 text-indigo-400 rounded-lg text-xs hover:bg-indigo-600/30 transition-colors flex items-center gap-1"
@@ -362,10 +362,10 @@ export function NodeDetailContent({
           <PaginatedEdgeSection
             uid={node.aUid}
             direction="in"
-            abTypes={inAbTypes}
+            axbTypes={inAxbTypes}
             inverseLabelMap={inverseLabelMap}
             canWrite={canWrite}
-            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, abType: e.abType, bUid: e.bUid })}
+            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })}
             reloadKey={edgeReloadKey}
             viewRegistry={viewRegistry}
             config={config}
@@ -401,7 +401,7 @@ export function NodeDetailContent({
       {deletingEdge && (
         <ConfirmDialog
           title="Delete Edge"
-          message={`Delete edge ${deletingEdge.aUid} —[${deletingEdge.abType}]→ ${deletingEdge.bUid}?`}
+          message={`Delete edge ${deletingEdge.aUid} —[${deletingEdge.axbType}]→ ${deletingEdge.bUid}?`}
           onConfirm={handleDeleteEdge}
           onCancel={() => setDeletingEdge(null)}
           loading={deleteEdgeMutation.isPending}
@@ -416,7 +416,7 @@ export function NodeDetailContent({
 function PaginatedEdgeSection({
   uid,
   direction,
-  abTypes,
+  axbTypes,
   inverseLabelMap = {},
   canWrite,
   onDeleteEdge,
@@ -426,7 +426,7 @@ function PaginatedEdgeSection({
 }: {
   uid: string;
   direction: 'in' | 'out';
-  abTypes: string[];
+  axbTypes: string[];
   inverseLabelMap?: Record<string, string>;
   canWrite: boolean;
   onDeleteEdge: (edge: GraphRecord) => void;
@@ -436,7 +436,7 @@ function PaginatedEdgeSection({
 }) {
   // Toolbar state
   const [limit, setLimit] = useState(25);
-  const [filterAbType, setFilterAbType] = useState('');
+  const [filterAxbType, setFilterAxbType] = useState('');
   const [page, setPage] = useState(1);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [startAfter, setStartAfter] = useState<string | undefined>(undefined);
@@ -447,7 +447,7 @@ function PaginatedEdgeSection({
 
   const edgeQueryInput = {
     ...(direction === 'out' ? { aUid: uid } : { bUid: uid }),
-    ...(filterAbType ? { abType: filterAbType } : {}),
+    ...(filterAxbType ? { axbType: filterAxbType } : {}),
     limit,
     startAfter,
   };
@@ -488,7 +488,7 @@ function PaginatedEdgeSection({
     setCursorStack([]);
     setStartAfter(undefined);
     setResolvedNodes({});
-  }, [uid, direction, limit, filterAbType, reloadKey]);
+  }, [uid, direction, limit, filterAxbType, reloadKey]);
 
   const goNextPage = () => {
     if (!nextCursor) return;
@@ -507,10 +507,10 @@ function PaginatedEdgeSection({
     setStartAfter(prevCursor);
   };
 
-  // Group edges by abType for display
+  // Group edges by axbType for display
   const groups: Record<string, GraphRecord[]> = {};
   for (const edge of edges) {
-    const key = edge.abType;
+    const key = edge.axbType;
     if (!groups[key]) groups[key] = [];
     groups[key].push(edge);
   }
@@ -533,19 +533,19 @@ function PaginatedEdgeSection({
           </select>
         </div>
 
-        {/* abType filter */}
-        {abTypes.length > 0 && (
+        {/* axbType filter */}
+        {axbTypes.length > 0 && (
           <>
             <div className="w-px h-4 bg-slate-700" />
             <div className="flex items-center gap-1.5">
               <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Type</label>
               <select
-                value={filterAbType}
-                onChange={(e) => setFilterAbType(e.target.value)}
+                value={filterAxbType}
+                onChange={(e) => setFilterAxbType(e.target.value)}
                 className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 <option value="">All</option>
-                {abTypes.map((ab) => (
+                {axbTypes.map((ab) => (
                   <option key={ab} value={ab}>{ab}</option>
                 ))}
               </select>
@@ -623,30 +623,30 @@ function PaginatedEdgeSection({
           <span className="text-xs">Loading edges...</span>
         </div>
       ) : edges.length === 0 ? (
-        <p className="text-sm text-slate-500">No {direction === 'out' ? 'outgoing' : 'incoming'} edges{filterAbType ? ` of type "${filterAbType}"` : ''}</p>
+        <p className="text-sm text-slate-500">No {direction === 'out' ? 'outgoing' : 'incoming'} edges{filterAxbType ? ` of type "${filterAxbType}"` : ''}</p>
       ) : (
         <div className="space-y-4">
-          {Object.entries(groups).map(([abType, groupEdges]) => {
-            const inverseLabel = direction === 'in' ? inverseLabelMap[abType] : undefined;
+          {Object.entries(groups).map(([axbType, groupEdges]) => {
+            const inverseLabel = direction === 'in' ? inverseLabelMap[axbType] : undefined;
             return (
-            <div key={abType}>
+            <div key={axbType}>
               <h3 className="text-xs font-mono mb-2 flex items-center gap-2">
                 {direction === 'out' ? (
                   <>
                     <span className="text-slate-500">&mdash;</span>
-                    <span className="text-indigo-400">{abType}</span>
+                    <span className="text-indigo-400">{axbType}</span>
                     <span className="text-slate-500">&rarr;</span>
                   </>
                 ) : inverseLabel ? (
                   <>
                     <span className="text-slate-500">&mdash;</span>
-                    <span className="text-amber-400 cursor-help" title={`Inverse of: ${abType}`}>{inverseLabel}</span>
+                    <span className="text-amber-400 cursor-help" title={`Inverse of: ${axbType}`}>{inverseLabel}</span>
                     <span className="text-slate-500">&rarr;</span>
                   </>
                 ) : (
                   <>
                     <span className="text-slate-500">&larr;</span>
-                    <span className="text-indigo-400">{abType}</span>
+                    <span className="text-indigo-400">{axbType}</span>
                     <span className="text-slate-500">&mdash;</span>
                   </>
                 )}
@@ -667,7 +667,7 @@ function PaginatedEdgeSection({
                       onDelete={() => onDeleteEdge(edge)}
                       resolvedNode={resolvedNodes[targetUid]}
                       resolveAllActive={resolveAll}
-                      edgeViews={viewRegistry?.edges[edge.abType]?.views ?? []}
+                      edgeViews={viewRegistry?.edges[edge.axbType]?.views ?? []}
                       nodeViews={viewRegistry?.nodes[targetType]?.views ?? []}
                       config={config}
                     />
@@ -743,7 +743,7 @@ function EdgeRow({
 
   // Resolve initial edge view from config defaults
   const initialEdgeView = () => {
-    const rc = config.viewDefaults?.edges?.[edge.abType];
+    const rc = config.viewDefaults?.edges?.[edge.axbType];
     if (rc && edgeViews.length > 0) {
       const resolved = resolveViewForEntity(rc, edgeViews, 'inline');
       if (resolved !== 'json') {
@@ -821,7 +821,7 @@ function EdgeRow({
     drillIn({
       uid: targetUid,
       nodeType: targetType,
-      edgeType: edge.abType,
+      edgeType: edge.axbType,
       direction,
     });
   };

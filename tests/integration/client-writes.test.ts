@@ -20,7 +20,7 @@ describe('client writes', () => {
       expect(node!.bType).toBe('tour');
       expect(node!.aUid).toBe('tour1');
       expect(node!.bUid).toBe('tour1');
-      expect(node!.abType).toBe('is');
+      expect(node!.axbType).toBe('is');
       expect(node!.data).toEqual(tourData);
     });
 
@@ -41,7 +41,7 @@ describe('client writes', () => {
       expect(edge!.bType).toBe('departure');
       expect(edge!.aUid).toBe('tour1');
       expect(edge!.bUid).toBe('dep1');
-      expect(edge!.abType).toBe('hasDeparture');
+      expect(edge!.axbType).toBe('hasDeparture');
       expect(edge!.data).toEqual({ order: 0 });
     });
 

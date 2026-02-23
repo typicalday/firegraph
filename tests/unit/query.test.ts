@@ -5,7 +5,7 @@ import { NODE_RELATION } from '../../src/internal/constants.js';
 
 describe('buildEdgeQueryPlan', () => {
   it('returns strategy "get" when all three params provided', () => {
-    const plan = buildEdgeQueryPlan({ aUid: 'a1', abType: 'hasDep', bUid: 'b2' });
+    const plan = buildEdgeQueryPlan({ aUid: 'a1', axbType: 'hasDep', bUid: 'b2' });
     expect(plan.strategy).toBe('get');
     if (plan.strategy === 'get') {
       expect(plan.docId).toContain('a1');
@@ -14,22 +14,22 @@ describe('buildEdgeQueryPlan', () => {
     }
   });
 
-  it('returns strategy "query" for forward lookup (aUid + abType)', () => {
-    const plan = buildEdgeQueryPlan({ aUid: 'a1', abType: 'hasDep' });
+  it('returns strategy "query" for forward lookup (aUid + axbType)', () => {
+    const plan = buildEdgeQueryPlan({ aUid: 'a1', axbType: 'hasDep' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(2);
       expect(plan.filters).toContainEqual({ field: 'aUid', op: '==', value: 'a1' });
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: 'hasDep' });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: 'hasDep' });
     }
   });
 
-  it('returns strategy "query" for reverse lookup (abType + bUid)', () => {
-    const plan = buildEdgeQueryPlan({ abType: 'bookedFor', bUid: 'dep1' });
+  it('returns strategy "query" for reverse lookup (axbType + bUid)', () => {
+    const plan = buildEdgeQueryPlan({ axbType: 'bookedFor', bUid: 'dep1' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(2);
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: 'bookedFor' });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: 'bookedFor' });
       expect(plan.filters).toContainEqual({ field: 'bUid', op: '==', value: 'dep1' });
     }
   });
@@ -43,34 +43,34 @@ describe('buildEdgeQueryPlan', () => {
     }
   });
 
-  it('returns strategy "query" for type-scoped forward (aType + abType)', () => {
-    const plan = buildEdgeQueryPlan({ aType: 'tour', abType: 'hasDep' });
+  it('returns strategy "query" for type-scoped forward (aType + axbType)', () => {
+    const plan = buildEdgeQueryPlan({ aType: 'tour', axbType: 'hasDep' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(2);
       expect(plan.filters).toContainEqual({ field: 'aType', op: '==', value: 'tour' });
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: 'hasDep' });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: 'hasDep' });
     }
   });
 
-  it('returns strategy "query" for type-scoped reverse (abType + bType)', () => {
-    const plan = buildEdgeQueryPlan({ abType: 'bookedFor', bType: 'rider' });
+  it('returns strategy "query" for type-scoped reverse (axbType + bType)', () => {
+    const plan = buildEdgeQueryPlan({ axbType: 'bookedFor', bType: 'rider' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(2);
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: 'bookedFor' });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: 'bookedFor' });
       expect(plan.filters).toContainEqual({ field: 'bType', op: '==', value: 'rider' });
     }
   });
 
   it('includes all provided filters', () => {
-    const plan = buildEdgeQueryPlan({ aType: 'tour', aUid: 'a1', abType: 'hasDep' });
+    const plan = buildEdgeQueryPlan({ aType: 'tour', aUid: 'a1', axbType: 'hasDep' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(3);
       expect(plan.filters).toContainEqual({ field: 'aType', op: '==', value: 'tour' });
       expect(plan.filters).toContainEqual({ field: 'aUid', op: '==', value: 'a1' });
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: 'hasDep' });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: 'hasDep' });
     }
   });
 
@@ -80,13 +80,13 @@ describe('buildEdgeQueryPlan', () => {
 });
 
 describe('buildNodeQueryPlan', () => {
-  it('returns strategy "query" with aType and abType filters', () => {
+  it('returns strategy "query" with aType and axbType filters', () => {
     const plan = buildNodeQueryPlan({ aType: 'tour' });
     expect(plan.strategy).toBe('query');
     if (plan.strategy === 'query') {
       expect(plan.filters).toHaveLength(2);
       expect(plan.filters).toContainEqual({ field: 'aType', op: '==', value: 'tour' });
-      expect(plan.filters).toContainEqual({ field: 'abType', op: '==', value: NODE_RELATION });
+      expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: NODE_RELATION });
     }
   });
 });

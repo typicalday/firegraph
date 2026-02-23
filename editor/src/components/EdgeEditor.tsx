@@ -46,7 +46,7 @@ export default function EdgeEditor({
 
   const [selectedEdgeKey, setSelectedEdgeKey] = useState(() => {
     const first = availableEdges[0];
-    return first ? `${first.aType}:${first.abType}:${first.bType}` : '';
+    return first ? `${first.aType}:${first.axbType}:${first.bType}` : '';
   });
   const [targetUid, setTargetUid] = useState('');
   const [targetMode, setTargetMode] = useState<TargetMode>('create');
@@ -59,7 +59,7 @@ export default function EdgeEditor({
   const [committedUid, setCommittedUid] = useState('');
 
   const currentSchema: RegistryEntryMeta | undefined = useMemo(
-    () => edgeSchemas.find((es) => `${es.aType}:${es.abType}:${es.bType}` === selectedEdgeKey),
+    () => edgeSchemas.find((es) => `${es.aType}:${es.axbType}:${es.bType}` === selectedEdgeKey),
     [edgeSchemas, selectedEdgeKey],
   );
 
@@ -87,11 +87,11 @@ export default function EdgeEditor({
   const edgeBUid = defaultUid && committedUid
     ? (direction === 'out' ? committedUid : defaultUid)
     : '';
-  const edgeAbType = currentSchema?.abType ?? '';
+  const edgeAxbType = currentSchema?.axbType ?? '';
 
   const edgeCheck = trpc.checkEdge.useQuery(
-    { aUid: edgeAUid, abType: edgeAbType, bUid: edgeBUid },
-    { enabled: !!edgeAUid && !!edgeBUid && !!edgeAbType && (targetMode === 'existing' || targetMode === 'manual') },
+    { aUid: edgeAUid, axbType: edgeAxbType, bUid: edgeBUid },
+    { enabled: !!edgeAUid && !!edgeBUid && !!edgeAxbType && (targetMode === 'existing' || targetMode === 'manual') },
   );
 
   // Commit UID when picking from the list
@@ -142,14 +142,14 @@ export default function EdgeEditor({
     setError(null);
 
     const aType = currentSchema.aType;
-    const abType = currentSchema.abType;
+    const axbType = currentSchema.axbType;
     const bType = currentSchema.bType;
     const newNodeSide = direction === 'out' ? 'b' as const : 'a' as const;
 
     if (targetMode === 'create') {
       createEdgeWithNodeMutation.mutate({
         aType,
-        abType,
+        axbType,
         bType,
         newNodeSide,
         existingUid: defaultUid,
@@ -164,7 +164,7 @@ export default function EdgeEditor({
       createEdgeMutation.mutate({
         aType,
         aUid: direction === 'out' ? defaultUid : targetUid,
-        abType,
+        axbType,
         bType,
         bUid: direction === 'out' ? targetUid : defaultUid,
         data: edgeFormValues,
@@ -207,10 +207,10 @@ export default function EdgeEditor({
             className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
           >
             {availableEdges.map((es) => {
-              const key = `${es.aType}:${es.abType}:${es.bType}`;
+              const key = `${es.aType}:${es.axbType}:${es.bType}`;
               return (
                 <option key={key} value={key}>
-                  {es.aType} —[{es.abType}]→ {es.bType}
+                  {es.aType} —[{es.axbType}]→ {es.bType}
                   {es.description ? ` — ${es.description}` : ''}
                 </option>
               );
@@ -225,7 +225,7 @@ export default function EdgeEditor({
           <span className={`px-1.5 py-0.5 rounded ${getTypeBadgeColor(currentSchema.aType)}`}>
             {currentSchema.aType}
           </span>
-          <span className="text-slate-600">—[{currentSchema.abType}]→</span>
+          <span className="text-slate-600">—[{currentSchema.axbType}]→</span>
           <span className={`px-1.5 py-0.5 rounded ${getTypeBadgeColor(currentSchema.bType)}`}>
             {currentSchema.bType}
           </span>

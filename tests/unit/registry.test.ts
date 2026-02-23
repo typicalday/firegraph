@@ -19,7 +19,7 @@ const edgeSchema = {
 describe('createRegistry', () => {
   it('lookup returns the entry for a registered triple', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     ]);
     const entry = registry.lookup('tour', 'is', 'tour');
     expect(entry).toBeDefined();
@@ -28,7 +28,7 @@ describe('createRegistry', () => {
 
   it('lookup returns undefined for an unregistered triple', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour' },
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
     ]);
     const entry = registry.lookup('user', 'is', 'user');
     expect(entry).toBeUndefined();
@@ -36,14 +36,14 @@ describe('createRegistry', () => {
 
   it('validate passes for a registered triple with valid data', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     ]);
     expect(() => registry.validate('tour', 'is', 'tour', { name: 'Dolomites' })).not.toThrow();
   });
 
   it('validate throws RegistryViolationError for unregistered triple', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour' },
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
     ]);
     expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(
       RegistryViolationError,
@@ -52,7 +52,7 @@ describe('createRegistry', () => {
 
   it('validate throws ValidationError for invalid data', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     ]);
     expect(() => registry.validate('tour', 'is', 'tour', { name: 123 })).toThrow(
       ValidationError,
@@ -61,15 +61,15 @@ describe('createRegistry', () => {
 
   it('validate passes when no jsonSchema is defined', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour' },
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
     ]);
     expect(() => registry.validate('tour', 'is', 'tour', { anything: 'goes' })).not.toThrow();
   });
 
   it('supports multiple triples', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
-      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ]);
     expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).not.toThrow();
     expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 0 })).not.toThrow();
@@ -77,20 +77,20 @@ describe('createRegistry', () => {
 
   it('entries returns all registered entries', () => {
     const entries = [
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
-      { aType: 'tour', abType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ];
     const registry = createRegistry(entries);
     const result = registry.entries();
     expect(result).toHaveLength(2);
     expect(result[0].aType).toBe('tour');
-    expect(result[0].abType).toBe('is');
-    expect(result[1].abType).toBe('hasDeparture');
+    expect(result[0].axbType).toBe('is');
+    expect(result[1].axbType).toBe('hasDeparture');
   });
 
   it('entries returns a frozen array (defensive copy)', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour' },
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
     ]);
     const result = registry.entries();
     expect(Object.isFrozen(result)).toBe(true);
@@ -98,7 +98,7 @@ describe('createRegistry', () => {
 
   it('ValidationError includes details', () => {
     const registry = createRegistry([
-      { aType: 'tour', abType: 'is', bType: 'tour', jsonSchema: tourSchema },
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     ]);
     try {
       registry.validate('tour', 'is', 'tour', { name: 123 });
@@ -111,7 +111,7 @@ describe('createRegistry', () => {
 
   it('preserves inverseLabel on lookup', () => {
     const registry = createRegistry([
-      { aType: 'task', abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+      { aType: 'task', axbType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
     ]);
     const entry = registry.lookup('task', 'hasStep', 'step');
     expect(entry?.inverseLabel).toBe('stepOf');
@@ -119,7 +119,7 @@ describe('createRegistry', () => {
 
   it('returns inverseLabel via entries()', () => {
     const registry = createRegistry([
-      { aType: 'task', abType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
+      { aType: 'task', axbType: 'hasStep', bType: 'step', inverseLabel: 'stepOf' },
     ]);
     const [entry] = registry.entries();
     expect(entry.inverseLabel).toBe('stepOf');

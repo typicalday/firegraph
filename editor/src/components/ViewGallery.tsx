@@ -61,10 +61,10 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
             Edge Views
           </h2>
           <div className="space-y-6">
-            {edgeEntries.map(([abType, meta]) => (
+            {edgeEntries.map(([axbType, meta]) => (
               <EntityViewSection
-                key={abType}
-                entityType={abType}
+                key={axbType}
+                entityType={axbType}
                 meta={meta}
                 kind="edge"
               />

@@ -21,11 +21,11 @@ const orderedEdgeSchema = { type: 'object', required: ['order'], properties: { o
 const riderEdgeSchema = { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled'] } }, additionalProperties: false };
 
 const registry = createRegistry([
-  { aType: 'tour',      abType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', abType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     abType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
-  { aType: 'tour',      abType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
-  { aType: 'departure', abType: 'hasRider',     bType: 'rider',     jsonSchema: riderEdgeSchema,   description: 'Departure has a rider' },
+  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
+  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
+  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: riderEdgeSchema,   description: 'Departure has a rider' },
 ]);
 
 const g = createGraphClient(db, 'examples/traverse/graph', { registry });
@@ -134,7 +134,7 @@ async function main() {
   console.log('── With intermediates ──');
   for (const hop of detailed.hops) {
     console.log(
-      `  Hop ${hop.depth} (${hop.abType}): ${hop.edges.length} edges from ${hop.sourceCount} sources`,
+      `  Hop ${hop.depth} (${hop.axbType}): ${hop.edges.length} edges from ${hop.sourceCount} sources`,
     );
   }
   console.log();

@@ -49,7 +49,7 @@ describe('batch operations', () => {
 
   it('registry violation during enqueue prevents commit', async () => {
     const registry = createRegistry([
-      { aType: 'rider', abType: 'is', bType: 'rider', jsonSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } },
+      { aType: 'rider', axbType: 'is', bType: 'rider', jsonSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } },
     ]);
     const gWithRegistry = createGraphClient(db, uniqueCollectionPath(), { registry });
 
