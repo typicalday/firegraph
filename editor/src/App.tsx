@@ -6,6 +6,7 @@ import NodeBrowser from './components/NodeBrowser';
 import NodeDetail from './components/NodeDetail';
 import TraversalBuilder from './components/TraversalBuilder';
 import ViewGallery from './components/ViewGallery';
+import { FocusProvider } from './components/focus-context';
 import type { ViewRegistryData } from './types';
 import { trpc } from './trpc';
 
@@ -68,14 +69,16 @@ export default function App() {
   const viewRegistry: ViewRegistryData = viewsData ?? { nodes: {}, edges: {}, hasViews: false };
 
   return (
-    <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
-      <Routes>
-        <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />
-        <Route path="/browse/:type" element={<NodeBrowser schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
-        <Route path="/node/:uid" element={<NodeDetail schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
-        <Route path="/traverse" element={<TraversalBuilder schema={schema!} />} />
-        <Route path="/views" element={<ViewGallery viewRegistry={viewRegistry} schema={schema!} />} />
-      </Routes>
-    </Layout>
+    <FocusProvider>
+      <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
+        <Routes>
+          <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />
+          <Route path="/browse/:type" element={<NodeBrowser schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
+          <Route path="/node/:uid" element={<NodeDetail schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
+          <Route path="/traverse" element={<TraversalBuilder schema={schema!} />} />
+          <Route path="/views" element={<ViewGallery viewRegistry={viewRegistry} schema={schema!} />} />
+        </Routes>
+      </Layout>
+    </FocusProvider>
   );
 }

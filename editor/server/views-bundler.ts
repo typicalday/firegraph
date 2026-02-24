@@ -56,6 +56,41 @@ function sanitizeTagPart(s) {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
+function resilientView(ViewClass, tagName) {
+  const Wrapped = class extends ViewClass {
+    connectedCallback() {
+      try { super.connectedCallback?.(); }
+      catch (err) {
+        console.warn('[firegraph] <' + tagName + '> connectedCallback error:', err);
+        this._showError(err);
+      }
+    }
+    disconnectedCallback() {
+      try { super.disconnectedCallback?.(); }
+      catch (err) { console.warn('[firegraph] <' + tagName + '> disconnectedCallback error:', err); }
+    }
+    set data(v) {
+      try { super.data = v; }
+      catch (err) {
+        console.warn('[firegraph] <' + tagName + '> data setter error:', err);
+        this._showError(err);
+      }
+    }
+    get data() {
+      try { return super.data; } catch { return {}; }
+    }
+    _showError(err) {
+      try {
+        this.innerHTML = '<div style="padding:6px;color:#f87171;font-size:11px;font-family:monospace;">' +
+          'View error in &lt;' + tagName + '&gt;: ' + (err instanceof Error ? err.message : String(err)) + '</div>';
+      } catch {}
+    }
+  };
+  Wrapped.viewName = ViewClass.viewName;
+  Wrapped.description = ViewClass.description;
+  return Wrapped;
+}
+
 export function defineViews(input) {
   const nodes = {};
   const edges = {};
@@ -67,7 +102,7 @@ export function defineViews(input) {
     for (const ViewClass of config.views) {
       const tagName = 'fg-' + sanitizeTagPart(entityType) + '-' + sanitizeTagPart(ViewClass.viewName);
       viewMetas.push({ tagName, viewName: ViewClass.viewName, description: ViewClass.description });
-      if (registry && !registry.get(tagName)) registry.define(tagName, ViewClass);
+      if (registry && !registry.get(tagName)) registry.define(tagName, resilientView(ViewClass, tagName));
     }
     nodes[entityType] = { views: viewMetas, sampleData: config.sampleData };
   }
@@ -77,7 +112,7 @@ export function defineViews(input) {
     for (const ViewClass of config.views) {
       const tagName = 'fg-edge-' + sanitizeTagPart(axbType) + '-' + sanitizeTagPart(ViewClass.viewName);
       viewMetas.push({ tagName, viewName: ViewClass.viewName, description: ViewClass.description });
-      if (registry && !registry.get(tagName)) registry.define(tagName, ViewClass);
+      if (registry && !registry.get(tagName)) registry.define(tagName, resilientView(ViewClass, tagName));
     }
     edges[axbType] = { views: viewMetas, sampleData: config.sampleData };
   }

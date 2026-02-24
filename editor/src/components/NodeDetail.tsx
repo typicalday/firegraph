@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { trpc } from '../trpc';
@@ -10,8 +10,9 @@ import { TraversalPanel } from './TraversalBuilder';
 import NodeEditor from './NodeEditor';
 import EdgeEditor from './EdgeEditor';
 import ConfirmDialog from './ConfirmDialog';
-import { DrillProvider, useDrill } from './drill-context';
+import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
+import { useFocusMaybe } from './focus-context';
 
 interface Props {
   schema: Schema;
@@ -27,10 +28,13 @@ const LIMIT_OPTIONS = [10, 25, 50, 100];
  */
 export default function NodeDetail({ schema, viewRegistry, config, onDataChanged }: Props) {
   const { uid } = useParams<{ uid: string }>();
+  const location = useLocation();
   if (!uid) return null;
 
+  const initialPaths = (location.state as { initialPaths?: DrillFrame[][] } | null)?.initialPaths;
+
   return (
-    <DrillProvider rootUid={uid}>
+    <DrillProvider rootUid={uid} initialPaths={initialPaths}>
       <DrillStack
         schema={schema}
         viewRegistry={viewRegistry}
@@ -66,6 +70,7 @@ export function NodeDetailContent({
 }: NodeDetailContentProps) {
   const navigate = useNavigate();
   const { popTo, setRootType } = useDrill();
+  const focus = useFocusMaybe();
   const [editing, setEditing] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCreateEdge, setShowCreateEdge] = useState(false);
@@ -119,6 +124,17 @@ export function NodeDetailContent({
       setRootType(node.aType);
     }
   }, [node, drillIndex, setRootType]);
+
+  // Publish focus to FocusContext only from the root frame (drillIndex === 0).
+  // The Nearby panel and breadcrumb always anchor to the same root node.
+  // Peek callbacks are registered separately by DrillStack (which owns setPeek).
+  useEffect(() => {
+    if (!focus || !node || drillIndex !== 0) return;
+    focus.setFocused({ uid: node.aUid, nodeType: node.aType });
+    return () => {
+      focus.setFocused(null);
+    };
+  }, [node?.aUid, node?.aType, drillIndex, focus]);
 
   const deleteNodeMutation = trpc.deleteNode.useMutation({
     onSuccess: () => {

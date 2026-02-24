@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClause, FieldMeta, EdgeType, ViewRegistryData, AppConfig, ViewMeta } from '../types';
 import { trpc } from '../trpc';
 import { getTypeBadgeColor, resolveViewForEntity } from '../utils';
-import { DrillProvider, useDrillMaybe, type DrillFrame } from './drill-context';
-import DrillStack from './DrillStack';
+import { useDrillMaybe, type DrillFrame } from './drill-context';
 import JsonView from './JsonView';
 import ViewSwitcher from './ViewSwitcher';
 import CustomView from './CustomView';
@@ -665,6 +663,10 @@ function reconstructPath(
 
 const EXPLORE_MAX_LANES = 20;
 
+function makeRootFrame(uid: string): DrillFrame {
+  return { uid, nodeType: '', edgeType: '', direction: 'out' };
+}
+
 function TraversalResults({
   result,
   startUid,
@@ -678,7 +680,26 @@ function TraversalResults({
   viewRegistry?: ViewRegistryData | null;
   config?: AppConfig;
 }) {
-  const [exploringHop, setExploringHop] = useState<number | null>(null);
+  const drill = useDrillMaybe();
+  const navigate = useNavigate();
+
+  const handleExplore = (hopIndex: number) => {
+    const hop = result.hops[hopIndex];
+    const edges = hop.edges.slice(0, EXPLORE_MAX_LANES);
+    const paths = edges.map((edge) => reconstructPath(result.hops, hopIndex, edge));
+
+    if (drill) {
+      // Inside a DrillProvider (TraversalPanel on a node page) — create lanes directly
+      for (const frames of paths) {
+        drill.createLane([makeRootFrame(startUid), ...frames]);
+      }
+    } else {
+      // Standalone /traverse page — navigate to node detail with paths
+      navigate(`/node/${encodeURIComponent(startUid)}`, {
+        state: { initialPaths: paths },
+      });
+    }
+  };
 
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-800 p-5">
@@ -718,10 +739,10 @@ function TraversalResults({
               )}
               {hop.edges.length > 0 && (
                 <button
-                  onClick={() => setExploringHop(i)}
+                  onClick={() => handleExplore(i)}
                   className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors ml-auto"
                 >
-                  explore
+                  show paths
                 </button>
               )}
             </h3>
@@ -750,99 +771,7 @@ function TraversalResults({
           </div>
         ))}
       </div>
-
-      {/* Explore modal */}
-      {exploringHop !== null && (
-        <HopExploreModal
-          allHops={result.hops}
-          hopIndex={exploringHop}
-          startUid={startUid}
-          schema={schema}
-          viewRegistry={viewRegistry}
-          config={config}
-          onClose={() => setExploringHop(null)}
-        />
-      )}
     </div>
-  );
-}
-
-// --- Explore Modal ---
-
-function HopExploreModal({
-  allHops,
-  hopIndex,
-  startUid,
-  schema,
-  viewRegistry,
-  config,
-  onClose,
-}: {
-  allHops: HopResult[];
-  hopIndex: number;
-  startUid: string;
-  schema: Schema;
-  viewRegistry?: ViewRegistryData | null;
-  config?: AppConfig;
-  onClose: () => void;
-}) {
-  const hop = allHops[hopIndex];
-
-  // Reconstruct full paths for each edge in this hop (capped)
-  const initialPaths = useMemo(() => {
-    const edges = hop.edges.slice(0, EXPLORE_MAX_LANES);
-    return edges.map((edge) => reconstructPath(allHops, hopIndex, edge));
-  }, [allHops, hopIndex, hop.edges]);
-
-  // Escape to close
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="bg-slate-950 border border-slate-800 rounded-xl w-[90vw] h-[85vh] flex flex-col overflow-hidden shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 shrink-0">
-          <h3 className="text-sm font-medium flex items-center gap-2">
-            <span className="text-slate-400">Exploring Hop {hopIndex + 1}:</span>
-            <span className="text-indigo-400 font-mono">{hop.axbType}</span>
-            <span className="text-slate-600 text-xs">
-              ({hop.edges.length} edges{hop.edges.length > EXPLORE_MAX_LANES ? `, showing first ${EXPLORE_MAX_LANES}` : ''})
-            </span>
-          </h3>
-          <button
-            onClick={onClose}
-            className="ml-auto text-slate-500 hover:text-slate-300 transition-colors p-1"
-            title="Close (Escape)"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Drill context scoped to this hop's results */}
-        <DrillProvider rootUid={startUid} initialPaths={initialPaths}>
-          <DrillStack
-            schema={schema}
-            viewRegistry={viewRegistry}
-            config={config}
-          />
-        </DrillProvider>
-      </div>
-    </div>,
-    document.body,
   );
 }
 

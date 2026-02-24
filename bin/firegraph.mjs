@@ -27,7 +27,21 @@ if (subcommand === 'editor') {
   process.env.NODE_ENV = 'production';
   // Pass remaining args through (strip 'editor' subcommand)
   process.argv = [process.argv[0], process.argv[1], ...process.argv.slice(3)];
-  await import(path.join(__dirname, '..', 'dist', 'editor', 'server', 'index.mjs'));
+
+  const editorEntry = path.join(__dirname, '..', 'dist', 'editor', 'server', 'index.mjs');
+  if (!fs.existsSync(editorEntry)) {
+    const { execSync } = await import('child_process');
+    const pkgDir = path.join(__dirname, '..');
+    console.log('Editor not built yet — building...');
+    try {
+      execSync('npm run build:editor', { cwd: pkgDir, stdio: 'inherit' });
+    } catch {
+      console.error('Failed to build editor. Run "npm run build:editor" manually in the firegraph package directory.');
+      process.exit(1);
+    }
+  }
+
+  await import(editorEntry);
 } else if (subcommand === 'codegen') {
   const args = parseArgs(process.argv.slice(3));
   const entitiesDir = path.resolve(args.entities || './entities');

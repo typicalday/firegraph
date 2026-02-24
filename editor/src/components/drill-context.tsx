@@ -17,6 +17,7 @@ export interface DrillContextValue {
   activeLaneId: string;
   activeLane: Lane;
   activeIndex: number;
+  previewLaneId: string | undefined;
   drillIn: (frame: DrillFrame) => void;
   drillPath: (frames: DrillFrame[]) => void;
   extendLane: (laneId: string, frame: DrillFrame) => void;
@@ -28,6 +29,9 @@ export interface DrillContextValue {
   closeLane: (laneId: string) => void;
   switchLane: (laneId: string) => void;
   setRootType: (nodeType: string) => void;
+  previewFrame: (frame: DrillFrame) => void;
+  clearPreview: () => void;
+  commitPreview: () => void;
 }
 
 // --- Reducer ---
@@ -35,6 +39,7 @@ export interface DrillContextValue {
 interface DrillState {
   lanes: Lane[];
   activeLaneId: string;
+  previewLaneId?: string;
 }
 
 type DrillAction =
@@ -47,7 +52,10 @@ type DrillAction =
   | { type: 'POP_TO'; laneId: string; index: number }
   | { type: 'CLOSE_LANE'; laneId: string; rootUid: string }
   | { type: 'SWITCH_LANE'; laneId: string }
-  | { type: 'SET_ROOT_TYPE'; nodeType: string };
+  | { type: 'SET_ROOT_TYPE'; nodeType: string }
+  | { type: 'PREVIEW_FRAME'; laneId: string; frame: DrillFrame }
+  | { type: 'CLEAR_PREVIEW' }
+  | { type: 'COMMIT_PREVIEW' };
 
 let laneCounter = 0;
 function nextLaneId(): string {
@@ -66,6 +74,7 @@ function drillReducer(state: DrillState, action: DrillAction): DrillState {
       return {
         lanes: [{ id, frames: [makeRootFrame(action.rootUid)] }],
         activeLaneId: id,
+        previewLaneId: undefined,
       };
     }
     case 'EXTEND_LANE': {
@@ -150,6 +159,42 @@ function drillReducer(state: DrillState, action: DrillAction): DrillState {
           return { ...l, frames };
         }),
       };
+    }
+    case 'PREVIEW_FRAME': {
+      // Clear any existing preview first
+      let lanes = state.lanes;
+      if (state.previewLaneId) {
+        lanes = lanes.map((l) =>
+          l.id === state.previewLaneId ? { ...l, frames: l.frames.slice(0, -1) } : l,
+        );
+      }
+      // Don't add a preview frame if the UID already exists in the target lane —
+      // it would cause uidContext to reassign the existing frame's drillIndex,
+      // breaking focus publishing and other index-dependent logic.
+      const targetLane = lanes.find((l) => l.id === action.laneId);
+      if (targetLane && targetLane.frames.some((f) => f.uid === action.frame.uid)) {
+        return { ...state, lanes, previewLaneId: undefined };
+      }
+      return {
+        ...state,
+        lanes: lanes.map((l) =>
+          l.id === action.laneId ? { ...l, frames: [...l.frames, action.frame] } : l,
+        ),
+        previewLaneId: action.laneId,
+      };
+    }
+    case 'CLEAR_PREVIEW': {
+      if (!state.previewLaneId) return state;
+      return {
+        ...state,
+        lanes: state.lanes.map((l) =>
+          l.id === state.previewLaneId ? { ...l, frames: l.frames.slice(0, -1) } : l,
+        ),
+        previewLaneId: undefined,
+      };
+    }
+    case 'COMMIT_PREVIEW': {
+      return { ...state, previewLaneId: undefined };
     }
     default:
       return state;
@@ -270,12 +315,28 @@ export function DrillProvider({
     dispatch({ type: 'SET_ROOT_TYPE', nodeType });
   }, []);
 
+  const previewFrame = useCallback(
+    (frame: DrillFrame) => {
+      dispatch({ type: 'PREVIEW_FRAME', laneId: state.activeLaneId, frame });
+    },
+    [state.activeLaneId],
+  );
+
+  const clearPreview = useCallback(() => {
+    dispatch({ type: 'CLEAR_PREVIEW' });
+  }, []);
+
+  const commitPreview = useCallback(() => {
+    dispatch({ type: 'COMMIT_PREVIEW' });
+  }, []);
+
   const value = useMemo<DrillContextValue>(
     () => ({
       lanes: state.lanes,
       activeLaneId: state.activeLaneId,
       activeLane,
       activeIndex: activeLane.frames.length - 1,
+      previewLaneId: state.previewLaneId,
       drillIn,
       drillPath,
       extendLane,
@@ -287,8 +348,11 @@ export function DrillProvider({
       closeLane,
       switchLane,
       setRootType,
+      previewFrame,
+      clearPreview,
+      commitPreview,
     }),
-    [state.lanes, state.activeLaneId, activeLane, drillIn, drillPath, extendLane, extendPath, forkAndDrill, forkAndDrillPath, createLane, popTo, closeLane, switchLane, setRootType],
+    [state.lanes, state.activeLaneId, state.previewLaneId, activeLane, drillIn, drillPath, extendLane, extendPath, forkAndDrill, forkAndDrillPath, createLane, popTo, closeLane, switchLane, setRootType, previewFrame, clearPreview, commitPreview],
   );
 
   return (

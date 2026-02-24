@@ -59,7 +59,7 @@ function buildTrie(lanes: Lane[]): TrieNode | null {
  */
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const navigate = useNavigate();
-  const { lanes, activeLaneId, activeIndex, popTo, closeLane, switchLane } = useDrill();
+  const { lanes, activeLaneId, activeIndex, previewLaneId, popTo, closeLane, switchLane } = useDrill();
 
   const inverseLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -69,14 +69,22 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
     return map;
   }, [schema.edgeTypes]);
 
-  const trie = useMemo(() => buildTrie(lanes), [lanes]);
+  // Strip preview frame from lanes so it never appears in the breadcrumb
+  const visibleLanes = useMemo(() => {
+    if (!previewLaneId) return lanes;
+    return lanes.map((l) =>
+      l.id === previewLaneId ? { ...l, frames: l.frames.slice(0, -1) } : l,
+    );
+  }, [lanes, previewLaneId]);
+
+  const trie = useMemo(() => buildTrie(visibleLanes), [visibleLanes]);
 
   const showBreadcrumbs =
-    lanes.length > 1 || (lanes.length === 1 && lanes[0].frames.length > 1);
+    visibleLanes.length > 1 || (visibleLanes.length === 1 && visibleLanes[0].frames.length > 1);
 
   if (!showBreadcrumbs || !trie) return null;
 
-  const multiLane = lanes.length > 1;
+  const multiLane = visibleLanes.length > 1;
   const visualLaneId = peek?.laneId ?? activeLaneId;
   const visualIndex = peek?.frameIndex ?? activeIndex;
 

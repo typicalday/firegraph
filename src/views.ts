@@ -121,6 +121,69 @@ function getCustomElements(): CustomElementRegistryLike | null {
   return null;
 }
 
+/**
+ * Wrap a view class so that errors in connectedCallback, disconnectedCallback,
+ * and the data setter are caught and logged rather than crashing the page.
+ * Shows an inline error message when the view fails to render.
+ */
+function resilientView(ViewClass: ViewComponentClass, tagName: string): ViewComponentClass {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  if (!g.HTMLElement) return ViewClass; // Node.js — no wrapping needed
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Base = g.HTMLElement as any;
+
+  const Wrapped = class extends (ViewClass as unknown as typeof Base) {
+    connectedCallback() {
+      try {
+        super.connectedCallback?.();
+      } catch (err) {
+        console.warn(`[firegraph] <${tagName}> connectedCallback error:`, err);
+        this._showError(err);
+      }
+    }
+
+    disconnectedCallback() {
+      try {
+        super.disconnectedCallback?.();
+      } catch (err) {
+        console.warn(`[firegraph] <${tagName}> disconnectedCallback error:`, err);
+      }
+    }
+
+    set data(v: Record<string, unknown>) {
+      try {
+        super.data = v;
+      } catch (err) {
+        console.warn(`[firegraph] <${tagName}> data setter error:`, err);
+        this._showError(err);
+      }
+    }
+
+    get data(): Record<string, unknown> {
+      try {
+        return super.data;
+      } catch {
+        return {};
+      }
+    }
+
+    _showError(err: unknown) {
+      try {
+        this.innerHTML = `<div style="padding:6px;color:#f87171;font-size:11px;font-family:monospace;">` +
+          `View error in &lt;${tagName}&gt;: ${err instanceof Error ? err.message : String(err)}</div>`;
+      } catch { /* last resort — don't throw from error handler */ }
+    }
+  };
+
+  // Preserve static metadata
+  (Wrapped as unknown as ViewComponentClass).viewName = ViewClass.viewName;
+  (Wrapped as unknown as ViewComponentClass).description = ViewClass.description;
+
+  return Wrapped as unknown as ViewComponentClass;
+}
+
 // ---------------------------------------------------------------------------
 // defineViews()
 // ---------------------------------------------------------------------------
@@ -148,7 +211,7 @@ export function defineViews(input: ViewRegistryInput): ViewRegistry {
         description: ViewClass.description,
       });
       if (registry && !registry.get(tagName)) {
-        registry.define(tagName, ViewClass);
+        registry.define(tagName, resilientView(ViewClass, tagName));
       }
     }
     nodes[entityType] = {
@@ -168,7 +231,7 @@ export function defineViews(input: ViewRegistryInput): ViewRegistry {
         description: ViewClass.description,
       });
       if (registry && !registry.get(tagName)) {
-        registry.define(tagName, ViewClass);
+        registry.define(tagName, resilientView(ViewClass, tagName));
       }
     }
     edges[axbType] = {

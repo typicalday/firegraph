@@ -3,6 +3,7 @@ import type { Schema, ViewRegistryData, AppConfig } from '../types';
 import { useDrill, DrillOverrideContext, type DrillFrame, type Lane } from './drill-context';
 import DrillBreadcrumb from './DrillBreadcrumb';
 import { NodeDetailContent } from './NodeDetail';
+import { useFocusMaybe } from './focus-context';
 
 interface Props {
   schema: Schema;
@@ -39,9 +40,13 @@ function prefixMatchLength(lane: DrillFrame[], desired: DrillFrame[]): number {
 export default function DrillStack({ schema, viewRegistry, config, onDataChanged }: Props) {
   const {
     lanes, activeLaneId, activeLane, activeIndex,
+    previewLaneId,
+    previewFrame, clearPreview,
     extendLane, extendPath, forkAndDrill, createLane,
     switchLane, popTo: ctxPopTo,
   } = useDrill();
+
+  const focus = useFocusMaybe();
 
   const [peek, setPeek] = useState<PeekPosition | null>(null);
   const enteringUidRef = useRef<string | null>(null);
@@ -49,10 +54,53 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
   const [, setTick] = useState(0);
   const frameRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-  // Clear peek when active lane changes
+  // Clear peek when the active lane switches (user clicks a different lane).
+  // Don't depend on activeIndex — real navigation actions (drillIn, popTo, fork)
+  // already call setPeek(null) explicitly, and preview frame add/remove changes
+  // activeIndex without being a navigation.
   useEffect(() => {
     setPeek(null);
-  }, [activeLaneId, activeIndex]);
+  }, [activeLaneId]);
+
+  // Register smart peek callbacks on FocusContext.
+  // For UIDs already in a lane → use setPeek (no new frame needed).
+  // For new UIDs → use previewFrame (temporary frame).
+  const lanesRef = useRef(lanes);
+  lanesRef.current = lanes;
+  const activeLaneIdRef = useRef(activeLaneId);
+  activeLaneIdRef.current = activeLaneId;
+  const previewFrameRef = useRef(previewFrame);
+  previewFrameRef.current = previewFrame;
+  const clearPreviewRef = useRef(clearPreview);
+  clearPreviewRef.current = clearPreview;
+
+  useEffect(() => {
+    if (!focus) return;
+    focus.registerCallbacks({
+      peek: (frame) => {
+        // Check if the uid already exists in any lane
+        for (const lane of lanesRef.current) {
+          const idx = lane.frames.findIndex((f) => f.uid === frame.uid);
+          if (idx >= 0) {
+            // Clear any active preview frame before using local peek
+            clearPreviewRef.current();
+            setPeek({ laneId: lane.id, frameIndex: idx });
+            return;
+          }
+        }
+        // New uid — clear local peek before adding a preview frame
+        setPeek(null);
+        previewFrameRef.current(frame);
+      },
+      clearPeek: () => {
+        setPeek(null);
+        clearPreviewRef.current();
+      },
+    });
+    return () => {
+      focus.registerCallbacks(null);
+    };
+  }, [focus]);
 
   // Visual position: peek overrides active
   const visualLaneId = peek?.laneId ?? activeLaneId;
@@ -120,6 +168,13 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
     prevUidSetRef.current = currentUids;
   }, [uniqueUids]);
 
+  // Derive the preview UID (last frame of the preview lane, if any)
+  const previewUid = useMemo(() => {
+    if (!previewLaneId) return undefined;
+    const lane = lanes.find((l) => l.id === previewLaneId);
+    return lane?.frames[lane.frames.length - 1]?.uid;
+  }, [previewLaneId, lanes]);
+
   // Compute the css class for each uid
   const uidClass = useCallback(
     (uid: string): string => {
@@ -129,6 +184,10 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
       if (uid === activeUid) {
         return 'drill-frame drill-frame--active';
       }
+      // Preview frame from Nearby panel shows as behind
+      if (previewUid && uid === previewUid) {
+        return 'drill-frame drill-frame--behind';
+      }
       // "Behind" = the frame one step deeper in the visual lane
       const behindUid = vLane?.frames[visualIndex + 1]?.uid;
       if (uid === behindUid) {
@@ -136,7 +195,7 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
       }
       return 'drill-frame drill-frame--hidden';
     },
-    [activeUid, vLane, visualIndex],
+    [activeUid, previewUid, vLane, visualIndex],
   );
 
   // For each uid, derive lane context (isDrilled, drillIndex, laneId)
