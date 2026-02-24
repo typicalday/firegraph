@@ -46,6 +46,7 @@
     "bin"
   ],
   "scripts": {
+    "prepare": "tsup",
     "build": "tsup",
     "build:editor:client": "cd editor && npx vite build",
     "build:editor:server": "node editor/build-server.mjs",

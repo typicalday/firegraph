@@ -20,6 +20,12 @@ npm install git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
 pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
 ```
 
+**Build dependency:** firegraph ships as source when installed from git. A `prepare` script runs `tsup` automatically after install to build the package. The consuming project must have `tsup` and `typescript` available — install them as dev dependencies:
+
+```bash
+npm install -D tsup typescript
+```
+
 For framework adapters (optional):
 - React projects also need: `react` and `react-dom` (^18 or ^19)
 - Svelte projects also need: `svelte` (^5) and `esbuild-svelte`
@@ -449,7 +455,7 @@ export default [
 
 ## Quick-Start Checklist
 
-1. Install: `pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin`
+1. Install: `pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin` (also `pnpm add -D tsup typescript` for the build step)
 2. Create `entities/` directory with nodes and edges subdirectories
 3. Define `schema.json` for each node type
 4. Define `schema.json` + `edge.json` for each edge type

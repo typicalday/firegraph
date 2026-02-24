@@ -10,10 +10,10 @@ npm install firegraph firebase-admin
 pnpm add firegraph firebase-admin
 ```
 
-Optional schema validation with Zod:
+When installing from git (not npm), firegraph builds itself via a `prepare` script. The consuming project needs `tsup` and `typescript` as dev dependencies:
 
 ```bash
-npm install zod
+npm install -D tsup typescript
 ```
 
 ## Quick Start
