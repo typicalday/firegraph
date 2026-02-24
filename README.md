@@ -16,6 +16,16 @@ When installing from git (not npm), firegraph builds itself via a `prepare` scri
 npm install -D tsup typescript
 ```
 
+**pnpm 10+** blocks dependency build scripts by default. Allow `firegraph` and `esbuild` in your `package.json`:
+
+```json
+{
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "firegraph"]
+  }
+}
+```
+
 ## Quick Start
 
 ```typescript

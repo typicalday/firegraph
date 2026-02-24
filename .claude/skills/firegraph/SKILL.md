@@ -20,11 +20,23 @@ npm install git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
 pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
 ```
 
-**Build dependency:** firegraph ships as source when installed from git. A `prepare` script runs `tsup` automatically after install to build the package. The consuming project must have `tsup` and `typescript` available — install them as dev dependencies:
+**Build dependencies:** firegraph ships as source when installed from git. A `prepare` script runs `tsup` automatically after install to build the package. The consuming project must have `tsup` and `typescript` available — install them as dev dependencies:
 
 ```bash
 npm install -D tsup typescript
 ```
+
+**pnpm users:** pnpm 10+ blocks dependency build scripts by default. You must allow `firegraph` and its dependency `esbuild` to run build scripts. Add this to the consuming project's `package.json`:
+
+```json
+{
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "firegraph"]
+  }
+}
+```
+
+Without this, the `prepare` script is silently skipped and the `dist/` directory won't exist.
 
 For framework adapters (optional):
 - React projects also need: `react` and `react-dom` (^18 or ^19)
