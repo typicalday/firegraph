@@ -11,6 +11,10 @@ import {
 } from './internal/firestore-adapter.js';
 import { GraphTransactionImpl } from './transaction.js';
 import { GraphBatchImpl } from './batch.js';
+import {
+  removeNodeCascade as removeNodeCascadeImpl,
+  bulkRemoveEdges as bulkRemoveEdgesImpl,
+} from './bulk.js';
 import type {
   GraphClient,
   GraphClientOptions,
@@ -20,6 +24,9 @@ import type {
   StoredGraphRecord,
   FindEdgesParams,
   FindNodesParams,
+  BulkOptions,
+  BulkResult,
+  CascadeResult,
 } from './types.js';
 
 class GraphClientImpl implements GraphClient {
@@ -126,6 +133,14 @@ class GraphClientImpl implements GraphClient {
   batch(): GraphBatch {
     const adapter = createBatchAdapter(this.db, this.adapter.collectionPath);
     return new GraphBatchImpl(adapter, this.registry);
+  }
+
+  async removeNodeCascade(uid: string, options?: BulkOptions): Promise<CascadeResult> {
+    return removeNodeCascadeImpl(this.db, this.adapter.collectionPath, this, uid, options);
+  }
+
+  async bulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
+    return bulkRemoveEdgesImpl(this.db, this.adapter.collectionPath, this, params, options);
   }
 }
 

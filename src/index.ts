@@ -47,6 +47,11 @@ export type {
   EdgeTopology,
   DiscoveredEntity,
   DiscoveryResult,
+  BulkOptions,
+  BulkProgress,
+  BulkResult,
+  BulkBatchError,
+  CascadeResult,
 } from './types.js';
 
 export type {
