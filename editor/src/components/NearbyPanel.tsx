@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Schema, GraphRecord } from '../types';
-import { trpc } from '../trpc';
 import { getTypeBadgeColor } from '../utils';
 import { useFocus } from './focus-context';
 import type { DrillFrame } from './drill-context';
@@ -11,7 +10,7 @@ interface Props {
 }
 
 export default function NearbyPanel({ schema }: Props) {
-  const { focused, onPeekNearby, onClearPeek } = useFocus();
+  const { focused, onPeekNearby, onClearPeek, edgeResults } = useFocus();
   const navigate = useNavigate();
 
   const rootFrame: DrillFrame = useMemo(
@@ -47,18 +46,18 @@ export default function NearbyPanel({ schema }: Props) {
         </div>
       </div>
 
-      {/* Edge sections */}
+      {/* Edge sections — reads from FocusContext (published by PaginatedEdgeSection) */}
       <NearbyEdgeSection
-        uid={focused.uid}
         direction="out"
+        results={edgeResults.out}
         schema={schema}
         onPeek={onPeekNearby}
         onClearPeek={onClearPeek}
         navigate={navigate}
       />
       <NearbyEdgeSection
-        uid={focused.uid}
         direction="in"
+        results={edgeResults.in}
         schema={schema}
         onPeek={onPeekNearby}
         onClearPeek={onClearPeek}
@@ -69,25 +68,21 @@ export default function NearbyPanel({ schema }: Props) {
 }
 
 function NearbyEdgeSection({
-  uid,
   direction,
+  results,
   schema,
   onPeek,
   onClearPeek,
   navigate,
 }: {
-  uid: string;
   direction: 'out' | 'in';
+  results: { edges: GraphRecord[]; hasMore: boolean; loading: boolean };
   schema: Schema;
   onPeek: (frame: DrillFrame) => void;
   onClearPeek: () => void;
   navigate: ReturnType<typeof useNavigate>;
 }) {
-  const queryInput = direction === 'out' ? { aUid: uid, limit: 100 } : { bUid: uid, limit: 100 };
-  const { data, isLoading } = trpc.getEdges.useQuery(queryInput);
-
-  const edges = (data?.edges ?? []) as GraphRecord[];
-  const hasMore = data?.hasMore ?? false;
+  const { edges, hasMore, loading: isLoading } = results;
 
   // Build inverse label map
   const inverseLabelMap = useMemo(() => {

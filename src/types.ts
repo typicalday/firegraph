@@ -22,6 +22,12 @@ export interface StoredGraphRecord {
   updatedAt: Timestamp;
 }
 
+export interface WhereClause {
+  field: string;
+  op: '==' | '!=' | '<' | '<=' | '>' | '>=';
+  value: unknown;
+}
+
 export interface FindEdgesParams {
   aType?: string;
   aUid?: string;
@@ -30,6 +36,7 @@ export interface FindEdgesParams {
   bUid?: string;
   limit?: number;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
+  where?: WhereClause[];
 }
 
 export interface FindNodesParams {
@@ -48,7 +55,7 @@ export type QueryPlan =
 export interface QueryFilter {
   field: string;
   op: WhereFilterOp;
-  value: string;
+  value: unknown;
 }
 
 export interface RegistryEntry {

@@ -6,7 +6,7 @@ import type { FindEdgesParams, FindNodesParams, QueryPlan, QueryFilter } from '.
 export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
   const { aType, aUid, axbType, bType, bUid, limit, orderBy } = params;
 
-  if (aUid && axbType && bUid) {
+  if (aUid && axbType && bUid && !params.where?.length) {
     return { strategy: 'get', docId: computeEdgeDocId(aUid, axbType, bUid) };
   }
 
@@ -17,6 +17,15 @@ export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
   if (axbType) filters.push({ field: 'axbType', op: '==', value: axbType });
   if (bType) filters.push({ field: 'bType', op: '==', value: bType });
   if (bUid) filters.push({ field: 'bUid', op: '==', value: bUid });
+
+  const builtinFields = ['aType', 'aUid', 'axbType', 'bType', 'bUid', 'createdAt', 'updatedAt'];
+  if (params.where) {
+    for (const clause of params.where) {
+      const field = builtinFields.includes(clause.field) ? clause.field
+        : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+      filters.push({ field, op: clause.op, value: clause.value });
+    }
+  }
 
   if (filters.length === 0) {
     throw new InvalidQueryError('findEdges requires at least one filter parameter');

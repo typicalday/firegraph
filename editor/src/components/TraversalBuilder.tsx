@@ -952,9 +952,7 @@ function HopEdgeRow({
               <JsonView data={data} defaultExpanded />
             </div>
           ) : (
-            <div className="bg-slate-950 rounded p-2 overflow-auto">
-              <CustomView tagName={edgeViewMode} data={data as Record<string, unknown>} />
-            </div>
+            <CustomView tagName={edgeViewMode} data={data as Record<string, unknown>} />
           )}
         </div>
       )}
@@ -979,9 +977,7 @@ function HopEdgeRow({
                   <JsonView data={nodeData.data} defaultExpanded />
                 </div>
               ) : (
-                <div className="bg-slate-950 rounded p-2 overflow-auto">
-                  <CustomView tagName={nodeViewMode} data={nodeData.data as Record<string, unknown>} />
-                </div>
+                <CustomView tagName={nodeViewMode} data={nodeData.data as Record<string, unknown>} />
               )}
             </div>
           )}

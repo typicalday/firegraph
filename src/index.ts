@@ -25,6 +25,7 @@ export { DiscoveryError } from './discover.js';
 export type {
   GraphRecord,
   StoredGraphRecord,
+  WhereClause,
   FindEdgesParams,
   FindNodesParams,
   QueryPlan,

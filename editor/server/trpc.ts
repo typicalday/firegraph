@@ -244,6 +244,13 @@ export const appRouter = t.router({
       bUid: z.string().optional(),
       limit: z.number().min(1).max(200).default(25),
       startAfter: z.string().optional(),
+      sortBy: z.string().optional(),
+      sortDir: z.enum(['asc', 'desc']).default('asc'),
+      where: z.array(z.object({
+        field: z.string(),
+        op: z.string(),
+        value: z.union([z.string(), z.number(), z.boolean()]),
+      })).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const col = ctx.db.collection(ctx.collection);
@@ -259,7 +266,30 @@ export const appRouter = t.router({
         query = query.where('axbType', '!=', NODE_RELATION);
       }
 
-      query = query.orderBy('axbType').limit(input.limit + 1);
+      const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
+      type AllowedOp = (typeof allowedOps)[number];
+      const builtinFields = ['aUid', 'bUid', 'aType', 'bType', 'axbType', 'createdAt', 'updatedAt'];
+
+      if (input.where && input.where.length > 0) {
+        for (const clause of input.where) {
+          if (!allowedOps.includes(clause.op as AllowedOp)) continue;
+          const field = builtinFields.includes(clause.field) ? clause.field
+            : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+          query = query.where(field, clause.op as AllowedOp, clause.value);
+        }
+      }
+
+      const builtinSortFields = builtinFields;
+      let effectiveSortBy: string;
+      if (!input.sortBy) {
+        effectiveSortBy = 'axbType';
+      } else if (builtinSortFields.includes(input.sortBy)) {
+        effectiveSortBy = input.sortBy;
+      } else {
+        effectiveSortBy = input.sortBy.startsWith('data.') ? input.sortBy : `data.${input.sortBy}`;
+      }
+
+      query = query.orderBy(effectiveSortBy, input.sortDir).limit(input.limit + 1);
 
       if (input.startAfter) {
         query = query.startAfter(input.startAfter);
@@ -273,7 +303,11 @@ export const appRouter = t.router({
 
       let nextCursor: string | null = null;
       if (hasMore && docs.length > 0) {
-        nextCursor = String(docs[docs.length - 1].data().axbType);
+        const lastDoc = docs[docs.length - 1].data();
+        const cursorValue = effectiveSortBy.startsWith('data.')
+          ? effectiveSortBy.split('.').reduce<unknown>((obj, key) => (obj as Record<string, unknown>)?.[key], lastDoc)
+          : lastDoc[effectiveSortBy];
+        nextCursor = cursorValue instanceof Timestamp ? cursorValue.toDate().toISOString() : String(cursorValue);
       }
 
       return { edges, hasMore, nextCursor };

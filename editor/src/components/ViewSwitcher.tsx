@@ -9,28 +9,18 @@ interface Props {
 export default function ViewSwitcher({ views, activeView, onSwitch }: Props) {
   if (views.length === 0) return null;
 
-  const btnBase = 'px-2 py-1 rounded text-xs transition-colors';
-  const btnActive = 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/50';
-  const btnInactive = 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700';
-
   return (
-    <div className="flex items-center gap-1">
-      <button
-        onClick={() => onSwitch('json')}
-        className={`${btnBase} ${activeView === 'json' ? btnActive : btnInactive}`}
-      >
-        JSON
-      </button>
+    <select
+      value={activeView}
+      onChange={(e) => onSwitch(e.target.value)}
+      className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+    >
+      <option value="json">JSON</option>
       {views.map((view) => (
-        <button
-          key={view.tagName}
-          onClick={() => onSwitch(view.tagName)}
-          title={view.description}
-          className={`${btnBase} ${activeView === view.tagName ? btnActive : btnInactive}`}
-        >
+        <option key={view.tagName} value={view.tagName}>
           {view.viewName}
-        </button>
+        </option>
       ))}
-    </div>
+    </select>
   );
 }
