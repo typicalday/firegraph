@@ -1,5 +1,6 @@
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { trpc } from '../trpc';
 import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity } from '../utils';
@@ -22,6 +23,17 @@ interface Props {
 }
 
 const LIMIT_OPTIONS = [10, 25, 50, 100];
+
+/** Describes a pending bulk edge deletion — shown in a confirmation dialog. */
+type BulkDeleteRequest =
+  | { mode: 'visible'; axbType: string; inverseLabel?: string; edges: Array<{ aUid: string; axbType: string; bUid: string }> }
+  | { mode: 'filtered'; axbType: string; inverseLabel?: string; direction: 'in' | 'out'; uid: string; where: Array<{ field: string; op: string; value: string | number | boolean }> }
+  | { mode: 'all'; axbType: string; inverseLabel?: string; direction: 'in' | 'out'; uid: string };
+
+/** Format an edge type label, showing inverseLabel when available. */
+function edgeTypeLabel(axbType: string, inverseLabel?: string): string {
+  return inverseLabel ? `${inverseLabel} (${axbType})` : axbType;
+}
 
 /**
  * Exported route component — thin shell that wraps DrillProvider + DrillStack.
@@ -71,11 +83,14 @@ export function NodeDetailContent({
   const navigate = useNavigate();
   const { popTo, setRootType } = useDrill();
   const focus = useFocusMaybe();
+  const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteStep, setDeleteStep] = useState<null | 'choose' | 'confirm-cascade' | 'confirm-node-only'>(null);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [showCreateEdge, setShowCreateEdge] = useState(false);
   const [showCreateIncomingEdge, setShowCreateIncomingEdge] = useState(false);
-  const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; axbType: string; bUid: string } | null>(null);
+  const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; axbType: string; bUid: string; inverseLabel?: string } | null>(null);
+  const [bulkDeleteRequest, setBulkDeleteRequest] = useState<BulkDeleteRequest | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
@@ -88,11 +103,18 @@ export function NodeDetailContent({
   );
 
   const node = (nodeDetailData?.node as GraphRecord | null) ?? null;
+  const totalEdgeCount = (nodeDetailData?.outEdges?.length ?? 0) + (nodeDetailData?.inEdges?.length ?? 0);
   const error = queryError?.message ?? mutationError ?? null;
 
   // Track a reload signal for edge sections
   const [edgeReloadKey, setEdgeReloadKey] = useState(0);
   const reloadEdges = () => setEdgeReloadKey((k) => k + 1);
+
+  /** Invalidate cached queries so the UI refreshes after mutations. */
+  const invalidateQueries = () => {
+    utils.getNodeDetail.invalidate({ uid });
+    utils.getEdges.invalidate();
+  };
 
   // Reset UI state when uid changes
   useEffect(() => {
@@ -138,6 +160,7 @@ export function NodeDetailContent({
 
   const deleteNodeMutation = trpc.deleteNode.useMutation({
     onSuccess: () => {
+      invalidateQueries();
       onDataChanged?.();
       if (isDrilled && laneId) {
         popTo(laneId, drillIndex - 1);
@@ -146,21 +169,77 @@ export function NodeDetailContent({
       }
     },
     onError: (err) => setMutationError(err.message),
-    onSettled: () => setShowDeleteConfirm(false),
+    onSettled: () => { setDeleteStep(null); setDeleteConfirmInput(''); },
+  });
+
+  const deleteNodeCascadeMutation = trpc.deleteNodeCascade.useMutation({
+    onSuccess: (result) => {
+      invalidateQueries();
+      setMutationError(
+        result.errors.length > 0
+          ? `Cascade partially failed: ${result.errors.map((e) => e.message).join(', ')}`
+          : null,
+      );
+      onDataChanged?.();
+      if (result.success) {
+        if (isDrilled && laneId) {
+          popTo(laneId, drillIndex - 1);
+        } else {
+          navigate('/');
+        }
+      }
+    },
+    onError: (err) => setMutationError(err.message),
+    onSettled: () => { setDeleteStep(null); setDeleteConfirmInput(''); },
   });
 
   const deleteEdgeMutation = trpc.deleteEdge.useMutation({
     onSuccess: () => {
       setDeletingEdge(null);
+      invalidateQueries();
       reloadEdges();
       onDataChanged?.();
     },
     onError: (err) => setMutationError(err.message),
   });
 
+  const bulkDeleteEdgesMutation = trpc.bulkDeleteEdges.useMutation({
+    onSuccess: (result) => {
+      setBulkDeleteRequest(null);
+      invalidateQueries();
+      reloadEdges();
+      onDataChanged?.();
+      if (result.errors.length > 0) {
+        setMutationError(`Bulk delete partially failed: deleted ${result.deleted}, ${result.errors.length} batch(es) failed`);
+      }
+    },
+    onError: (err) => {
+      setMutationError(err.message);
+      setBulkDeleteRequest(null);
+    },
+  });
+
+  const deleteEdgesBatchMutation = trpc.deleteEdgesBatch.useMutation({
+    onSuccess: () => {
+      setBulkDeleteRequest(null);
+      invalidateQueries();
+      reloadEdges();
+      onDataChanged?.();
+    },
+    onError: (err) => {
+      setMutationError(err.message);
+      setBulkDeleteRequest(null);
+    },
+  });
+
   const handleDelete = () => {
     if (!uid) return;
     deleteNodeMutation.mutate({ uid });
+  };
+
+  const handleDeleteCascade = () => {
+    if (!uid) return;
+    deleteNodeCascadeMutation.mutate({ uid });
   };
 
   const handleDeleteEdge = () => {
@@ -170,6 +249,30 @@ export function NodeDetailContent({
       axbType: deletingEdge.axbType,
       bUid: deletingEdge.bUid,
     });
+  };
+
+  const handleBulkDeleteEdges = () => {
+    if (!bulkDeleteRequest) return;
+    const req = bulkDeleteRequest;
+    if (req.mode === 'visible') {
+      deleteEdgesBatchMutation.mutate({ edges: req.edges });
+    } else if (req.mode === 'filtered') {
+      const params: Record<string, unknown> = {
+        axbType: req.axbType,
+        ...(req.direction === 'out' ? { aUid: req.uid } : { bUid: req.uid }),
+      };
+      if (req.where.length > 0) {
+        params.where = req.where;
+      }
+      bulkDeleteEdgesMutation.mutate(params as any);
+    } else {
+      // mode === 'all'
+      bulkDeleteEdgesMutation.mutate(
+        req.direction === 'out'
+          ? { aUid: req.uid, axbType: req.axbType }
+          : { bUid: req.uid, axbType: req.axbType },
+      );
+    }
   };
 
   if (loading) {
@@ -257,7 +360,7 @@ export function NodeDetailContent({
                 Edit
               </button>
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => setDeleteStep('choose')}
                 className="px-3 py-1.5 bg-red-600/20 text-red-400 rounded-lg text-xs hover:bg-red-600/30 transition-colors"
               >
                 Delete
@@ -331,6 +434,8 @@ export function NodeDetailContent({
             axbTypes={outAxbTypes}
             canWrite={canWrite}
             onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })}
+            onBulkDelete={(req) => setBulkDeleteRequest(req)}
+            nodeUid={node.aUid}
             reloadKey={edgeReloadKey}
             viewRegistry={viewRegistry}
             config={config}
@@ -381,7 +486,9 @@ export function NodeDetailContent({
             axbTypes={inAxbTypes}
             inverseLabelMap={inverseLabelMap}
             canWrite={canWrite}
-            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })}
+            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid, inverseLabel: inverseLabelMap[e.axbType] })}
+            onBulkDelete={(req) => setBulkDeleteRequest(req)}
+            nodeUid={node.aUid}
             reloadKey={edgeReloadKey}
             viewRegistry={viewRegistry}
             config={config}
@@ -404,25 +511,138 @@ export function NodeDetailContent({
         </section>
       )}
 
-      {/* Delete node dialog */}
-      {showDeleteConfirm && (
-        <ConfirmDialog
-          title="Delete Node"
-          message={`Are you sure you want to delete node "${node.aUid}" (${node.aType})? This cannot be undone.`}
-          onConfirm={handleDelete}
-          onCancel={() => setShowDeleteConfirm(false)}
-          loading={deleteNodeMutation.isPending}
-        />
+      {/* Delete node — Step 1: Choose what to delete */}
+      {deleteStep === 'choose' && createPortal(
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setDeleteStep(null)}>
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-2">Delete Node</h3>
+            <p className="text-sm text-slate-400 mb-2">
+              How do you want to delete <span className="font-mono text-slate-300">"{node.aUid}"</span> ({node.aType})?
+            </p>
+            {totalEdgeCount > 0 && (
+              <p className="text-xs text-amber-400/80 mb-4">
+                This node has {totalEdgeCount}+ connected edge{totalEdgeCount !== 1 ? 's' : ''}.
+              </p>
+            )}
+            <div className="flex flex-col gap-2 mt-4">
+              <button
+                onClick={() => { setDeleteConfirmInput(''); setDeleteStep('confirm-cascade'); }}
+                className="w-full px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors flex items-center justify-center gap-2"
+              >
+                Delete node + <span className="font-bold uppercase">ALL</span> edges
+              </button>
+              <button
+                onClick={() => { setDeleteConfirmInput(''); setDeleteStep('confirm-node-only'); }}
+                className="w-full px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
+              >
+                Delete node only
+              </button>
+              <button
+                onClick={() => setDeleteStep(null)}
+                className="w-full px-4 py-2 text-sm text-slate-500 hover:text-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Delete node — Step 2: Type to confirm */}
+      {(deleteStep === 'confirm-cascade' || deleteStep === 'confirm-node-only') && createPortal(
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => { setDeleteStep(null); setDeleteConfirmInput(''); }}>
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold mb-2">
+              {deleteStep === 'confirm-cascade' ? (
+                <>Confirm: Delete node + <span className="text-red-400 uppercase">ALL</span> edges</>
+              ) : (
+                'Confirm: Delete node only'
+              )}
+            </h3>
+            <p className="text-sm text-slate-400 mb-4">
+              {deleteStep === 'confirm-cascade'
+                ? <>This will permanently delete the node and <span className="text-red-400 font-semibold uppercase">ALL</span> connected edges.</>
+                : 'This will delete only the node record. Connected edges will remain.'}
+            </p>
+            <div className="mb-4">
+              <p className="text-xs text-slate-500 mb-2">
+                Type <span className="font-mono text-slate-300">{node.aUid}</span> to confirm:
+              </p>
+              <input
+                type="text"
+                value={deleteConfirmInput}
+                onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-red-500/50 placeholder:text-slate-600"
+                placeholder={node.aUid}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && deleteConfirmInput === node.aUid) {
+                    deleteStep === 'confirm-cascade' ? handleDeleteCascade() : handleDelete();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setDeleteStep('choose'); setDeleteConfirmInput(''); }}
+                disabled={deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={deleteStep === 'confirm-cascade' ? handleDeleteCascade : handleDelete}
+                disabled={deleteConfirmInput !== node.aUid || deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {(deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending) && (
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                )}
+                {deleteStep === 'confirm-cascade' ? 'Delete' : 'Delete node only'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {/* Delete edge dialog */}
       {deletingEdge && (
         <ConfirmDialog
           title="Delete Edge"
-          message={`Delete edge ${deletingEdge.aUid} —[${deletingEdge.axbType}]→ ${deletingEdge.bUid}?`}
+          message={`Delete edge ${deletingEdge.aUid} —[${edgeTypeLabel(deletingEdge.axbType, deletingEdge.inverseLabel)}]→ ${deletingEdge.bUid}?`}
+          requireConfirmText={deletingEdge.axbType}
           onConfirm={handleDeleteEdge}
           onCancel={() => setDeletingEdge(null)}
           loading={deleteEdgeMutation.isPending}
+        />
+      )}
+
+      {/* Bulk delete edge confirmation dialog */}
+      {bulkDeleteRequest && (
+        <ConfirmDialog
+          title={bulkDeleteRequest.mode === 'visible'
+            ? `Delete ${bulkDeleteRequest.edges.length} Edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''}`
+            : bulkDeleteRequest.mode === 'filtered'
+              ? 'Delete Filtered Edges'
+              : <>Delete <span className="text-red-400 uppercase font-bold">ALL</span> Edges</>}
+          message={bulkDeleteRequest.mode === 'visible'
+            ? `Delete the ${bulkDeleteRequest.edges.length} "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''} currently visible on this page?`
+            : bulkDeleteRequest.mode === 'filtered'
+              ? `Delete all "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges ${bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node that match the current filters? This may include edges on other pages.`
+              : <>Delete <span className="text-red-400 font-semibold uppercase">ALL</span> "{edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges {bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node? This cannot be undone.</>}
+          confirmLabel={bulkDeleteRequest.mode === 'visible' ? `Delete ${bulkDeleteRequest.edges.length}` : 'Delete All'}
+          requireConfirmText={bulkDeleteRequest.axbType}
+          onConfirm={handleBulkDeleteEdges}
+          onCancel={() => setBulkDeleteRequest(null)}
+          loading={bulkDeleteEdgesMutation.isPending || deleteEdgesBatchMutation.isPending}
         />
       )}
     </div>
@@ -438,6 +658,8 @@ function PaginatedEdgeSection({
   inverseLabelMap = {},
   canWrite,
   onDeleteEdge,
+  onBulkDelete,
+  nodeUid,
   reloadKey,
   viewRegistry,
   config,
@@ -450,6 +672,8 @@ function PaginatedEdgeSection({
   inverseLabelMap?: Record<string, string>;
   canWrite: boolean;
   onDeleteEdge: (edge: GraphRecord) => void;
+  onBulkDelete?: (req: BulkDeleteRequest) => void;
+  nodeUid?: string;
   reloadKey: number;
   viewRegistry?: ViewRegistryData | null;
   config: AppConfig;
@@ -844,6 +1068,35 @@ function PaginatedEdgeSection({
               inverseLabel={direction === 'in' ? inverseLabelMap[axbType] : undefined}
               canWrite={canWrite}
               onDeleteEdge={onDeleteEdge}
+              onBulkDelete={onBulkDelete && nodeUid ? (mode) => {
+                const inv = direction === 'in' ? inverseLabelMap[axbType] : undefined;
+                if (mode === 'visible') {
+                  onBulkDelete({
+                    mode: 'visible',
+                    axbType,
+                    inverseLabel: inv,
+                    edges: groupEdges.map((e) => ({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })),
+                  });
+                } else if (mode === 'filtered') {
+                  onBulkDelete({
+                    mode: 'filtered',
+                    axbType,
+                    inverseLabel: inv,
+                    direction,
+                    uid: nodeUid,
+                    where: activeWhere,
+                  });
+                } else {
+                  onBulkDelete({
+                    mode: 'all',
+                    axbType,
+                    inverseLabel: inv,
+                    direction,
+                    uid: nodeUid,
+                  });
+                }
+              } : undefined}
+              hasActiveFilters={activeWhere.length > 0}
               expandAll={expandAll}
               resolveAll={resolveAll}
               resolvedNodes={resolvedNodes}
@@ -892,6 +1145,8 @@ function EdgeGroup({
   inverseLabel,
   canWrite,
   onDeleteEdge,
+  onBulkDelete,
+  hasActiveFilters = false,
   expandAll,
   resolveAll,
   resolvedNodes,
@@ -904,12 +1159,15 @@ function EdgeGroup({
   inverseLabel?: string;
   canWrite: boolean;
   onDeleteEdge: (edge: GraphRecord) => void;
+  onBulkDelete?: (mode: 'visible' | 'filtered' | 'all') => void;
+  hasActiveFilters?: boolean;
   expandAll: boolean;
   resolveAll: boolean;
   resolvedNodes: Record<string, GraphRecord | null>;
   viewRegistry?: ViewRegistryData | null;
   config: AppConfig;
 }) {
+  const [showBulkMenu, setShowBulkMenu] = useState(false);
   const [groupEdgeView, setGroupEdgeView] = useState('');
   const [groupNodeView, setGroupNodeView] = useState('');
   const [groupExpand, setGroupExpand] = useState(false);
@@ -1075,6 +1333,52 @@ function EdgeGroup({
                 ))}
               </select>
             </span>
+          )}
+
+          {/* Bulk delete group */}
+          {canWrite && onBulkDelete && (
+            <div className="relative">
+              <button
+                onClick={() => setShowBulkMenu((v) => !v)}
+                className={`p-1 border rounded transition-colors ${
+                  showBulkMenu
+                    ? 'bg-red-600/20 border-red-500/50 text-red-400'
+                    : 'bg-slate-800 border-slate-700 text-slate-600 hover:text-red-400 hover:border-red-500/50'
+                }`}
+                title={`Bulk delete ${edgeTypeLabel(axbType, inverseLabel)} edges`}
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+              {showBulkMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setShowBulkMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-40 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[200px]">
+                    <button
+                      onClick={() => { setShowBulkMenu(false); onBulkDelete('visible'); }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
+                    >
+                      Delete visible ({edges.length})
+                    </button>
+                    {hasActiveFilters && (
+                      <button
+                        onClick={() => { setShowBulkMenu(false); onBulkDelete('filtered'); }}
+                        className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
+                      >
+                        Delete all matching filters
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setShowBulkMenu(false); onBulkDelete('all'); }}
+                      className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-slate-700 transition-colors"
+                    >
+                      Delete <span className="font-bold uppercase">ALL</span> {edgeTypeLabel(axbType, inverseLabel)} edges
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>

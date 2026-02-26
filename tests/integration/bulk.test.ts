@@ -97,6 +97,40 @@ describe('bulk operations', () => {
       const last = progressCalls[progressCalls.length - 1];
       expect(last.completedBatches).toBe(last.totalBatches);
     });
+
+    it('handles mixed edge types in cascade', async () => {
+      await g.putNode('tour', 'tour1', tourData);
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
+      await g.putEdge('tour', 'tour1', 'hasRider', 'rider', 'r1', { seat: 1 });
+      await g.putEdge('tour', 'tour1', 'hasRider', 'rider', 'r2', { seat: 2 });
+
+      const result = await g.removeNodeCascade('tour1');
+
+      expect(result.nodeDeleted).toBe(true);
+      expect(result.edgesDeleted).toBe(3);
+      expect(result.errors).toEqual([]);
+
+      expect(await g.getNode('tour1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasRider', 'r1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasRider', 'r2')).toBeNull();
+    });
+
+    it('deduplicates self-referencing edges', async () => {
+      await g.putNode('task', 'task1', { title: 'root' });
+      // Self-referencing edge: task1 -> task1
+      await g.putEdge('task', 'task1', 'dependsOn', 'task', 'task1', { reason: 'self' });
+
+      const result = await g.removeNodeCascade('task1');
+
+      expect(result.nodeDeleted).toBe(true);
+      // Self-edge appears in both outgoing and incoming but should only be counted once
+      expect(result.edgesDeleted).toBe(1);
+      expect(result.errors).toEqual([]);
+
+      expect(await g.getNode('task1')).toBeNull();
+      expect(await g.getEdge('task1', 'dependsOn', 'task1')).toBeNull();
+    });
   });
 
   describe('bulkRemoveEdges', () => {
@@ -165,6 +199,106 @@ describe('bulk operations', () => {
       expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
       // hasRider edge still there
       expect(await g.getEdge('tour1', 'hasRider', 'r1')).not.toBeNull();
+    });
+
+    it('deletes incoming edges by bUid', async () => {
+      await g.putNode('departure', 'dep1', departureData);
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
+      await g.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', { order: 1 });
+      await g.putEdge('tour', 'tour3', 'hasDeparture', 'departure', 'dep1', { order: 2 });
+
+      const result = await g.bulkRemoveEdges({ bUid: 'dep1', axbType: 'hasDeparture' });
+
+      expect(result.deleted).toBe(3);
+      expect(result.errors).toEqual([]);
+
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour2', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour3', 'hasDeparture', 'dep1')).toBeNull();
+      // Target node untouched
+      expect(await g.getNode('dep1')).not.toBeNull();
+    });
+
+    it('supports where clauses to filter edges by data fields', async () => {
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, status: 'draft' });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1, status: 'published' });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep3', { order: 2, status: 'draft' });
+
+      // Delete only draft edges
+      const result = await g.bulkRemoveEdges({
+        aUid: 'tour1',
+        axbType: 'hasDeparture',
+        where: [{ field: 'status', op: '==', value: 'draft' }],
+      });
+
+      expect(result.deleted).toBe(2);
+      expect(result.errors).toEqual([]);
+
+      // Draft edges gone
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep3')).toBeNull();
+      // Published edge still there
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep2')).not.toBeNull();
+    });
+
+    it('where clause with no matches deletes nothing', async () => {
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, status: 'published' });
+
+      const result = await g.bulkRemoveEdges({
+        aUid: 'tour1',
+        axbType: 'hasDeparture',
+        where: [{ field: 'status', op: '==', value: 'archived' }],
+      });
+
+      expect(result.deleted).toBe(0);
+      expect(result.batches).toBe(0);
+      // Original edge untouched
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).not.toBeNull();
+    });
+  });
+
+  describe('batch removeEdge (deleteEdgesBatch pattern)', () => {
+    it('deletes specific edges atomically via batch', async () => {
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1 });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep3', { order: 2 });
+
+      // Delete only dep1 and dep3, leave dep2
+      const batch = g.batch();
+      await batch.removeEdge('tour1', 'hasDeparture', 'dep1');
+      await batch.removeEdge('tour1', 'hasDeparture', 'dep3');
+      await batch.commit();
+
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep3')).toBeNull();
+      // dep2 still exists
+      const dep2 = await g.getEdge('tour1', 'hasDeparture', 'dep2');
+      expect(dep2).not.toBeNull();
+      expect(dep2!.data.order).toBe(1);
+    });
+
+    it('batch removeEdge with edges of different types', async () => {
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
+      await g.putEdge('tour', 'tour1', 'hasRider', 'rider', 'r1', { seat: 1 });
+      await g.putEdge('rider', 'r1', 'bookedFor', 'tour', 'tour1', { confirmedAt: '2025-01-01' });
+
+      const batch = g.batch();
+      await batch.removeEdge('tour1', 'hasDeparture', 'dep1');
+      await batch.removeEdge('tour1', 'hasRider', 'r1');
+      await batch.removeEdge('r1', 'bookedFor', 'tour1');
+      await batch.commit();
+
+      expect(await g.getEdge('tour1', 'hasDeparture', 'dep1')).toBeNull();
+      expect(await g.getEdge('tour1', 'hasRider', 'r1')).toBeNull();
+      expect(await g.getEdge('r1', 'bookedFor', 'tour1')).toBeNull();
+    });
+
+    it('batch removeEdge is idempotent for nonexistent edges', async () => {
+      const batch = g.batch();
+      await batch.removeEdge('nope1', 'hasX', 'nope2');
+      await batch.removeEdge('nope3', 'hasY', 'nope4');
+      // Should not throw
+      await batch.commit();
     });
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { bulkDeleteDocIds, bulkRemoveEdges, removeNodeCascade } from '../../src/bulk.js';
+import { computeEdgeDocId, computeNodeDocId } from '../../src/docid.js';
 import type { GraphReader, StoredGraphRecord, FindEdgesParams, BulkProgress } from '../../src/types.js';
 
 function makeRecord(overrides: Partial<StoredGraphRecord>): StoredGraphRecord {
@@ -165,6 +166,24 @@ describe('bulkDeleteDocIds', () => {
     expect(result.errors[0].batchIndex).toBe(0);
     expect(result.errors[0].operationCount).toBe(2);
   });
+
+  it('reports progress even for failed batches', async () => {
+    const { db } = createMockFirestore(async () => {
+      throw new Error('fail');
+    });
+    const progressCalls: BulkProgress[] = [];
+
+    await bulkDeleteDocIds(db, 'col', ['a', 'b'], {
+      batchSize: 1,
+      maxRetries: 0,
+      onProgress: (p) => progressCalls.push({ ...p }),
+    });
+
+    // Both batches failed, but onProgress still called for each
+    expect(progressCalls).toHaveLength(2);
+    expect(progressCalls[0]).toEqual({ completedBatches: 0, totalBatches: 2, deletedSoFar: 0 });
+    expect(progressCalls[1]).toEqual({ completedBatches: 0, totalBatches: 2, deletedSoFar: 0 });
+  });
 });
 
 describe('bulkRemoveEdges', () => {
@@ -190,6 +209,44 @@ describe('bulkRemoveEdges', () => {
 
     expect(result.deleted).toBe(0);
     expect(result.batches).toBe(0);
+  });
+
+  it('forwards where clauses to findEdges', async () => {
+    const reader = createMockReader(async () => []);
+    const { db } = createMockFirestore();
+
+    const whereClause = [{ field: 'status', op: '==' as const, value: 'draft' }];
+    await bulkRemoveEdges(db, 'col', reader, {
+      aUid: 'n1',
+      axbType: 'hasX',
+      where: whereClause,
+    });
+
+    expect(reader.findEdges).toHaveBeenCalledWith({
+      aUid: 'n1',
+      axbType: 'hasX',
+      where: whereClause,
+    });
+  });
+
+  it('forwards bUid param for incoming edge queries', async () => {
+    const reader = createMockReader(async () => []);
+    const { db } = createMockFirestore();
+
+    await bulkRemoveEdges(db, 'col', reader, { bUid: 'target1', axbType: 'relType' });
+
+    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'target1', axbType: 'relType' });
+  });
+
+  it('computes correct sharded doc IDs for deletion', async () => {
+    const edge = makeRecord({ aUid: 'src1', axbType: 'connects', bUid: 'dst1' });
+    const reader = createMockReader(async () => [edge]);
+    const { db, deletedDocIds } = createMockFirestore();
+
+    await bulkRemoveEdges(db, 'col', reader, { aUid: 'src1', axbType: 'connects' });
+
+    const expectedDocId = computeEdgeDocId('src1', 'connects', 'dst1');
+    expect(deletedDocIds).toEqual([expectedDocId]);
   });
 });
 
@@ -282,5 +339,59 @@ describe('removeNodeCascade', () => {
     expect(result.nodeDeleted).toBe(false);
     expect(result.edgesDeleted).toBe(2); // first batch succeeded
     expect(result.errors).toHaveLength(1);
+  });
+
+  it('places node doc ID last to ensure edges are deleted first', async () => {
+    const edges = [
+      makeRecord({ aUid: 'n1', axbType: 'hasA', bUid: 'a1' }),
+      makeRecord({ aUid: 'n1', axbType: 'hasB', bUid: 'b1' }),
+    ];
+    const reader = createMockReader(async (params) => {
+      if (params.aUid) return edges;
+      return [];
+    });
+    const { db, deletedDocIds } = createMockFirestore();
+
+    await removeNodeCascade(db, 'col', reader, 'n1');
+
+    // Node doc ID should be the last one deleted
+    const nodeDocId = computeNodeDocId('n1');
+    expect(deletedDocIds[deletedDocIds.length - 1]).toBe(nodeDocId);
+    // Edge doc IDs should come before the node
+    expect(deletedDocIds.slice(0, -1)).toEqual([
+      computeEdgeDocId('n1', 'hasA', 'a1'),
+      computeEdgeDocId('n1', 'hasB', 'b1'),
+    ]);
+  });
+
+  it('handles mixed incoming and outgoing edge types', async () => {
+    const reader = createMockReader(async (params) => {
+      if (params.aUid === 'n1') {
+        return [
+          makeRecord({ aUid: 'n1', axbType: 'hasChild', bUid: 'c1' }),
+          makeRecord({ aUid: 'n1', axbType: 'owns', bUid: 'x1' }),
+        ];
+      }
+      if (params.bUid === 'n1') {
+        return [
+          makeRecord({ aUid: 'p1', axbType: 'parentOf', bUid: 'n1' }),
+        ];
+      }
+      return [];
+    });
+    const { db, deletedDocIds } = createMockFirestore();
+
+    const result = await removeNodeCascade(db, 'col', reader, 'n1');
+
+    expect(result.edgesDeleted).toBe(3);
+    expect(result.nodeDeleted).toBe(true);
+    // 3 edges + 1 node = 4 total
+    expect(deletedDocIds).toHaveLength(4);
+
+    // Verify each edge doc ID is correctly computed
+    expect(deletedDocIds).toContain(computeEdgeDocId('n1', 'hasChild', 'c1'));
+    expect(deletedDocIds).toContain(computeEdgeDocId('n1', 'owns', 'x1'));
+    expect(deletedDocIds).toContain(computeEdgeDocId('p1', 'parentOf', 'n1'));
+    expect(deletedDocIds).toContain(computeNodeDocId('n1'));
   });
 });

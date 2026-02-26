@@ -556,6 +556,23 @@ export const appRouter = t.router({
       return { success: true as const };
     }),
 
+  // --- Write: Delete Node + Cascade (all edges) ---
+  deleteNodeCascade: writeProcedure
+    .input(z.object({ uid: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await ctx.graphClient.removeNodeCascade(input.uid);
+      return {
+        success: result.nodeDeleted,
+        edgesDeleted: result.edgesDeleted,
+        batches: result.batches,
+        errors: result.errors.map((e) => ({
+          batchIndex: e.batchIndex,
+          message: e.error.message,
+          operationCount: e.operationCount,
+        })),
+      };
+    }),
+
   // --- Write: Create Edge ---
   createEdge: writeProcedure
     .input(z.object({
@@ -646,6 +663,57 @@ export const appRouter = t.router({
     .mutation(async ({ ctx, input }) => {
       await ctx.graphClient.removeEdge(input.aUid, input.axbType, input.bUid);
       return { success: true as const };
+    }),
+
+  // --- Write: Bulk Delete Edges (by query) ---
+  bulkDeleteEdges: writeProcedure
+    .input(z.object({
+      aUid: z.string().optional(),
+      axbType: z.string().optional(),
+      bUid: z.string().optional(),
+      aType: z.string().optional(),
+      bType: z.string().optional(),
+      where: z.array(z.object({
+        field: z.string(),
+        op: z.string(),
+        value: z.union([z.string(), z.number(), z.boolean()]),
+      })).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { where: whereClauses, ...params } = input;
+      const findParams: Record<string, unknown> = { ...params };
+      if (whereClauses && whereClauses.length > 0) {
+        findParams.where = whereClauses;
+      }
+      const result = await ctx.graphClient.bulkRemoveEdges(findParams as any);
+      return {
+        success: true as const,
+        deleted: result.deleted,
+        batches: result.batches,
+        errors: result.errors.map((e) => ({
+          batchIndex: e.batchIndex,
+          message: e.error.message,
+          operationCount: e.operationCount,
+        })),
+      };
+    }),
+
+  // --- Write: Delete specific edges by ID ---
+  deleteEdgesBatch: writeProcedure
+    .input(z.object({
+      edges: z.array(z.object({
+        aUid: z.string(),
+        axbType: z.string(),
+        bUid: z.string(),
+      })).min(1).max(500),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const batch = ctx.graphClient.batch();
+      for (const e of input.edges) {
+        await batch.removeEdge(e.aUid, e.axbType, e.bUid);
+      }
+      await batch.commit();
+      return { success: true as const, deleted: input.edges.length };
     }),
 });
 
