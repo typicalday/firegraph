@@ -238,7 +238,9 @@ function NearbyItem({
   );
 
   const handleMouseEnter = useCallback(() => {
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
     peekTimerRef.current = setTimeout(() => {
+      peekTimerRef.current = null;
       onPeek(frame);
     }, 150);
   }, [frame, onPeek]);

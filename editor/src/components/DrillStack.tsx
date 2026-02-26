@@ -150,30 +150,35 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [peek, activeIndex, activeLaneId, ctxPopTo]);
 
-  // Enter animation: detect new uids appearing
-  useEffect(() => {
-    const currentUids = new Set(uniqueUids);
-    for (const uid of currentUids) {
-      if (!prevUidSetRef.current.has(uid)) {
-        enteringUidRef.current = uid;
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            enteringUidRef.current = null;
-            setTick((t) => t + 1);
-          });
-        });
-        break; // animate one at a time
-      }
-    }
-    prevUidSetRef.current = currentUids;
-  }, [uniqueUids]);
-
   // Derive the preview UID (last frame of the preview lane, if any)
   const previewUid = useMemo(() => {
     if (!previewLaneId) return undefined;
     const lane = lanes.find((l) => l.id === previewLaneId);
     return lane?.frames[lane.frames.length - 1]?.uid;
   }, [previewLaneId, lanes]);
+
+  // Enter animation: detect new uids appearing.
+  // Skip animation for preview frames — they should appear instantly.
+  useEffect(() => {
+    const currentUids = new Set(uniqueUids);
+    for (const uid of currentUids) {
+      if (!prevUidSetRef.current.has(uid)) {
+        // Don't animate preview frames — a re-render between the ref being
+        // set and the double-rAF clearing it would flash the frame to opacity 0.
+        if (uid !== previewUid) {
+          enteringUidRef.current = uid;
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              enteringUidRef.current = null;
+              setTick((t) => t + 1);
+            });
+          });
+        }
+        break; // animate one at a time
+      }
+    }
+    prevUidSetRef.current = currentUids;
+  }, [uniqueUids, previewUid]);
 
   // Compute the css class for each uid
   const uidClass = useCallback(
