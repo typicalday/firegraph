@@ -3,7 +3,9 @@ import { useState, useEffect } from 'react';
 import type { Schema, AppConfig, ViewRegistryData } from '../types';
 import { getTypeColor } from '../utils';
 import { useFocusMaybe } from './focus-context';
+import { useChatMaybe } from './chat-context';
 import NearbyPanel from './NearbyPanel';
+import ChatPanel from './ChatPanel';
 
 interface Props {
   schema: Schema;
@@ -11,7 +13,7 @@ interface Props {
   viewRegistry?: ViewRegistryData | null;
 }
 
-type SidebarTab = 'navigate' | 'nearby';
+type SidebarTab = 'navigate' | 'nearby' | 'chat';
 
 export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const location = useLocation();
@@ -19,6 +21,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('navigate');
   const focus = useFocusMaybe();
+  const chat = useChatMaybe();
 
   // Auto-switch to Nearby tab when a node gains focus
   useEffect(() => {
@@ -87,10 +90,24 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
           }`}
         >
           Nearby
-          {focus?.focused && activeTab !== 'nearby' && (
-            <span className="absolute top-1.5 right-2 w-1.5 h-1.5 rounded-full bg-indigo-500" />
-          )}
         </button>
+        {chat?.abriUrl && (
+          <button
+            onClick={() => setActiveTab('chat')}
+            className={`flex-1 px-3 py-2 text-[11px] font-medium transition-colors relative ${
+              activeTab === 'chat'
+                ? 'text-slate-200 border-b-2 border-indigo-500'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            Chat
+            <span
+              className={`absolute top-1.5 right-2 w-1.5 h-1.5 rounded-full ${
+                chat.status === 'connected' ? 'bg-emerald-500' : 'bg-slate-600'
+              }`}
+            />
+          </button>
+        )}
       </div>
 
       {/* Tab content */}
@@ -206,6 +223,10 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
             </div>
           </nav>
         </>
+      ) : activeTab === 'chat' ? (
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <ChatPanel schema={schema} />
+        </div>
       ) : (
         <div className="flex-1 overflow-auto">
           <NearbyPanel schema={schema} />
