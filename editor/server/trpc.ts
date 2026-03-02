@@ -25,6 +25,7 @@ export interface TRPCContext {
   projectId: string | undefined;
   viewDefaults: LoadedConfig['viewDefaults'] | null;
   schemaViewWarnings: SchemaViewWarning[];
+  abriUrl: string | null;
 }
 
 export function createContext(deps: TRPCContext) {
@@ -74,6 +75,7 @@ export const appRouter = t.router({
     collection: ctx.collection,
     readonly: ctx.readonly,
     viewDefaults: ctx.viewDefaults ?? null,
+    abriUrl: ctx.abriUrl,
   })),
 
   // --- Schema ---

@@ -34,6 +34,7 @@ interface CliArgs {
   port?: number;
   emulator?: string;
   readonly: boolean;
+  abri?: string;
 }
 
 function parseArgs(): CliArgs {
@@ -45,6 +46,7 @@ function parseArgs(): CliArgs {
   let port: number | undefined;
   let emulator: string | undefined;
   let readonly = false;
+  let abri: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -62,6 +64,9 @@ function parseArgs(): CliArgs {
     else if (arg === '--emulator' && args[i + 1] && !args[i + 1].startsWith('--')) emulator = args[++i];
     else if (arg === '--emulator') emulator = '127.0.0.1:8080';
     else if (arg === '--readonly') readonly = true;
+    else if (arg.startsWith('--abri=')) abri = arg.split('=')[1];
+    else if (arg === '--abri' && args[i + 1] && !args[i + 1].startsWith('--')) abri = args[++i];
+    else if (arg === '--abri') abri = 'http://localhost:3885';
   }
 
   // Env var fallbacks (applied before config merge — CLI + env override config file)
@@ -69,8 +74,9 @@ function parseArgs(): CliArgs {
   emulator = emulator || process.env.FIRESTORE_EMULATOR_HOST;
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
+  abri = abri || process.env.ABRI_URL || undefined;
 
-  return { configPath, entitiesPath, project, collection, port, emulator, readonly };
+  return { configPath, entitiesPath, project, collection, port, emulator, readonly, abri };
 }
 
 const cliArgs = parseArgs();
@@ -84,6 +90,7 @@ let resolvedEntitiesPath: string | undefined;
 let resolvedReadonly: boolean;
 let resolvedPort: number;
 let resolvedConfigPath: string | undefined;
+let resolvedAbri: string | null = null;
 let viewDefaultsData: LoadedConfig['viewDefaults'] | null = null;
 
 // --- State ---
@@ -111,6 +118,7 @@ async function init() {
   resolvedEmulator = cliArgs.emulator ?? fileConfig.emulator;
   resolvedEntitiesPath = cliArgs.entitiesPath ?? fileConfig.entities;
   resolvedReadonly = cliArgs.readonly || (fileConfig.editor?.readonly ?? false);
+  resolvedAbri = cliArgs.abri ?? fileConfig.abri ?? null;
 
   const isProduction = process.env.NODE_ENV === 'production';
   resolvedPort = cliArgs.port ?? fileConfig.editor?.port ?? (isProduction ? 3883 : 3884);
@@ -259,6 +267,7 @@ async function start() {
         projectId: resolvedProject,
         viewDefaults: viewDefaultsData,
         schemaViewWarnings,
+        abriUrl: resolvedAbri,
       }),
     }),
   );
@@ -293,6 +302,9 @@ async function start() {
       if (nodeDefaults + edgeDefaults > 0) {
         console.log(`  Defaults:   ${nodeDefaults} node types, ${edgeDefaults} edge types`);
       }
+    }
+    if (resolvedAbri) {
+      console.log(`  Abri:       ${resolvedAbri}`);
     }
     console.log(`  Mode:       ${resolvedReadonly ? 'Read-Only' : 'Read/Write'}`);
     console.log(`  Server:     http://localhost:${resolvedPort}`);

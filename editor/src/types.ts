@@ -101,6 +101,7 @@ export interface AppConfig {
   collection: string;
   readonly: boolean;
   viewDefaults?: ViewDefaultsConfig | null;
+  abriUrl?: string | null;
 }
 
 // --- View resolution types (mirrors src/config.ts for client use) ---

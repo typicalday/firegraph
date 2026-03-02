@@ -56,6 +56,8 @@ export interface FiregraphConfig {
   collection?: string;
   /** Firestore emulator address (e.g. '127.0.0.1:8080'). */
   emulator?: string;
+  /** Abri server URL for AI chat integration (default: http://localhost:3885). */
+  abri?: string;
 
   /** Editor-specific settings. */
   editor?: {
