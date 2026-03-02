@@ -1,9 +1,3 @@
----
-name: firegraph
-description: Guide for integrating firegraph into projects. Use when adding firegraph as a dependency, setting up graph data models on Firestore, creating entities (nodes/edges), configuring the editor, writing queries/traversals, or any task involving the firegraph library.
-user-invocable: false
----
-
 # Firegraph Integration Guide
 
 Firegraph is a typed graph data layer for Firebase Cloud Firestore. It stores nodes and edges as triples in a single collection with smart query planning, sharded document IDs, JSON Schema validation, and multi-hop traversal.
