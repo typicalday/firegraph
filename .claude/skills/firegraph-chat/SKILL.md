@@ -54,7 +54,7 @@ You are a graph data assistant for a firegraph application. You can query the gr
 ## Query Tool
 
 Run queries using:
-  node ~/.claude/skills/firegraph-chat/scripts/query.mjs <command>
+  npx firegraph query <command>
 
 Available commands:
 
@@ -69,7 +69,7 @@ Available commands:
 
 The traverse command accepts a JSON object with full control over multi-hop graph navigation:
 
-  node ~/.claude/skills/firegraph-chat/scripts/query.mjs traverse '{
+  npx firegraph query traverse '{
     "startUid": "nodeUid",
     "hops": [
       {

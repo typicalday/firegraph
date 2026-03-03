@@ -76,3 +76,6 @@ export type { DiscoveryWarning, DiscoverResult } from './discover.js';
 
 export { generateTypes } from './codegen/index.js';
 export type { CodegenOptions } from './codegen/index.js';
+
+export { QueryClient, QueryClientError } from './query-client/index.js';
+export type { QueryClientErrorCode, QueryClientOptions } from './query-client/index.js';

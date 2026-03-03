@@ -42,6 +42,14 @@ if (subcommand === 'editor') {
   }
 
   await import(editorEntry);
+} else if (subcommand === 'query') {
+  const queryEntry = path.join(__dirname, '..', 'dist', 'query-client', 'index.js');
+  if (!fs.existsSync(queryEntry)) {
+    console.error('Query client not built. Run "npm run build" first.');
+    process.exit(1);
+  }
+  const { runQueryCli } = await import(queryEntry);
+  await runQueryCli(process.argv.slice(3));
 } else if (subcommand === 'codegen') {
   const args = parseArgs(process.argv.slice(3));
   const entitiesDir = path.resolve(args.entities || './entities');
@@ -84,6 +92,7 @@ if (subcommand === 'editor') {
   console.log('');
   console.log('  Commands:');
   console.log('    editor    Launch the Firegraph Editor UI');
+  console.log('    query     Query the graph via the editor API');
   console.log('    codegen   Generate TypeScript types from entity schemas');
   console.log('');
   console.log('  Editor options:');
@@ -94,6 +103,9 @@ if (subcommand === 'editor') {
   console.log('    --port <number>        Server port (default: 3883)');
   console.log('    --emulator [host:port] Use Firestore emulator');
   console.log('    --readonly             Force read-only mode');
+  console.log('');
+  console.log('  Query options:');
+  console.log('    Run "firegraph query --help" for query-specific help');
   console.log('');
   console.log('  Codegen options:');
   console.log('    --entities <path>      Path to entities directory (default: ./entities)');

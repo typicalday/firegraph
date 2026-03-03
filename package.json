@@ -36,6 +36,16 @@
         "types": "./dist/svelte.d.cts",
         "default": "./dist/svelte.cjs"
       }
+    },
+    "./query-client": {
+      "import": {
+        "types": "./dist/query-client/index.d.ts",
+        "default": "./dist/query-client/index.js"
+      },
+      "require": {
+        "types": "./dist/query-client/index.d.cts",
+        "default": "./dist/query-client/index.cjs"
+      }
     }
   },
   "bin": {
