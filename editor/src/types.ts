@@ -101,7 +101,8 @@ export interface AppConfig {
   collection: string;
   readonly: boolean;
   viewDefaults?: ViewDefaultsConfig | null;
-  abriUrl?: string | null;
+  chatEnabled?: boolean;
+  chatModel?: string;
 }
 
 // --- View resolution types (mirrors src/config.ts for client use) ---

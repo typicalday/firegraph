@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ChatPanel({ schema }: Props) {
-  const { messages, status, isStreaming, sendMessage, clearHistory, abriUrl } = useChat();
+  const { messages, status, isStreaming, sendMessage, clearHistory, chatEnabled } = useChat();
   const focus = useFocusMaybe();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -45,13 +45,13 @@ export default function ChatPanel({ schema }: Props) {
     }
   };
 
-  if (!abriUrl) {
+  if (!chatEnabled) {
     return (
       <div className="flex-1 flex items-center justify-center p-4">
         <div className="text-center">
-          <p className="text-slate-500 text-xs mb-2">AI chat not configured</p>
+          <p className="text-slate-500 text-xs mb-2">AI chat not available</p>
           <p className="text-slate-600 text-[10px]">
-            Add <code className="text-slate-400">abri: 'http://localhost:3885'</code> to your firegraph.config.ts or use <code className="text-slate-400">--abri</code>
+            Install the <code className="text-slate-400">claude</code> CLI to enable chat, or set <code className="text-slate-400">chat: false</code> in config to hide this tab.
           </p>
         </div>
       </div>
@@ -94,7 +94,7 @@ export default function ChatPanel({ schema }: Props) {
               <p>Ask a question about your graph data.</p>
             ) : (
               <p>
-                Start an abri server to enable AI chat.
+                Waiting for chat service to connect...
               </p>
             )}
           </div>

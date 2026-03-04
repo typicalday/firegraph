@@ -91,7 +91,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
         >
           Nearby
         </button>
-        {chat?.abriUrl && (
+        {chat?.chatEnabled && (
           <button
             onClick={() => setActiveTab('chat')}
             className={`flex-1 px-3 py-2 text-[11px] font-medium transition-colors relative ${

@@ -151,11 +151,11 @@ describe('QueryClient', () => {
 
       expect(result.node).toEqual({ type: 'task', uid: 'task1', data: { title: 'Test' } });
       expect(result.outEdges).toEqual([
-        { from: 'task:task1', relation: 'hasStep', to: 'step:step1', data: { order: 1 } },
+        { fromType: 'task', fromUid: 'task1', relation: 'hasStep', toType: 'step', toUid: 'step1', data: { order: 1 } },
       ]);
       // Edge with empty data should omit data field
       expect(result.inEdges).toEqual([
-        { from: 'user:u1', relation: 'assigned', to: 'task:task1' },
+        { fromType: 'user', fromUid: 'u1', relation: 'assigned', toType: 'task', toUid: 'task1' },
       ]);
       expect(result.inEdges[0]).not.toHaveProperty('data');
     });
@@ -275,8 +275,8 @@ describe('QueryClient', () => {
       const result = await client.getEdges({ aUid: 'u1' });
 
       expect(result.edges).toEqual([
-        { from: 'user:u1', relation: 'hasTask', to: 'task:t1', data: { role: 'owner' } },
-        { from: 'user:u1', relation: 'hasTask', to: 'task:t2' },
+        { fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't1', data: { role: 'owner' } },
+        { fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't2' },
       ]);
       expect(result.edges[1]).not.toHaveProperty('data');
       expect(result.hasMore).toBe(false);
@@ -434,11 +434,11 @@ describe('QueryClient', () => {
       expect(result.hops[0].depth).toBe(1);
       expect(result.hops[0].edgeCount).toBe(2);
       expect(result.hops[0].edges[0]).toEqual({
-        from: 'user:u1', relation: 'hasTask', to: 'task:t1', data: { priority: 'high' },
+        fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't1', data: { priority: 'high' },
       });
       // Empty data omitted
       expect(result.hops[0].edges[1]).toEqual({
-        from: 'user:u1', relation: 'hasTask', to: 'task:t2',
+        fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't2',
       });
       expect(result.hops[0].edges[1]).not.toHaveProperty('data');
       expect(result.hops[0].truncated).toBe(false);

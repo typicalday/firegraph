@@ -71,7 +71,7 @@ export default function App() {
 
   return (
     <FocusProvider>
-      <ChatProvider abriUrl={config?.abriUrl ?? null}>
+      <ChatProvider chatEnabled={config?.chatEnabled ?? false}>
         <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
           <Routes>
             <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />

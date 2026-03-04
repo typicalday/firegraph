@@ -25,7 +25,8 @@ export interface TRPCContext {
   projectId: string | undefined;
   viewDefaults: LoadedConfig['viewDefaults'] | null;
   schemaViewWarnings: SchemaViewWarning[];
-  abriUrl: string | null;
+  chatEnabled: boolean;
+  chatModel: string;
 }
 
 export function createContext(deps: TRPCContext) {
@@ -66,6 +67,28 @@ function serializeRecord(doc: DocumentData): Record<string, unknown> {
   return result;
 }
 
+// --- UID helpers ---
+
+/**
+ * Strip an optional "type:" prefix from a UID.
+ * Traverse results and summarizeEdge format endpoints as "type:uid"
+ * (e.g. "job:abc123"), but Firestore document IDs for nodes are just
+ * the raw UID.  This lets callers pass either form.
+ *
+ * Heuristic: only strip when the part before the first colon looks
+ * like a short alphabetic type name (letters only, ≤30 chars).
+ * This avoids mangling UIDs that legitimately contain colons.
+ */
+function stripTypePrefix(raw: string): string {
+  const idx = raw.indexOf(':');
+  if (idx < 1) return raw;
+  const prefix = raw.slice(0, idx);
+  if (prefix.length <= 30 && /^[a-zA-Z]+$/.test(prefix)) {
+    return raw.slice(idx + 1);
+  }
+  return raw;
+}
+
 // --- Router ---
 
 export const appRouter = t.router({
@@ -75,7 +98,8 @@ export const appRouter = t.router({
     collection: ctx.collection,
     readonly: ctx.readonly,
     viewDefaults: ctx.viewDefaults ?? null,
-    abriUrl: ctx.abriUrl,
+    chatEnabled: ctx.chatEnabled,
+    chatModel: ctx.chatModel,
   })),
 
   // --- Schema ---
@@ -204,15 +228,20 @@ export const appRouter = t.router({
       const col = ctx.db.collection(ctx.collection);
       const edgeLimit = 50;
 
-      const nodeDoc = await col.doc(input.uid).get();
+      // Strip optional "type:" prefix (e.g. "job:abc123" → "abc123").
+      // Traverse results format endpoints as "type:uid", so callers
+      // may pass the qualified form directly.
+      const uid = stripTypePrefix(input.uid);
+
+      const nodeDoc = await col.doc(uid).get();
       const node = nodeDoc.exists ? serializeRecord(nodeDoc.data()!) : null;
 
-      const outSnapshot = await col.where('aUid', '==', input.uid).limit(edgeLimit + 1).get();
+      const outSnapshot = await col.where('aUid', '==', uid).limit(edgeLimit + 1).get();
       const outEdges = outSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
         .filter((e) => e.axbType !== NODE_RELATION);
 
-      const inSnapshot = await col.where('bUid', '==', input.uid).limit(edgeLimit + 1).get();
+      const inSnapshot = await col.where('bUid', '==', uid).limit(edgeLimit + 1).get();
       const inEdges = inSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
         .filter((e) => e.axbType !== NODE_RELATION);
@@ -225,7 +254,8 @@ export const appRouter = t.router({
     .input(z.object({ uids: z.array(z.string()).min(1).max(100) }))
     .query(async ({ ctx, input }) => {
       const col = ctx.db.collection(ctx.collection);
-      const refs = input.uids.map((uid) => col.doc(uid));
+      const cleanUids = input.uids.map(stripTypePrefix);
+      const refs = cleanUids.map((uid) => col.doc(uid));
       const snapshots = await ctx.db.getAll(...refs);
 
       const nodes: Record<string, Record<string, unknown> | null> = {};
@@ -455,14 +485,15 @@ export const appRouter = t.router({
       if (!q) return { results: [] as Record<string, unknown>[] };
 
       const col = ctx.db.collection(ctx.collection);
-      const nodeDoc = await col.doc(q).get();
+      const strippedQ = stripTypePrefix(q);
+      const nodeDoc = await col.doc(strippedQ).get();
       const results: Record<string, unknown>[] = [];
 
       if (nodeDoc.exists) {
         results.push({ ...serializeRecord(nodeDoc.data()!), _matchType: 'exact' });
       }
 
-      const aUidSnapshot = await col.where('aUid', '==', q).limit(input.limit).get();
+      const aUidSnapshot = await col.where('aUid', '==', strippedQ).limit(input.limit).get();
       for (const doc of aUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
         if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
@@ -470,7 +501,7 @@ export const appRouter = t.router({
         }
       }
 
-      const bUidSnapshot = await col.where('bUid', '==', q).limit(input.limit).get();
+      const bUidSnapshot = await col.where('bUid', '==', strippedQ).limit(input.limit).get();
       for (const doc of bUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
         if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
@@ -485,7 +516,7 @@ export const appRouter = t.router({
   checkNode: publicProcedure
     .input(z.object({ uid: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      const doc = await ctx.db.collection(ctx.collection).doc(input.uid).get();
+      const doc = await ctx.db.collection(ctx.collection).doc(stripTypePrefix(input.uid)).get();
       if (!doc.exists) return { exists: false as const, node: null };
       const data = serializeRecord(doc.data()!);
       return {

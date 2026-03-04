@@ -16,6 +16,10 @@ export interface LoadedConfig {
     port?: number;
     readonly?: boolean;
   };
+  chat?: false | {
+    model?: string;
+    maxConcurrency?: number;
+  };
   viewDefaults?: {
     nodes?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
     edges?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;

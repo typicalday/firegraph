@@ -15,9 +15,11 @@ export interface SummarizedRecord {
 }
 
 export interface SummarizedEdge {
-  from: string;
+  fromType: string;
+  fromUid: string;
   relation: string;
-  to: string;
+  toType: string;
+  toUid: string;
   data?: Record<string, unknown>;
 }
 

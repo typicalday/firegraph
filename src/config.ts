@@ -56,8 +56,17 @@ export interface FiregraphConfig {
   collection?: string;
   /** Firestore emulator address (e.g. '127.0.0.1:8080'). */
   emulator?: string;
-  /** Abri server URL for AI chat integration (default: http://localhost:3885). */
-  abri?: string;
+
+  /**
+   * AI chat configuration. Auto-detects `claude` CLI on PATH by default.
+   * Set to `false` to disable chat even if claude is available.
+   */
+  chat?: false | {
+    /** Claude model to use (default: 'sonnet'). */
+    model?: string;
+    /** Maximum concurrent claude processes (default: 2). */
+    maxConcurrency?: number;
+  };
 
   /** Editor-specific settings. */
   editor?: {

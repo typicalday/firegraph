@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { AbriClient } from '../abri-client';
+import { ChatClient } from '../chat-client';
 
 // --- Types ---
 
@@ -19,7 +19,7 @@ interface ChatContextValue {
   isStreaming: boolean;
   sendMessage: (prompt: string, context?: Record<string, unknown>) => Promise<void>;
   clearHistory: () => void;
-  abriUrl: string | null;
+  chatEnabled: boolean;
 }
 
 // --- Context ---
@@ -27,6 +27,7 @@ interface ChatContextValue {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 const STORAGE_KEY = 'fg-chat-history';
+const SESSION_KEY = 'fg-chat-session';
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -56,29 +57,49 @@ function saveMessages(messages: ChatMessage[]) {
 
 // --- Provider ---
 
-export function ChatProvider({ abriUrl, children }: { abriUrl: string | null; children: ReactNode }) {
+export function ChatProvider({ chatEnabled, children }: { chatEnabled: boolean; children: ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
-  const [status, setStatus] = useState<ConnectionStatus>(abriUrl ? 'checking' : 'disconnected');
+  const [status, setStatus] = useState<ConnectionStatus>(chatEnabled ? 'checking' : 'disconnected');
   const [isStreaming, setIsStreaming] = useState(false);
-  const clientRef = useRef<AbriClient | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(SESSION_KEY);
+    } catch {
+      return null;
+    }
+  });
+  const clientRef = useRef<ChatClient | null>(null);
 
-  // Create/update client when URL changes
+  // Create/update client when chatEnabled changes
   useEffect(() => {
-    if (abriUrl) {
-      clientRef.current = new AbriClient(abriUrl);
+    if (chatEnabled) {
+      clientRef.current = new ChatClient();
       setStatus('checking');
     } else {
       clientRef.current = null;
       setStatus('disconnected');
     }
-  }, [abriUrl]);
+  }, [chatEnabled]);
 
   // Persist messages to sessionStorage
   useEffect(() => {
     saveMessages(messages);
   }, [messages]);
 
-  // Poll /health every 30s
+  // Persist sessionId
+  useEffect(() => {
+    try {
+      if (sessionId) {
+        sessionStorage.setItem(SESSION_KEY, sessionId);
+      } else {
+        sessionStorage.removeItem(SESSION_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  }, [sessionId]);
+
+  // Poll /api/chat/status every 30s
   useEffect(() => {
     if (!clientRef.current) return;
 
@@ -96,7 +117,7 @@ export function ChatProvider({ abriUrl, children }: { abriUrl: string | null; ch
       active = false;
       clearInterval(timer);
     };
-  }, [abriUrl]);
+  }, [chatEnabled]);
 
   const sendMessage = useCallback(
     async (prompt: string, context?: Record<string, unknown>) => {
@@ -123,12 +144,24 @@ export function ChatProvider({ abriUrl, children }: { abriUrl: string | null; ch
       setIsStreaming(true);
 
       try {
-        const handle = await client.request({ prompt, context });
+        const handle = await client.request({
+          prompt,
+          context,
+          sessionId: sessionId ?? undefined,
+        });
 
-        for await (const chunk of handle.stream()) {
+        const gen = handle.stream();
+        let result = await gen.next();
+        while (!result.done) {
           setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)),
+            prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + result.value } : m)),
           );
+          result = await gen.next();
+        }
+
+        // Stream done — capture claude session_id for multi-turn resume
+        if (result.value?.sessionId) {
+          setSessionId(result.value.sessionId);
         }
 
         // Mark streaming done
@@ -146,16 +179,17 @@ export function ChatProvider({ abriUrl, children }: { abriUrl: string | null; ch
         setIsStreaming(false);
       }
     },
-    [isStreaming],
+    [isStreaming, sessionId],
   );
 
   const clearHistory = useCallback(() => {
     setMessages([]);
     sessionStorage.removeItem(STORAGE_KEY);
+    setSessionId(null);
   }, []);
 
   return (
-    <ChatContext.Provider value={{ messages, status, isStreaming, sendMessage, clearHistory, abriUrl }}>
+    <ChatContext.Provider value={{ messages, status, isStreaming, sendMessage, clearHistory, chatEnabled }}>
       {children}
     </ChatContext.Provider>
   );

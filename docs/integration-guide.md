@@ -87,6 +87,8 @@ export default defineConfig({
     port: 3883,                     // editor server port
     readonly: false,                // set true for read-only mode
   },
+
+  // chat: { model: 'haiku' },     // optional AI chat config (auto-detected)
 });
 ```
 
@@ -412,27 +414,25 @@ npx firegraph editor --readonly
 
 ### AI Chat (Optional)
 
-The editor includes a chat panel that connects to a Claude Code agent for AI-assisted graph exploration. To enable it:
+The editor includes a built-in chat panel for AI-assisted graph exploration. It auto-detects the `claude` CLI on PATH — no external dependencies or setup required.
 
-1. Install the firegraph-chat Claude Code skill:
+When `claude` is found, a **Chat** tab appears in the sidebar. Chat spawns `claude -p` processes on demand with graph-aware system prompts and tool access restricted to `npx firegraph query`.
 
-```bash
-npx firegraph install-skill
-```
-
-2. Add the `abri` URL to your config:
+To customize or disable:
 
 ```typescript
 // firegraph.config.ts
 export default defineConfig({
   entities: './entities',
-  abri: 'http://localhost:3885',  // enables the Chat tab
+  chat: {                      // optional — auto-enabled by default
+    model: 'haiku',            // default: 'sonnet'
+    maxConcurrency: 4,         // default: 2
+  },
+  // chat: false,              // disables chat even if claude is on PATH
 });
 ```
 
-3. Start the skill from Claude Code by invoking `/firegraph-chat`
-
-See [Editor Chat docs](editor-chat.md) for the full setup guide.
+See [Editor Chat docs](editor-chat.md) for the full guide.
 
 ## Custom Views (Optional)
 
@@ -496,4 +496,4 @@ export default [
 8. Add editor script: `"editor": "firegraph editor"`
 9. Optional: add `views.ts` per entity, `sample.json` for gallery
 10. Optional: `npx firegraph codegen --entities ./entities --out src/types.ts`
-11. Optional: `npx firegraph install-skill` to enable AI chat in the editor
+11. Optional: Install `claude` CLI for AI chat in the editor (auto-detected)

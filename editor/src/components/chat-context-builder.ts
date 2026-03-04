@@ -2,7 +2,7 @@ import type { FocusContextValue } from './focus-context';
 import type { Schema } from '../types';
 
 /**
- * Build a context payload for an abri chat request.
+ * Build a context payload for a chat request.
  * Gathers the current focused node, schema metadata, and edge summaries.
  */
 export function buildChatContext(

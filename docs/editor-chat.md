@@ -1,145 +1,64 @@
-# Editor Chat — Abri Integration Guide
+# Editor Chat — Built-in AI Chat
 
-The firegraph editor includes a chat panel that connects to a Claude Code agent session via [abri](https://github.com/typicalday/abri), a streaming HTTP bridge. This enables AI-assisted graph exploration directly from the editor UI.
+The firegraph editor includes a built-in chat panel that spawns `claude -p` processes on demand. When the `claude` CLI is detected on PATH, the Chat tab appears in the sidebar — no external dependencies, no separate servers, no skill installation required.
 
 ## How It Works
 
 ```
-Editor (browser)                Abri Server (port 3885)        Claude Code Agent
-       │                                │                              │
-       │ POST /request {prompt,context} │                              │
-       ├───────────────────────────────→│ GET /next (blocks)           │
-       │                                │←─────────────────────────────┤
-       │ GET /events?requestId=X        │ ── request JSON ──→         │
-       │ ◀══ SSE stream ═══════════════ │                              │
-       │                                │ POST /respond/:id/chunk      │
-       │ ◀═ response:chunk             ←│←─────────────────────────────│
-       │ ◀═ response:done              ←│←─────────────────────────────│
+Browser                    Editor Server (Express)              Claude CLI
+   |                              |                                  |
+   | POST /api/chat               |                                  |
+   |----------------------------->| spawn: claude -p "..." --model   |
+   |                              |   sonnet --output-format         |
+   | GET /api/chat/stream?id=X    |   stream-json --resume $SID     |
+   |<===== SSE ==================>|<---- stdout (NDJSON) ------------|
+   |  event: chunk {text}         |  parse text blocks               |
+   |  event: done                 |  on exit -> done                 |
+   |  event: error                |  on stderr -> error              |
 ```
 
-The editor's chat panel is a browser-side abri client. It submits user questions (with graph context) and streams responses via SSE. The abri server and agent loop are managed externally — typically as part of whatever Claude Code skill your project already runs.
+The editor server detects `claude` on PATH at startup. When a user sends a message from the chat panel, the server spawns a `claude -p` subprocess with graph-aware system prompts and tool access restricted to `npx firegraph query`. Responses stream back to the browser via Server-Sent Events.
 
-## Editor Configuration
+## Configuration
 
-Enable the chat panel by telling the editor where abri is running:
+Chat is **auto-enabled** when `claude` is on PATH. No configuration is required.
+
+### Disabling Chat
+
+Set `chat: false` in your config to disable chat even if `claude` is available:
 
 ```typescript
 // firegraph.config.ts
 export default defineConfig({
   entities: './entities',
-  abri: 'http://localhost:3885',    // enables the Chat tab in the sidebar
+  chat: false,  // disables the Chat tab
 });
 ```
 
-Or via CLI/env:
+### Custom Model and Concurrency
 
-```bash
-npx firegraph editor --abri http://localhost:3885
-# or
-ABRI_URL=http://localhost:3885 npx firegraph editor
+```typescript
+export default defineConfig({
+  entities: './entities',
+  chat: {
+    model: 'haiku',       // default: 'sonnet'
+    maxConcurrency: 4,     // default: 2
+  },
+});
 ```
 
-When `abri` is configured, a **Chat** tab appears in the sidebar alongside Navigate and Nearby. The tab shows a connection status dot (green when the abri server is reachable, gray when offline).
+## Multi-Turn Conversations
 
-## Installing the Firegraph Chat Skill
+The chat supports multi-turn conversations using Claude's `--resume` flag. Each browser session maintains a conversation thread:
 
-The easiest way to get graph-aware AI chat is to install the bundled Claude Code skill. If your project has firegraph as a dependency:
+1. First message: server spawns `claude -p` (no `--resume`)
+2. Claude responds. Server extracts `session_id` from the result JSON
+3. Server maps the browser session to the Claude session
+4. Subsequent messages: server spawns with `--resume <claude_session_id>`
+5. Claude has full conversation context from previous turns
+6. Clicking "Clear" resets the session — next message starts fresh
 
-```bash
-# Install globally (available in all projects)
-npx firegraph install-skill
-
-# Or install for this project only
-npx firegraph install-skill --project
-```
-
-This creates a symlink from your Claude Code skills directory to the skill files inside the firegraph package. The skill auto-updates when you upgrade firegraph.
-
-To remove:
-
-```bash
-npx firegraph install-skill --uninstall
-# or for project-level:
-npx firegraph install-skill --uninstall --project
-```
-
-Once installed, the skill appears in Claude Code as `firegraph-chat`. It starts an abri server, runs an infinite listen-dispatch loop, and spawns subagents to answer graph queries from the editor chat panel.
-
-### Prerequisites
-
-- `abri` must be installed: `pnpm add abri` (or as a global/peer dependency)
-- The editor must be configured with an `abri` URL (see [Editor Configuration](#editor-configuration) above)
-- The `firegraph query` CLI must work (the editor server must be running)
-
-## Adding Abri to a Custom Skill
-
-If you prefer to integrate the abri bridge into your own skill instead of using the bundled one, here's what to add:
-
-### Startup
-
-Add these steps to your skill's startup sequence:
-
-```bash
-# 1. Clean up any leftover server
-ABRI_PORT=3885
-echo "$ABRI_PORT" > /tmp/abri-firegraph-chat.port
-lsof -ti :$ABRI_PORT | xargs kill 2>/dev/null; sleep 0.5
-
-# 2. Start abri
-npx abri serve --port $ABRI_PORT &
-
-# 3. Verify
-sleep 1 && curl -s http://localhost:$ABRI_PORT/health
-```
-
-### Listen Loop
-
-Add an infinite listen loop to your skill. This is the dispatcher — it receives messages from the editor and hands them off to subagents:
-
-```
-Step: Listen for editor chat requests
-
-  REQUEST=$(npx abri listen --server http://localhost:$ABRI_PORT)
-
-  - If empty (timeout after 5 min), silently retry.
-  - If valid JSON, extract `id`, `prompt`, and `context`, then dispatch a subagent.
-  - Go back to listening immediately (don't wait for the subagent).
-```
-
-### Subagent Dispatch
-
-Each request gets its own background subagent. The subagent receives:
-
-- **Request ID** — needed to stream the response back
-- **Prompt** — the user's question
-- **Context** — graph data from the editor (see below)
-
-The subagent streams its answer back:
-
-```bash
-# Stream a chunk
-echo 'your text here' | npx abri respond "<REQUEST_ID>" --server http://localhost:$ABRI_PORT
-
-# Mark done (required)
-npx abri respond "<REQUEST_ID>" --done --server http://localhost:$ABRI_PORT
-
-# Report error
-echo 'error description' | npx abri respond "<REQUEST_ID>" --error --server http://localhost:$ABRI_PORT
-```
-
-### Cleanup
-
-Add a stop hook to kill the abri server when the skill exits:
-
-```bash
-#!/bin/bash
-PORT_FILE="/tmp/abri-firegraph-chat.port"
-if [ -f "$PORT_FILE" ]; then
-  PORT=$(cat "$PORT_FILE")
-  lsof -ti :"$PORT" | xargs kill 2>/dev/null
-  rm -f "$PORT_FILE"
-fi
-```
+Session state persists in `sessionStorage` (survives navigation within a tab, clears on tab close).
 
 ## Context Payload
 
@@ -168,19 +87,32 @@ The editor sends a `context` object with each request containing the user's curr
 }
 ```
 
-This context gives the subagent enough information to answer questions about the user's data without needing direct Firestore access.
+## API Endpoints
 
-## Key Rules for the Dispatcher
+The chat module registers these Express routes (alongside the existing tRPC routes):
 
-1. **Never stop the listen loop.** It runs forever until the user explicitly stops the skill.
-2. **Never process requests yourself.** Always dispatch via a background subagent.
-3. **Timeouts are normal.** The listen command returns empty after 5 minutes. Silently retry.
-4. **Keep it fast.** Parse JSON, dispatch, loop. No analysis or delay in the dispatcher.
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/chat` | Start a chat request. Body: `{ prompt, context?, sessionId? }`. Returns `{ requestId, sessionId }` |
+| `GET` | `/api/chat/stream?requestId=X` | SSE stream. Events: `chunk` (data: `{text}`), `done`, `error` (data: `{message}`) |
+| `GET` | `/api/chat/status` | Returns `{ enabled, model, active, maxConcurrency }` |
+| `DELETE` | `/api/chat/session/:sessionId` | Clear session memory (called on "Clear") |
 
-## Architecture Notes
+## Prerequisites
 
-- The editor embeds a minimal abri client (~100 lines) — no `abri` npm dependency needed in the editor
-- The abri server runs on a separate port (3885) with `corsOrigin: '*'` — no proxy needed
-- Chat history persists in `sessionStorage` (survives navigation within a tab, clears on tab close)
-- Requests are serialized (input disabled while streaming)
-- Connection status polls `/health` every 30 seconds
+- **Claude CLI**: Install from [claude.ai](https://claude.ai). The editor checks for `claude` on PATH at startup.
+- **Editor server running**: The chat uses `npx firegraph query` under the hood, which talks to the running editor server's API.
+
+## Firegraph Chat Skill (Alternative)
+
+For users who prefer a skill-based approach, the bundled `firegraph-chat` Claude Code skill is still available. It uses [abri](https://github.com/typicalday/abri) as a streaming HTTP bridge between the editor and a Claude Code agent session.
+
+```bash
+# Install the skill
+npx firegraph install-skill
+
+# Or install for this project only
+npx firegraph install-skill --project
+```
+
+See the skill's `SKILL.md` for configuration details.

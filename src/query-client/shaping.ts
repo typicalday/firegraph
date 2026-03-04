@@ -13,9 +13,11 @@ export function summarizeRecord(r: Record<string, unknown> | null): SummarizedRe
 export function summarizeEdge(r: Record<string, unknown> | null): SummarizedEdge | null {
   if (!r) return null;
   const out: SummarizedEdge = {
-    from: `${r.aType}:${r.aUid}`,
+    fromType: r.aType as string,
+    fromUid: r.aUid as string,
     relation: r.axbType as string,
-    to: `${r.bType}:${r.bUid}`,
+    toType: r.bType as string,
+    toUid: r.bUid as string,
   };
   const data = r.data as Record<string, unknown> | undefined;
   if (data && typeof data === 'object' && Object.keys(data).length > 0) {

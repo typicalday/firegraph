@@ -46,7 +46,7 @@ describe('summarizeEdge', () => {
     expect(summarizeEdge(null)).toBeNull();
   });
 
-  it('extracts from, relation, and to', () => {
+  it('extracts fromType, fromUid, relation, toType, and toUid', () => {
     const result = summarizeEdge({
       aType: 'task',
       aUid: 'task1',
@@ -55,9 +55,11 @@ describe('summarizeEdge', () => {
       bUid: 'step1',
     });
     expect(result).toEqual({
-      from: 'task:task1',
+      fromType: 'task',
+      fromUid: 'task1',
       relation: 'hasStep',
-      to: 'step:step1',
+      toType: 'step',
+      toUid: 'step1',
     });
   });
 
@@ -71,9 +73,11 @@ describe('summarizeEdge', () => {
       data: { order: 1 },
     });
     expect(result).toEqual({
-      from: 'task:task1',
+      fromType: 'task',
+      fromUid: 'task1',
       relation: 'hasStep',
-      to: 'step:step1',
+      toType: 'step',
+      toUid: 'step1',
       data: { order: 1 },
     });
   });
