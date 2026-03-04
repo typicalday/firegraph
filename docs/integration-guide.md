@@ -407,7 +407,32 @@ npx firegraph editor --readonly
 - Navigate edges (outgoing and incoming) with inverse labels
 - Multi-hop traversal builder
 - View Gallery for custom Web Component views
+- AI chat panel for graph-aware queries (requires abri)
 - Dark theme UI
+
+### AI Chat (Optional)
+
+The editor includes a chat panel that connects to a Claude Code agent for AI-assisted graph exploration. To enable it:
+
+1. Install the firegraph-chat Claude Code skill:
+
+```bash
+npx firegraph install-skill
+```
+
+2. Add the `abri` URL to your config:
+
+```typescript
+// firegraph.config.ts
+export default defineConfig({
+  entities: './entities',
+  abri: 'http://localhost:3885',  // enables the Chat tab
+});
+```
+
+3. Start the skill from Claude Code by invoking `/firegraph-chat`
+
+See [Editor Chat docs](editor-chat.md) for the full setup guide.
 
 ## Custom Views (Optional)
 
@@ -471,3 +496,4 @@ export default [
 8. Add editor script: `"editor": "firegraph editor"`
 9. Optional: add `views.ts` per entity, `sample.json` for gallery
 10. Optional: `npx firegraph codegen --entities ./entities --out src/types.ts`
+11. Optional: `npx firegraph install-skill` to enable AI chat in the editor

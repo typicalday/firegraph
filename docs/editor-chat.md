@@ -41,9 +41,39 @@ ABRI_URL=http://localhost:3885 npx firegraph editor
 
 When `abri` is configured, a **Chat** tab appears in the sidebar alongside Navigate and Nearby. The tab shows a connection status dot (green when the abri server is reachable, gray when offline).
 
-## Adding Abri to Your Skill
+## Installing the Firegraph Chat Skill
 
-The abri bridge is not a standalone skill — it's a pattern you add to whatever skill your project is already running. Here's what to add:
+The easiest way to get graph-aware AI chat is to install the bundled Claude Code skill. If your project has firegraph as a dependency:
+
+```bash
+# Install globally (available in all projects)
+npx firegraph install-skill
+
+# Or install for this project only
+npx firegraph install-skill --project
+```
+
+This creates a symlink from your Claude Code skills directory to the skill files inside the firegraph package. The skill auto-updates when you upgrade firegraph.
+
+To remove:
+
+```bash
+npx firegraph install-skill --uninstall
+# or for project-level:
+npx firegraph install-skill --uninstall --project
+```
+
+Once installed, the skill appears in Claude Code as `firegraph-chat`. It starts an abri server, runs an infinite listen-dispatch loop, and spawns subagents to answer graph queries from the editor chat panel.
+
+### Prerequisites
+
+- `abri` must be installed: `pnpm add abri` (or as a global/peer dependency)
+- The editor must be configured with an `abri` URL (see [Editor Configuration](#editor-configuration) above)
+- The `firegraph query` CLI must work (the editor server must be running)
+
+## Adding Abri to a Custom Skill
+
+If you prefer to integrate the abri bridge into your own skill instead of using the bundled one, here's what to add:
 
 ### Startup
 
