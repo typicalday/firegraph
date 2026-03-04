@@ -91,4 +91,31 @@ describe('discoverEntities', () => {
     expect(result.nodes.size).toBe(0);
     expect(result.edges.size).toBe(0);
   });
+
+  it('loads schema.ts files via jiti', () => {
+    const { result } = discoverEntities(path.join(FIXTURES, 'entities-ts-schema'));
+    expect(result.nodes.has('event')).toBe(true);
+    const event = result.nodes.get('event')!;
+    expect(event.schema).toHaveProperty('properties');
+    expect((event.schema as any).properties.title).toEqual({
+      type: 'string',
+      minLength: 1,
+    });
+  });
+
+  it('resolves shared imports across schema.ts files', () => {
+    const { result } = discoverEntities(path.join(FIXTURES, 'entities-ts-schema'));
+    const event = result.nodes.get('event')!;
+    const workshop = result.nodes.get('workshop')!;
+
+    // Both schemas should reference the same shared address shape
+    const eventLocation = (event.schema as any).properties.location;
+    const workshopVenue = (workshop.schema as any).properties.venue;
+    expect(eventLocation).toEqual(workshopVenue);
+    expect(eventLocation.properties.country).toEqual({
+      type: 'string',
+      minLength: 2,
+      maxLength: 2,
+    });
+  });
 });

@@ -5,26 +5,32 @@
  * Scans `entitiesDir/nodes/` and `entitiesDir/edges/` subdirectories.
  * Each subfolder is treated as an entity type.
  *
+ * Schema files can be either `schema.json` (plain JSON Schema) or
+ * `schema.ts` / `schema.js` (a module whose default export is a JSON Schema
+ * object). When both exist, the TS/JS file takes precedence so that authors
+ * can compose schemas programmatically while keeping a JSON fallback.
+ *
  * @example
  * ```
  * entities/
  *   nodes/
  *     task/
- *       schema.json     (required)
- *       views.ts        (optional)
- *       sample.json     (optional)
- *       meta.json       (optional)
+ *       schema.json | schema.ts   (required — one or both)
+ *       views.ts                  (optional)
+ *       sample.json               (optional)
+ *       meta.json                 (optional)
  *   edges/
  *     hasStep/
- *       schema.json     (required)
- *       edge.json       (required — topology)
- *       views.ts        (optional)
- *       sample.json     (optional)
- *       meta.json       (optional)
+ *       schema.json | schema.ts   (required — one or both)
+ *       edge.json                 (required — topology)
+ *       views.ts                  (optional)
+ *       sample.json               (optional)
+ *       meta.json                 (optional)
  * ```
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import type { DiscoveredEntity, DiscoveryResult, EdgeTopology } from './types.js';
 import type { ViewResolverConfig } from './config.js';
@@ -59,6 +65,70 @@ function readJsonIfExists(filePath: string): unknown | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Schema file loading (JSON or TS/JS via jiti)
+// ---------------------------------------------------------------------------
+
+const SCHEMA_SCRIPT_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs'];
+
+/**
+ * Attempt to load a schema from a TS/JS module (default export) or fall back
+ * to schema.json. Returns the parsed schema object or throws.
+ */
+function loadSchema(dir: string, entityLabel: string): object {
+  // Prefer TS/JS schema — allows programmatic composition & shared definitions
+  for (const ext of SCHEMA_SCRIPT_EXTENSIONS) {
+    const candidate = join(dir, `schema${ext}`);
+    if (existsSync(candidate)) {
+      return loadSchemaModule(candidate, entityLabel);
+    }
+  }
+
+  // Fall back to schema.json
+  const jsonPath = join(dir, 'schema.json');
+  if (existsSync(jsonPath)) {
+    return readJson(jsonPath) as object;
+  }
+
+  throw new DiscoveryError(
+    `Missing schema for ${entityLabel} in ${dir}. ` +
+      'Provide a schema.ts (or .js/.mts/.mjs) or schema.json file.',
+  );
+}
+
+let _jiti: ((id: string) => unknown) | undefined;
+
+function getJiti(): (id: string) => unknown {
+  if (!_jiti) {
+    const esmRequire = createRequire(import.meta.url);
+    const { createJiti } = esmRequire('jiti') as typeof import('jiti');
+    _jiti = createJiti(import.meta.url, { interopDefault: true });
+  }
+  return _jiti;
+}
+
+function loadSchemaModule(filePath: string, entityLabel: string): object {
+  try {
+    const jiti = getJiti();
+    const mod = jiti(filePath) as { default?: unknown } | unknown;
+    const schema = (mod && typeof mod === 'object' && 'default' in mod)
+      ? (mod as { default: unknown }).default
+      : mod;
+
+    if (!schema || typeof schema !== 'object') {
+      throw new DiscoveryError(
+        `Schema file ${filePath} for ${entityLabel} must default-export a JSON Schema object.`,
+      );
+    }
+    return schema as object;
+  } catch (err: unknown) {
+    if (err instanceof DiscoveryError) throw err;
+    throw new DiscoveryError(
+      `Failed to load schema module ${filePath} for ${entityLabel}: ${(err as Error).message}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // View file detection
 // ---------------------------------------------------------------------------
 
@@ -77,14 +147,7 @@ function findViewsFile(dir: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
-  const schemaPath = join(dir, 'schema.json');
-  if (!existsSync(schemaPath)) {
-    throw new DiscoveryError(
-      `Missing schema.json for node type "${name}" in ${dir}`,
-    );
-  }
-
-  const schema = readJson(schemaPath) as object;
+  const schema = loadSchema(dir, `node type "${name}"`);
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
     | { description?: string; viewDefaults?: ViewResolverConfig }
     | undefined;
@@ -105,12 +168,7 @@ function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
 }
 
 function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
-  const schemaPath = join(dir, 'schema.json');
-  if (!existsSync(schemaPath)) {
-    throw new DiscoveryError(
-      `Missing schema.json for edge type "${name}" in ${dir}`,
-    );
-  }
+  const schema = loadSchema(dir, `edge type "${name}"`);
 
   const edgePath = join(dir, 'edge.json');
   if (!existsSync(edgePath)) {
@@ -119,8 +177,6 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
         'Edge entities must declare topology (from/to node types).',
     );
   }
-
-  const schema = readJson(schemaPath) as object;
   const topology = readJson(edgePath) as EdgeTopology;
 
   // Validate topology shape
