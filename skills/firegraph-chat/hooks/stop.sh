@@ -1,6 +1,8 @@
 #!/bin/bash
-# Stop hook for /firegraph-chat skill
+# Stop hook for firegraph-chat skill
 # First invocation blocks exit, second allows it and cleans up abri
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INPUT=$(cat)
 

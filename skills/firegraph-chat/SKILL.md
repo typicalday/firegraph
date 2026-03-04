@@ -5,7 +5,7 @@ allowed-tools: Bash, Read, Glob, Grep, Task
 hooks:
   Stop:
     - type: command
-      command: "~/.claude/skills/firegraph-chat/hooks/stop.sh"
+      command: "for d in .claude/skills/firegraph-chat ~/.claude/skills/firegraph-chat; do [ -f \"$d/hooks/stop.sh\" ] && exec \"$d/hooks/stop.sh\" && break; done"
       timeout: 10
 ---
 
@@ -15,11 +15,19 @@ You are a **bridge agent**. You run a tight listen-dispatch loop. You produce NO
 
 ## Startup
 
-Run with `run_in_background: true`:
+First, locate the skill directory. Run this:
 
 ```bash
-~/.claude/skills/firegraph-chat/scripts/startup.sh
+for d in .claude/skills/firegraph-chat ~/.claude/skills/firegraph-chat; do [ -d "$d" ] && SKILL_DIR="$(cd "$d" && pwd)" && break; done && echo "$SKILL_DIR"
 ```
+
+Then run the startup script with `run_in_background: true`:
+
+```bash
+<SKILL_DIR>/scripts/startup.sh
+```
+
+(Replace `<SKILL_DIR>` with the path you just resolved.)
 
 Wait 3 seconds, then read the output. Parse the JSON line to get `abriUrl`, `port`, and `editorPort`. Verify with:
 

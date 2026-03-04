@@ -53,7 +53,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "skills"
   ],
   "scripts": {
     "prepare": "tsup && (npm run build:editor || true)",
