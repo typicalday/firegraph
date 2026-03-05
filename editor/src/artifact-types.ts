@@ -1,6 +1,6 @@
 /**
  * Artifact type definitions for chat tool results.
- * Shared between server (chat.ts) and client (chat-client.ts, ChatPanel, ArtifactOverlay).
+ * Shared between server (chat.ts) and client (chat-client.ts, ChatPanel, ChatBar, artifact-views).
  */
 
 export type ArtifactKind =

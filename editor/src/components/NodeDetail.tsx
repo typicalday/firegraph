@@ -24,7 +24,7 @@ interface Props {
 
 // ---------------------------------------------------------------------------
 // NodeDataCard — reusable data card with ViewSwitcher + view defaults
-// Used by both NodeDetailContent (full page) and ArtifactOverlay (chat).
+// Used by both NodeDetailContent (full page) and artifact-views (chat dimension).
 // ---------------------------------------------------------------------------
 
 export interface NodeDataCardProps {

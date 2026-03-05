@@ -149,7 +149,7 @@ export default function ChatPanel({ schema }: Props) {
 
 // --- Message Bubble ---
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+export function MessageBubble({ message }: { message: ChatMessage }) {
   const artifactCtx = useArtifactMaybe();
 
   if (message.role === 'user') {
@@ -214,14 +214,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 // --- Tool Command Formatter ---
 
-function formatToolCommand(command: string): string {
+export function formatToolCommand(command: string): string {
   // Shorten "npx firegraph query get uid123" → "query get uid123"
   return command.replace(/^npx\s+firegraph\s+/, '');
 }
 
 // --- Artifact Card ---
 
-function ArtifactCard({
+export function ArtifactCard({
   artifact,
   isActive,
   onClick,
@@ -248,7 +248,7 @@ function ArtifactCard({
   );
 }
 
-function getArtifactSummary(artifact: ChatArtifact): { icon: string; label: string; detail: string } {
+export function getArtifactSummary(artifact: ChatArtifact): { icon: string; label: string; detail: string } {
   const d = artifact.data as Record<string, unknown>;
   switch (artifact.kind) {
     case 'node-detail': {

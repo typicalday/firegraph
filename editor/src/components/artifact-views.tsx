@@ -1,6 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useArtifact } from './artifact-context';
+import { useState } from 'react';
 import { NodeDataCard } from './NodeDetail';
 import JsonView from './JsonView';
 import { getTypeBadgeColor } from '../utils';
@@ -27,86 +25,10 @@ interface SummarizedEdge {
 }
 
 // ---------------------------------------------------------------------------
-// Main Overlay
-// ---------------------------------------------------------------------------
-
-interface Props {
-  viewRegistry: ViewRegistryData;
-  config: AppConfig;
-}
-
-export default function ArtifactOverlay({ viewRegistry, config }: Props) {
-  const { activeArtifact, dismissArtifact } = useArtifact();
-  const navigate = useNavigate();
-
-  // Escape key to dismiss
-  useEffect(() => {
-    if (!activeArtifact) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') dismissArtifact();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [activeArtifact, dismissArtifact]);
-
-  const handleNavigate = useCallback(
-    (uid: string) => {
-      dismissArtifact();
-      navigate(`/node/${encodeURIComponent(uid)}`);
-    },
-    [dismissArtifact, navigate],
-  );
-
-  if (!activeArtifact) return null;
-
-  return (
-    <div className="absolute inset-0 z-40 flex">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={dismissArtifact} />
-
-      {/* Panel */}
-      <div className="absolute top-0 right-0 bottom-0 w-full max-w-2xl bg-slate-950 border-l border-slate-800 shadow-2xl overflow-auto animate-[slide-in-right_0.2s_ease-out]">
-        {/* Header */}
-        <div className="sticky top-0 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800 px-5 py-3 flex items-center justify-between z-10">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="text-sm font-semibold text-slate-200 shrink-0">
-              {getArtifactTitle(activeArtifact)}
-            </span>
-            <span className="text-[10px] text-slate-500 font-mono truncate">
-              {activeArtifact.command.replace(/^npx\s+firegraph\s+/, '')}
-            </span>
-          </div>
-          <button
-            onClick={dismissArtifact}
-            className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors shrink-0 ml-3"
-            title="Close (Esc)"
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M1 1l12 12M13 1L1 13" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="p-5">
-          <ArtifactContent
-            key={activeArtifact.id}
-            artifact={activeArtifact}
-            viewRegistry={viewRegistry}
-            config={config}
-            onNavigate={handleNavigate}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Title Helper
 // ---------------------------------------------------------------------------
 
-function getArtifactTitle(artifact: ChatArtifact): string {
+export function getArtifactTitle(artifact: ChatArtifact): string {
   const d = artifact.data as Record<string, unknown>;
   switch (artifact.kind) {
     case 'node-detail': {
@@ -132,7 +54,7 @@ function getArtifactTitle(artifact: ChatArtifact): string {
 // Content Router
 // ---------------------------------------------------------------------------
 
-function ArtifactContent({
+export function ArtifactContent({
   artifact,
   viewRegistry,
   config,
