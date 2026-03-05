@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChat, type ChatMessage } from './chat-context';
 import { useFocusMaybe } from './focus-context';
+import { useArtifactMaybe } from './artifact-context';
 import { buildChatContext } from './chat-context-builder';
+import type { ChatArtifact } from '../artifact-types';
 import type { Schema } from '../types';
 
 interface Props {
@@ -148,6 +150,8 @@ export default function ChatPanel({ schema }: Props) {
 // --- Message Bubble ---
 
 function MessageBubble({ message }: { message: ChatMessage }) {
+  const artifactCtx = useArtifactMaybe();
+
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -170,15 +174,115 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   // Assistant
   return (
-    <div className="flex justify-start">
-      <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-2 max-w-[90%]">
-        <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words font-sans leading-relaxed">
-          {message.content}
-          {message.streaming && (
-            <span className="inline-block w-1.5 h-3.5 bg-indigo-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
-          )}
-        </pre>
-      </div>
+    <div className="flex flex-col gap-1.5 items-start">
+      {/* Text content */}
+      {(message.content || message.streaming) && (
+        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-2 max-w-[90%]">
+          <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words font-sans leading-relaxed">
+            {message.content}
+            {message.streaming && !message.activeToolCall && (
+              <span className="inline-block w-1.5 h-3.5 bg-indigo-400 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+            )}
+          </pre>
+        </div>
+      )}
+
+      {/* Tool-call indicator */}
+      {message.activeToolCall && (
+        <div className="bg-slate-800/50 border border-amber-500/20 rounded-lg px-3 py-2 max-w-[90%]">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="text-[10px] text-amber-400 font-mono truncate">
+              {formatToolCommand(message.activeToolCall)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Artifact cards */}
+      {message.artifacts?.map((artifact) => (
+        <ArtifactCard
+          key={artifact.id}
+          artifact={artifact}
+          isActive={artifactCtx?.activeArtifact?.id === artifact.id}
+          onClick={() => artifactCtx?.showArtifact(artifact)}
+        />
+      ))}
     </div>
   );
+}
+
+// --- Tool Command Formatter ---
+
+function formatToolCommand(command: string): string {
+  // Shorten "npx firegraph query get uid123" → "query get uid123"
+  return command.replace(/^npx\s+firegraph\s+/, '');
+}
+
+// --- Artifact Card ---
+
+function ArtifactCard({
+  artifact,
+  isActive,
+  onClick,
+}: {
+  artifact: ChatArtifact;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  const { icon, label, detail } = getArtifactSummary(artifact);
+
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full max-w-[90%] text-left bg-slate-800/80 border rounded-lg px-3 py-2
+        transition-all hover:bg-slate-700/80 hover:border-indigo-500/50 group
+        ${isActive ? 'border-indigo-500/60 ring-1 ring-indigo-500/30' : 'border-slate-700/50'}`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-indigo-400 text-xs shrink-0">{icon}</span>
+        <span className="text-[11px] font-medium text-slate-200 truncate">{label}</span>
+        <span className="text-[10px] text-slate-500 ml-auto shrink-0">{detail}</span>
+      </div>
+    </button>
+  );
+}
+
+function getArtifactSummary(artifact: ChatArtifact): { icon: string; label: string; detail: string } {
+  const d = artifact.data as Record<string, unknown>;
+  switch (artifact.kind) {
+    case 'node-detail': {
+      const node = d.node as { type: string; uid: string } | null;
+      const outLen = Array.isArray(d.outEdges) ? d.outEdges.length : 0;
+      const inLen = Array.isArray(d.inEdges) ? d.inEdges.length : 0;
+      return {
+        icon: '\u25cf',
+        label: node ? `${node.type}:${node.uid}` : 'Node not found',
+        detail: `${outLen + inLen} edges`,
+      };
+    }
+    case 'nodes-list': {
+      const nodes = Array.isArray(d.nodes) ? d.nodes : [];
+      return { icon: '\u2261', label: `${nodes.length} nodes`, detail: d.hasMore ? 'has more' : '' };
+    }
+    case 'edges-list': {
+      const edges = Array.isArray(d.edges) ? d.edges : [];
+      return { icon: '\u2192', label: `${edges.length} edges`, detail: d.hasMore ? 'has more' : '' };
+    }
+    case 'traverse': {
+      const hops = Array.isArray(d.hops) ? d.hops : [];
+      return { icon: '\u26a1', label: `Traversal: ${hops.length} hops`, detail: `${d.totalReads ?? 0} reads` };
+    }
+    case 'search': {
+      const results = Array.isArray(d.results) ? d.results : [];
+      return { icon: '\u2315', label: `${results.length} results`, detail: 'search' };
+    }
+    case 'schema': {
+      const nodeTypes = Array.isArray(d.nodeTypes) ? d.nodeTypes : [];
+      const edgeTypes = Array.isArray(d.edgeTypes) ? d.edgeTypes : [];
+      return { icon: '\u229e', label: `${nodeTypes.length} node types`, detail: `${edgeTypes.length} edge types` };
+    }
+    default:
+      return { icon: '?', label: 'Query result', detail: '' };
+  }
 }

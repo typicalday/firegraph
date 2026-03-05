@@ -22,6 +22,58 @@ interface Props {
   onDataChanged?: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// NodeDataCard — reusable data card with ViewSwitcher + view defaults
+// Used by both NodeDetailContent (full page) and ArtifactOverlay (chat).
+// ---------------------------------------------------------------------------
+
+export interface NodeDataCardProps {
+  nodeType: string;
+  data: Record<string, unknown>;
+  viewRegistry?: ViewRegistryData | null;
+  config: AppConfig;
+}
+
+export function NodeDataCard({ nodeType, data, viewRegistry, config }: NodeDataCardProps) {
+  const views = viewRegistry?.nodes[nodeType]?.views ?? [];
+  const [activeView, setActiveView] = useState('json');
+  const [viewInitialized, setViewInitialized] = useState(false);
+
+  // Resolve initial view from config defaults
+  useEffect(() => {
+    if (viewInitialized) return;
+    const resolverConfig = config.viewDefaults?.nodes?.[nodeType];
+    if (resolverConfig && views.length > 0) {
+      const resolved = resolveViewForEntity(resolverConfig, views, 'detail');
+      if (resolved !== 'json') {
+        const match = views.find((v) => v.viewName === resolved);
+        if (match) setActiveView(match.tagName);
+      }
+    }
+    setViewInitialized(true);
+  }, [viewInitialized, views, config, nodeType]);
+
+  return (
+    <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold">Data</h2>
+        <ViewSwitcher
+          views={views}
+          activeView={activeView}
+          onSwitch={setActiveView}
+        />
+      </div>
+      {activeView === 'json' ? (
+        <div className="font-mono text-xs leading-relaxed bg-slate-950 rounded-lg p-4 overflow-auto max-h-96">
+          <JsonView data={data} defaultExpanded />
+        </div>
+      ) : (
+        <CustomView tagName={activeView} data={data} />
+      )}
+    </section>
+  );
+}
+
 const LIMIT_OPTIONS = [10, 25, 50, 100];
 
 /** Describes a pending bulk edge deletion — shown in a confirmation dialog. */
@@ -94,8 +146,6 @@ export function NodeDetailContent({
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
-  const [activeView, setActiveView] = useState('json');
-  const [viewInitialized, setViewInitialized] = useState(false);
 
   const { data: nodeDetailData, isLoading: loading, error: queryError, refetch: loadNode } = trpc.getNodeDetail.useQuery(
     { uid },
@@ -121,24 +171,8 @@ export function NodeDetailContent({
     setEditing(false);
     setShowCreateEdge(false);
     setShowCreateIncomingEdge(false);
-    setViewInitialized(false);
     setMutationError(null);
   }, [uid]);
-
-  // Resolve initial view from config defaults once node data is available
-  useEffect(() => {
-    if (!node || viewInitialized) return;
-    const views = viewRegistry?.nodes[node.aType]?.views ?? [];
-    const resolverConfig = config.viewDefaults?.nodes?.[node.aType];
-    if (resolverConfig && views.length > 0) {
-      const resolved = resolveViewForEntity(resolverConfig, views, 'detail');
-      if (resolved !== 'json') {
-        const match = views.find((v) => v.viewName === resolved);
-        if (match) setActiveView(match.tagName);
-      }
-    }
-    setViewInitialized(true);
-  }, [node, viewInitialized, viewRegistry, config]);
 
   // Set root type for breadcrumb when this is the root frame
   useEffect(() => {
@@ -375,23 +409,15 @@ export function NodeDetailContent({
       </div>
 
       {/* Data */}
-      <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">Data</h2>
-          <ViewSwitcher
-            views={viewRegistry?.nodes[node.aType]?.views ?? []}
-            activeView={activeView}
-            onSwitch={setActiveView}
-          />
-        </div>
-        {activeView === 'json' ? (
-          <div className="font-mono text-xs leading-relaxed bg-slate-950 rounded-lg p-4 overflow-auto max-h-96">
-            <JsonView data={node.data} defaultExpanded />
-          </div>
-        ) : (
-          <CustomView tagName={activeView} data={node.data as Record<string, unknown>} />
-        )}
-      </section>
+      <div className="mb-6">
+        <NodeDataCard
+          key={uid}
+          nodeType={node.aType}
+          data={node.data as Record<string, unknown>}
+          viewRegistry={viewRegistry}
+          config={config}
+        />
+      </div>
 
       {/* Outgoing Edges */}
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">

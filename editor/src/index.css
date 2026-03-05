@@ -87,3 +87,10 @@
     opacity: 0.05;
   }
 }
+
+/* --- Artifact overlay slide-in --- */
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}

@@ -3,6 +3,13 @@
  * Replaces the abri client — calls the editor server directly.
  */
 
+import type { ChatArtifact } from './artifact-types';
+
+export type StreamEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'artifact'; artifact: ChatArtifact }
+  | { kind: 'tool_start'; command: string };
+
 export interface ChatStatus {
   enabled: boolean;
   model: string;
@@ -67,10 +74,10 @@ export class ChatRequestHandle {
   ) {}
 
   /**
-   * Stream response chunks. Yields text strings.
+   * Stream response events. Yields StreamEvent objects (text chunks, artifacts, tool starts).
    * Returns the claude session_id (sent via SSE `session` event) for use with --resume.
    */
-  async *stream(): AsyncGenerator<string, StreamResult, undefined> {
+  async *stream(): AsyncGenerator<StreamEvent, StreamResult, undefined> {
     const url = `${this.baseUrl}/api/chat/stream?requestId=${this.requestId}`;
     const res = await fetch(url, {
       headers: { Accept: 'text/event-stream' },
@@ -101,7 +108,11 @@ export class ChatRequestHandle {
           }
 
           if (event === 'chunk' && data) {
-            yield (JSON.parse(data) as { text: string }).text;
+            yield { kind: 'text', text: (JSON.parse(data) as { text: string }).text };
+          } else if (event === 'artifact' && data) {
+            yield { kind: 'artifact', artifact: JSON.parse(data) as ChatArtifact };
+          } else if (event === 'tool_start' && data) {
+            yield { kind: 'tool_start', command: (JSON.parse(data) as { command: string }).command };
           } else if (event === 'session' && data) {
             sessionId = (JSON.parse(data) as { sessionId: string }).sessionId;
           } else if (event === 'done') {
