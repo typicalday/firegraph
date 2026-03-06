@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Firestore } from '@google-cloud/firestore';
 import { createGraphClient } from '../../src/index.js';
-import type { GraphClient, GraphRegistry, DiscoveryResult } from '../../src/types.js';
+import type { GraphClient, GraphRegistry, DiscoveryResult, QueryMode } from '../../src/types.js';
 import { createRegistry } from '../../src/registry.js';
 import { introspectRegistry } from './schema-introspect.js';
 import type { SchemaMetadata } from './schema-introspect.js';
@@ -32,6 +32,7 @@ interface CliArgs {
   collection?: string;
   port?: number;
   emulator?: string;
+  queryMode?: QueryMode;
   readonly: boolean;
 }
 
@@ -43,6 +44,7 @@ function parseArgs(): CliArgs {
   let collection: string | undefined;
   let port: number | undefined;
   let emulator: string | undefined;
+  let queryMode: QueryMode | undefined;
   let readonly = false;
 
   for (let i = 0; i < args.length; i++) {
@@ -60,6 +62,13 @@ function parseArgs(): CliArgs {
     else if (arg.startsWith('--emulator=')) emulator = arg.split('=')[1];
     else if (arg === '--emulator' && args[i + 1] && !args[i + 1].startsWith('--')) emulator = args[++i];
     else if (arg === '--emulator') emulator = '127.0.0.1:8080';
+    else if (arg.startsWith('--query-mode=')) {
+      const val = arg.split('=')[1];
+      if (val === 'pipeline' || val === 'standard') queryMode = val;
+    } else if (arg === '--query-mode' && args[i + 1]) {
+      const val = args[++i];
+      if (val === 'pipeline' || val === 'standard') queryMode = val;
+    }
     else if (arg === '--readonly') readonly = true;
   }
 
@@ -69,7 +78,7 @@ function parseArgs(): CliArgs {
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
 
-  return { configPath, entitiesPath, project, collection, port, emulator, readonly };
+  return { configPath, entitiesPath, project, collection, port, emulator, queryMode, readonly };
 }
 
 const cliArgs = parseArgs();
@@ -83,6 +92,7 @@ let resolvedEntitiesPath: string | undefined;
 let resolvedReadonly: boolean;
 let resolvedPort: number;
 let resolvedConfigPath: string | undefined;
+let resolvedQueryMode: QueryMode | undefined;
 let resolvedChatEnabled = false;
 let resolvedChatModel = 'sonnet';
 let resolvedChatMaxConcurrency = 2;
@@ -113,6 +123,7 @@ async function init() {
   resolvedEmulator = cliArgs.emulator ?? fileConfig.emulator;
   resolvedEntitiesPath = cliArgs.entitiesPath ?? fileConfig.entities;
   resolvedReadonly = cliArgs.readonly || (fileConfig.editor?.readonly ?? false);
+  resolvedQueryMode = cliArgs.queryMode ?? fileConfig.queryMode;
 
   // Chat config: auto-detect claude on PATH unless chat is explicitly disabled
   const chatConfig = fileConfig.chat;
@@ -158,7 +169,10 @@ async function init() {
   }
 
   // 5. Create graph client
-  graphClient = createGraphClient(db, resolvedCollection, { registry });
+  graphClient = createGraphClient(db, resolvedCollection, {
+    registry,
+    queryMode: resolvedQueryMode,
+  });
 }
 
 async function initEntitiesMode(fileConfig: LoadedConfig) {
@@ -306,6 +320,8 @@ async function start() {
         console.log(`  Defaults:   ${nodeDefaults} node types, ${edgeDefaults} edge types`);
       }
     }
+    const effectiveQueryMode = resolvedEmulator ? 'standard (emulator)' : (resolvedQueryMode ?? 'pipeline');
+    console.log(`  Queries:    ${effectiveQueryMode}`);
     console.log(`  Chat:       ${resolvedChatEnabled ? `enabled (model: ${resolvedChatModel})` : 'disabled (claude CLI not found)'}`);
     console.log(`  Mode:       ${resolvedReadonly ? 'Read-Only' : 'Read/Write'}`);
     console.log(`  Server:     http://localhost:${resolvedPort}`);

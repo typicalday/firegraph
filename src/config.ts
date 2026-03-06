@@ -56,6 +56,17 @@ export interface FiregraphConfig {
   collection?: string;
   /** Firestore emulator address (e.g. '127.0.0.1:8080'). */
   emulator?: string;
+  /**
+   * Query execution backend.
+   *
+   * - `'pipeline'` (default) — Uses Firestore Pipeline API. Requires Enterprise
+   *   Firestore. Enables indexless queries on `data.*` fields.
+   * - `'standard'` — Uses standard Firestore `.where().get()` queries. Not
+   *   recommended for production. See README for risk details.
+   *
+   * When the emulator is active, always falls back to `'standard'`.
+   */
+  queryMode?: import('./types.js').QueryMode;
 
   /**
    * AI chat configuration. Auto-detects `claude` CLI on PATH by default.

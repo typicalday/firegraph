@@ -9,6 +9,8 @@ import {
   createTransactionAdapter,
   createBatchAdapter,
 } from './internal/firestore-adapter.js';
+import { createPipelineQueryAdapter } from './internal/pipeline-adapter.js';
+import type { PipelineQueryAdapter } from './internal/pipeline-adapter.js';
 import { GraphTransactionImpl } from './transaction.js';
 import { GraphBatchImpl } from './batch.js';
 import {
@@ -24,13 +26,20 @@ import type {
   StoredGraphRecord,
   FindEdgesParams,
   FindNodesParams,
+  QueryFilter,
+  QueryOptions,
+  QueryMode,
   BulkOptions,
   BulkResult,
   CascadeResult,
 } from './types.js';
 
+let _standardModeWarned = false;
+
 class GraphClientImpl implements GraphClient {
   private readonly adapter;
+  private readonly pipelineAdapter?: PipelineQueryAdapter;
+  private readonly queryMode: QueryMode;
   private readonly registry?: GraphRegistry;
 
   constructor(
@@ -40,6 +49,50 @@ class GraphClientImpl implements GraphClient {
   ) {
     this.adapter = createFirestoreAdapter(db, collectionPath);
     this.registry = options?.registry;
+
+    // Resolve effective query mode
+    const requestedMode = options?.queryMode ?? 'pipeline';
+    const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
+
+    if (isEmulator) {
+      // Emulator doesn't support Pipeline operations — silently fall back
+      this.queryMode = 'standard';
+    } else {
+      this.queryMode = requestedMode;
+    }
+
+    // Warn once when standard mode is explicitly chosen outside the emulator
+    if (
+      this.queryMode === 'standard' &&
+      !isEmulator &&
+      requestedMode === 'standard' &&
+      !_standardModeWarned
+    ) {
+      _standardModeWarned = true;
+      console.warn(
+        '[firegraph] Standard query mode enabled. This is NOT recommended for production:\n' +
+        '  - Enterprise Firestore: data.* filters cause full collection scans (high billing)\n' +
+        '  - Standard Firestore: data.* filters without composite indexes will fail\n' +
+        '  See: https://github.com/typicalday/firegraph#query-modes',
+      );
+    }
+
+    // Create pipeline adapter when in pipeline mode
+    if (this.queryMode === 'pipeline') {
+      this.pipelineAdapter = createPipelineQueryAdapter(db, collectionPath);
+    }
+  }
+
+  /**
+   * Dispatch a query to the appropriate adapter based on queryMode.
+   * Pipeline queries use the PipelineQueryAdapter; standard queries
+   * use the FirestoreAdapter.
+   */
+  private executeQuery(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]> {
+    if (this.pipelineAdapter) {
+      return this.pipelineAdapter.query(filters, options);
+    }
+    return this.adapter.query(filters, options);
   }
 
   async getNode(uid: string): Promise<StoredGraphRecord | null> {
@@ -63,7 +116,7 @@ class GraphClientImpl implements GraphClient {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
-    return this.adapter.query(plan.filters, plan.options);
+    return this.executeQuery(plan.filters, plan.options);
   }
 
   async findNodes(params: FindNodesParams): Promise<StoredGraphRecord[]> {
@@ -72,7 +125,7 @@ class GraphClientImpl implements GraphClient {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
-    return this.adapter.query(plan.filters, plan.options);
+    return this.executeQuery(plan.filters, plan.options);
   }
 
   async putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
@@ -125,6 +178,7 @@ class GraphClientImpl implements GraphClient {
         this.adapter.collectionPath,
         firestoreTx,
       );
+      // Transactions always use standard queries — Pipeline is not transactionally bound
       const graphTx = new GraphTransactionImpl(adapter, this.registry);
       return fn(graphTx);
     });

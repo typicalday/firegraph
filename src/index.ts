@@ -52,6 +52,7 @@ export type {
   BulkResult,
   BulkBatchError,
   CascadeResult,
+  QueryMode,
 } from './types.js';
 
 export type {

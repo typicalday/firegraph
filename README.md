@@ -91,6 +91,7 @@ const g = createGraphClient(db, 'graph', { registry });
 - `db` — A `Firestore` instance from `@google-cloud/firestore`
 - `collectionPath` — Firestore collection path for all graph data
 - `options.registry` — Optional `GraphRegistry` for schema validation
+- `options.queryMode` — Query backend: `'pipeline'` (default) or `'standard'`
 
 ### Nodes
 
@@ -401,6 +402,61 @@ When you call `findEdges`, the query planner decides the strategy:
    - Collect edges, extract next source UIDs (deduplicated)
    - If budget exceeded, mark `truncated` and stop
 3. Return final hop edges as `nodes`, all hop data in `hops`
+
+## Query Modes
+
+Firegraph supports two query backends. The mode is set when creating a client:
+
+```typescript
+// Pipeline mode (default) — requires Enterprise Firestore
+const g = createGraphClient(db, 'graph');
+
+// Standard mode (opt-in) — for emulator or small datasets
+const g = createGraphClient(db, 'graph', { queryMode: 'standard' });
+```
+
+### Pipeline Mode (Default)
+
+Uses the Firestore Pipeline API (`db.pipeline()`). This is the recommended mode for production.
+
+- Enables queries on `data.*` fields without composite indexes
+- Requires **Firestore Enterprise** edition
+- Pipeline API is currently in Preview
+
+### Standard Mode
+
+Uses standard Firestore queries (`.where().get()`). Use only if you understand the limitations:
+
+| Firestore Edition | With `data.*` Filters | Risk |
+|---|---|---|
+| Enterprise | Full collection scan (no index needed) | High billing on large collections |
+| Standard | Fails without composite index | Query errors for unindexed fields |
+
+Standard mode is appropriate for:
+- **Emulator** — the emulator doesn't support pipelines, so firegraph auto-falls back to standard mode when `FIRESTORE_EMULATOR_HOST` is set
+- **Small datasets** where full scans are acceptable
+- Projects that manage their own composite indexes
+
+### Emulator Auto-Fallback
+
+When `FIRESTORE_EMULATOR_HOST` is detected, firegraph automatically uses standard mode regardless of the `queryMode` setting. No configuration needed.
+
+### Transactions
+
+Transactions always use standard Firestore queries, even when the client is in pipeline mode. This is because Pipeline queries are not transactionally bound — they see committed state, not the transaction's isolated view.
+
+### Config File
+
+Set the query mode in `firegraph.config.ts`:
+
+```typescript
+export default defineConfig({
+  entities: './entities',
+  queryMode: 'pipeline', // or 'standard'
+});
+```
+
+Or via CLI flag: `npx firegraph editor --query-mode pipeline`
 
 ## Development
 

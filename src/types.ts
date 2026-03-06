@@ -102,8 +102,24 @@ export interface DiscoveryResult {
   edges: Map<string, DiscoveredEntity>;
 }
 
+/** Controls which Firestore query backend is used. */
+export type QueryMode = 'pipeline' | 'standard';
+
 export interface GraphClientOptions {
   registry?: GraphRegistry;
+  /**
+   * Query execution backend.
+   *
+   * - `'pipeline'` (default) — Uses Firestore Pipeline API. Requires Enterprise
+   *   Firestore. Enables indexless queries on `data.*` fields.
+   * - `'standard'` — Uses standard Firestore `.where().get()` queries. Requires
+   *   composite indexes for `data.*` filters or risks full collection scans
+   *   (Enterprise) / query failures (Standard Firestore).
+   *
+   * When `FIRESTORE_EMULATOR_HOST` is set, the client auto-falls back to
+   * `'standard'` regardless of this setting (emulator doesn't support pipelines).
+   */
+  queryMode?: QueryMode;
 }
 
 export interface GraphRegistry {

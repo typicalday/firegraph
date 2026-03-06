@@ -42,6 +42,7 @@ All records live in a single Firestore collection. Document IDs:
 | `src/errors.ts` | Error hierarchy: `FiregraphError` base with typed subclasses |
 | `src/types.ts` | All TypeScript interfaces and types |
 | `src/internal/firestore-adapter.ts` | Low-level Firestore operations (standard, transaction, batch adapters) |
+| `src/internal/pipeline-adapter.ts` | Pipeline query adapter — translates `QueryFilter[]` to Pipeline expressions |
 | `src/internal/constants.ts` | `NODE_RELATION = 'is'`, shard config |
 
 ### Interfaces
@@ -73,6 +74,8 @@ pnpm emulator:stop      # kill emulator
 
 - **Unit tests** (`tests/unit/`): Pure logic, no Firestore. Mock `GraphReader` for traverse tests.
 - **Integration tests** (`tests/integration/`): Real Firestore emulator. Each test gets a unique collection path via `uniqueCollectionPath()`.
+- **Pipeline integration tests** (`tests/integration-pipeline/`): Real Enterprise Firestore. Tests `createGraphClient` with `queryMode: 'pipeline'`. Requires `PIPELINE_TEST_PROJECT` and `PIPELINE_TEST_DATABASE` env vars. Run via `pnpm test:pipeline:integration`.
+- **Pipeline research tests** (`tests/pipeline/`): Exploratory tests validating raw Pipeline API capabilities (not firegraph integration). Marked for removal once Pipeline exits Preview.
 - **Setup**: `tests/integration/setup.ts` initializes `@google-cloud/firestore` against `127.0.0.1:8188`.
 - **Fixtures**: `tests/helpers/fixtures.ts` has `tourData`, `departureData`, `riderData`, etc.
 
@@ -687,6 +690,25 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 ### Adapter Pattern
 
 Three adapters (`FirestoreAdapter`, `TransactionAdapter`, `BatchAdapter`) provide the same interface over different Firestore execution contexts. The client/transaction/batch classes delegate to these adapters.
+
+### Dual-Mode Query Engine
+
+`GraphClientImpl` supports two query backends controlled by `queryMode` in `GraphClientOptions`:
+
+- **`'pipeline'`** (default) — Uses `PipelineQueryAdapter` from `src/internal/pipeline-adapter.ts`. Translates `QueryFilter[]` to Firestore Pipeline expressions (`Pipelines.equal()`, `Pipelines.greaterThan()`, etc.) and executes via `db.pipeline().collection().where().execute()`. Requires Enterprise Firestore. The `Pipelines` module is lazily loaded via dynamic `import()`.
+- **`'standard'`** — Uses `FirestoreAdapter.query()` which builds standard `.where().get()` queries. Risky for production: Enterprise Firestore does full collection scans for `data.*` filters; Standard Firestore fails without composite indexes.
+
+**Query execution flow:**
+1. `findEdges(params)` / `findNodes(params)` → `buildEdgeQueryPlan()` / `buildNodeQueryPlan()`
+2. If GET strategy (all 3 identifiers present) → `adapter.getDoc()` (bypasses query mode)
+3. If QUERY strategy → `executeQuery(filters, options)` → dispatches to either `pipelineAdapter.query()` or `adapter.query()` based on `queryMode`
+
+**Key rules:**
+- Pipeline is the default. Users must explicitly opt into standard mode.
+- Emulator auto-fallback: `FIRESTORE_EMULATOR_HOST` set → always standard (emulator doesn't support pipelines).
+- Transactions always use standard queries (`TransactionAdapter`) regardless of `queryMode` — Pipeline is not transactionally bound.
+- Writes and doc lookups are always standard — pipeline adapter only handles the `query()` path.
+- A one-time `console.warn` fires when standard mode is explicitly set outside the emulator.
 
 ### Traversal
 
