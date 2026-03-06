@@ -1,6 +1,5 @@
 /**
  * Browser client for the editor's built-in chat API.
- * Replaces the abri client — calls the editor server directly.
  */
 
 import type { ChatArtifact } from './artifact-types';

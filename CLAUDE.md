@@ -10,11 +10,13 @@ Firegraph is a TypeScript library that provides a graph data model on top of Fir
 
 Every record in Firestore is a **triple**: `(aType, aUid) -[axbType]-> (bType, bUid)`.
 
-- **Nodes** are stored as self-loops: `(tour, tour1) -[is]-> (tour, tour1)`. The special relation `is` (constant `NODE_RELATION`) marks a record as a node.
-- **Edges** are standard directed edges: `(tour, tour1) -[hasDeparture]-> (departure, dep1)`.
+- **Nodes** are stored as self-loops: `(tour, Kj7vNq2mP9xR4wL1tY8s3) -[is]-> (tour, Kj7vNq2mP9xR4wL1tY8s3)`. The special relation `is` (constant `NODE_RELATION`) marks a record as a node.
+- **Edges** are standard directed edges: `(tour, Kj7vNq2mP9xR4wL1tY8s3) -[hasDeparture]-> (departure, Xp4nTk8qW2vR7mL9jY5a1)`.
+
+UIDs **must** be generated via `generateId()` (21-char nanoid). Short human-readable strings like `tour1` will create Firestore hotspots because lexicographically similar IDs concentrate writes on the same storage nodes.
 
 All records live in a single Firestore collection. Document IDs:
-- Nodes: the UID itself (`tour1`)
+- Nodes: the UID itself (e.g., `Kj7vNq2mP9xR4wL1tY8s3`)
 - Edges: `shard:aUid:axbType:bUid` where shard is first hex char of SHA-256 hash (16-bucket distribution to avoid hotspots)
 
 ### Key Modules

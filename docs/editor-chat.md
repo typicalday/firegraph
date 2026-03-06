@@ -103,16 +103,3 @@ The chat module registers these Express routes (alongside the existing tRPC rout
 - **Claude CLI**: Install from [claude.ai](https://claude.ai). The editor checks for `claude` on PATH at startup.
 - **Editor server running**: The chat uses `npx firegraph query` under the hood, which talks to the running editor server's API.
 
-## Firegraph Chat Skill (Alternative)
-
-For users who prefer a skill-based approach, the bundled `firegraph-chat` Claude Code skill is still available. It uses [abri](https://github.com/typicalday/abri) as a streaming HTTP bridge between the editor and a Claude Code agent session.
-
-```bash
-# Install the skill
-npx firegraph install-skill
-
-# Or install for this project only
-npx firegraph install-skill --project
-```
-
-See the skill's `SKILL.md` for configuration details.

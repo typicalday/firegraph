@@ -62,15 +62,17 @@ Firegraph stores everything as **triples** in a single Firestore collection:
 ```
 
 - **Nodes** are self-referencing edges with the special relation `is`:
-  `(tour, tour1) -[is]-> (tour, tour1)`
+  `(tour, Kj7vNq2mP9xR4wL1tY8s3) -[is]-> (tour, Kj7vNq2mP9xR4wL1tY8s3)`
 - **Edges** are directed relationships between nodes:
-  `(tour, tour1) -[hasDeparture]-> (departure, dep1)`
+  `(tour, Kj7vNq2mP9xR4wL1tY8s3) -[hasDeparture]-> (departure, Xp4nTk8qW2vR7mL9jY5a1)`
 
 Every record carries a `data` payload (arbitrary JSON), plus `createdAt` and `updatedAt` server timestamps.
 
 ### Document IDs
 
-- **Nodes**: The UID itself (e.g., `tour1`)
+UIDs **must** be generated via `generateId()` (21-char nanoid). Short sequential strings like `tour1` create Firestore write hotspots.
+
+- **Nodes**: The UID itself (e.g., `Kj7vNq2mP9xR4wL1tY8s3`)
 - **Edges**: `shard:aUid:axbType:bUid` where the shard prefix (0–f) is derived from SHA-256, distributing writes across 16 buckets to avoid Firestore hotspots
 
 ## API Reference
@@ -93,18 +95,20 @@ const g = createGraphClient(db, 'graph', { registry });
 ### Nodes
 
 ```typescript
+const tourId = generateId();
+
 // Create or overwrite a node
-await g.putNode('tour', 'tour1', { name: 'Dolomites Classic' });
+await g.putNode('tour', tourId, { name: 'Dolomites Classic' });
 
 // Read a node
-const node = await g.getNode('tour1');
+const node = await g.getNode(tourId);
 // → StoredGraphRecord | null
 
 // Update fields (merge)
-await g.updateNode('tour1', { 'data.difficulty': 'extreme' });
+await g.updateNode(tourId, { 'data.difficulty': 'extreme' });
 
 // Delete a node
-await g.removeNode('tour1');
+await g.removeNode(tourId);
 
 // Find all nodes of a type
 const tours = await g.findNodes({ aType: 'tour' });
@@ -113,18 +117,20 @@ const tours = await g.findNodes({ aType: 'tour' });
 ### Edges
 
 ```typescript
+const depId = generateId();
+
 // Create or overwrite an edge
-await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
+await g.putEdge('tour', tourId, 'hasDeparture', 'departure', depId, { order: 0 });
 
 // Read a specific edge
-const edge = await g.getEdge('tour1', 'hasDeparture', 'dep1');
+const edge = await g.getEdge(tourId, 'hasDeparture', depId);
 // → StoredGraphRecord | null
 
 // Check existence
-const exists = await g.edgeExists('tour1', 'hasDeparture', 'dep1');
+const exists = await g.edgeExists(tourId, 'hasDeparture', depId);
 
 // Delete an edge
-await g.removeEdge('tour1', 'hasDeparture', 'dep1');
+await g.removeEdge(tourId, 'hasDeparture', depId);
 ```
 
 ### Querying Edges
@@ -133,17 +139,17 @@ await g.removeEdge('tour1', 'hasDeparture', 'dep1');
 
 ```typescript
 // Forward: all departures of a tour
-await g.findEdges({ aUid: 'tour1', axbType: 'hasDeparture' });
+await g.findEdges({ aUid: tourId, axbType: 'hasDeparture' });
 
 // Reverse: all tours that have this departure
-await g.findEdges({ axbType: 'hasDeparture', bUid: 'dep1' });
+await g.findEdges({ axbType: 'hasDeparture', bUid: depId });
 
 // Type-scoped: all hasDeparture edges from any tour
 await g.findEdges({ aType: 'tour', axbType: 'hasDeparture' });
 
 // With limit and ordering
 await g.findEdges({
-  aUid: 'tour1',
+  aUid: tourId,
   axbType: 'hasDeparture',
   limit: 5,
   orderBy: { field: 'data.order', direction: 'asc' },
@@ -156,12 +162,12 @@ Full read-write transactions with automatic retry:
 
 ```typescript
 await g.runTransaction(async (tx) => {
-  const dep = await tx.getNode('dep1');
+  const dep = await tx.getNode(depId);
   const count = (dep?.data.registeredRiders as number) || 0;
 
   if (count < 30) {
-    await tx.putEdge('departure', 'dep1', 'hasRider', 'rider', riderId, {});
-    await tx.updateNode('dep1', { 'data.registeredRiders': count + 1 });
+    await tx.putEdge('departure', depId, 'hasRider', 'rider', riderId, {});
+    await tx.updateNode(depId, { 'data.registeredRiders': count + 1 });
   }
 });
 ```
@@ -174,9 +180,11 @@ Atomic batch writes (no reads):
 
 ```typescript
 const batch = g.batch();
-await batch.putNode('rider', 'r1', { name: 'Alice' });
-await batch.putNode('rider', 'r2', { name: 'Bob' });
-await batch.putEdge('rider', 'r1', 'friends', 'rider', 'r2', {});
+const aliceId = generateId();
+const bobId = generateId();
+await batch.putNode('rider', aliceId, { name: 'Alice' });
+await batch.putNode('rider', bobId, { name: 'Bob' });
+await batch.putEdge('rider', aliceId, 'friends', 'rider', bobId, {});
 await batch.commit();
 ```
 
@@ -188,7 +196,7 @@ Multi-hop traversal with budget enforcement, concurrency control, and in-memory 
 import { createTraversal } from 'firegraph';
 
 // Tour → Departures → Riders (2 hops)
-const result = await createTraversal(g, 'tour1')
+const result = await createTraversal(g, tourId)
   .follow('hasDeparture', { limit: 5, bType: 'departure' })
   .follow('hasRider', {
     limit: 20,
@@ -208,7 +216,7 @@ Walk edges backwards to find parents:
 
 ```typescript
 // Rider → Departures → Tours
-const result = await createTraversal(g, 'rider1')
+const result = await createTraversal(g, riderId)
   .follow('hasRider', { direction: 'reverse' })
   .follow('hasDeparture', { direction: 'reverse' })
   .run();
@@ -220,7 +228,7 @@ const result = await createTraversal(g, 'rider1')
 
 ```typescript
 await g.runTransaction(async (tx) => {
-  const result = await createTraversal(tx, 'tour1')
+  const result = await createTraversal(tx, tourId)
     .follow('hasDeparture')
     .follow('hasRider')
     .run();
@@ -278,11 +286,12 @@ const registry = createRegistry([
 const g = createGraphClient(db, 'graph', { registry });
 
 // This validates against the registry before writing:
-await g.putNode('tour', 'tour1', { name: 'Alps', difficulty: 'hard' }); // OK
-await g.putNode('tour', 'tour1', { name: 123 }); // throws ValidationError
+const id = generateId();
+await g.putNode('tour', id, { name: 'Alps', difficulty: 'hard' }); // OK
+await g.putNode('tour', id, { name: 123 }); // throws ValidationError
 
 // Unregistered triples are rejected:
-await g.putEdge('tour', 't1', 'unknownRel', 'x', 'x1', {}); // throws RegistryViolationError
+await g.putEdge('tour', id, 'unknownRel', 'x', generateId(), {}); // throws RegistryViolationError
 ```
 
 ### ID Generation
@@ -311,7 +320,7 @@ All errors extend `FiregraphError` with a `code` property:
 import { FiregraphError, ValidationError } from 'firegraph';
 
 try {
-  await g.putNode('tour', 'tour1', { name: 123 });
+  await g.putNode('tour', generateId(), { name: 123 });
 } catch (err) {
   if (err instanceof ValidationError) {
     console.error(err.code);    // 'VALIDATION_ERROR'

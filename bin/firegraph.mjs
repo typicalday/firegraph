@@ -86,71 +86,6 @@ if (subcommand === 'editor') {
     console.error(`Error: ${err.message}`);
     process.exit(1);
   }
-} else if (subcommand === 'install-skill') {
-  const args = parseArgs(process.argv.slice(3));
-  const skillName = process.argv[3] && !process.argv[3].startsWith('--') ? process.argv[3] : 'firegraph-chat';
-  const uninstall = args.uninstall || false;
-  const project = args.project || false;
-
-  const skillSource = path.join(__dirname, '..', 'skills', skillName);
-  if (!fs.existsSync(skillSource)) {
-    console.error(`Skill "${skillName}" not found in firegraph package.`);
-    console.error(`Available skills: ${fs.readdirSync(path.join(__dirname, '..', 'skills')).join(', ')}`);
-    process.exit(1);
-  }
-
-  // Determine target directory
-  const targetBase = project
-    ? path.join(process.cwd(), '.claude', 'skills')
-    : path.join(process.env.HOME, '.claude', 'skills');
-  const targetLink = path.join(targetBase, skillName);
-
-  if (uninstall) {
-    if (fs.existsSync(targetLink)) {
-      const stat = fs.lstatSync(targetLink);
-      if (stat.isSymbolicLink()) {
-        fs.unlinkSync(targetLink);
-        console.log(`Removed symlink: ${targetLink}`);
-      } else {
-        console.error(`${targetLink} exists but is not a symlink. Remove it manually if intended.`);
-        process.exit(1);
-      }
-    } else {
-      console.log(`Nothing to remove — ${targetLink} does not exist.`);
-    }
-    process.exit(0);
-  }
-
-  // Create target directory if needed
-  fs.mkdirSync(targetBase, { recursive: true });
-
-  // Check if already installed
-  if (fs.existsSync(targetLink)) {
-    const stat = fs.lstatSync(targetLink);
-    if (stat.isSymbolicLink()) {
-      const existing = fs.readlinkSync(targetLink);
-      const resolvedExisting = path.resolve(path.dirname(targetLink), existing);
-      const resolvedSource = path.resolve(skillSource);
-      if (resolvedExisting === resolvedSource) {
-        console.log(`Already installed: ${targetLink} -> ${skillSource}`);
-        process.exit(0);
-      }
-      // Different target — replace
-      fs.unlinkSync(targetLink);
-    } else {
-      console.error(`${targetLink} already exists and is not a symlink.`);
-      console.error('Remove it manually or use a different install location.');
-      process.exit(1);
-    }
-  }
-
-  fs.symlinkSync(skillSource, targetLink);
-  const scope = project ? 'project' : 'user';
-  console.log(`Installed firegraph-chat skill (${scope}-level):`);
-  console.log(`  ${targetLink} -> ${skillSource}`);
-  console.log('');
-  console.log('The skill will be available next time you start Claude Code' + (project ? ' in this project.' : '.'));
-
 } else if (subcommand === '--help' || subcommand === '-h' || !subcommand) {
   console.log('');
   console.log('  Usage: firegraph <command> [options]');
@@ -159,7 +94,6 @@ if (subcommand === 'editor') {
   console.log('    editor         Launch the Firegraph Editor UI');
   console.log('    query          Query the graph via the editor API');
   console.log('    codegen        Generate TypeScript types from entity schemas');
-  console.log('    install-skill  Install the firegraph-chat Claude Code skill');
   console.log('');
   console.log('  Editor options:');
   console.log('    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)');
@@ -177,10 +111,6 @@ if (subcommand === 'editor') {
   console.log('    --entities <path>      Path to entities directory (default: ./entities)');
   console.log('    --out <path>           Output file path (default: stdout)');
   console.log('');
-  console.log('  Skill options:');
-  console.log('    --project              Install to .claude/skills/ in current project (default: ~/.claude/skills/)');
-  console.log('    --uninstall            Remove the skill symlink');
-  console.log('');
   console.log('  Config file:');
   console.log('    Create a firegraph.config.ts in your project root to avoid passing');
   console.log('    flags every time. CLI flags override config file values.');
@@ -191,8 +121,6 @@ if (subcommand === 'editor') {
   console.log('    npx firegraph editor --entities ./entities            # per-entity convention');
   console.log('    npx firegraph codegen --entities ./entities           # types to stdout');
   console.log('    npx firegraph codegen --entities ./entities --out src/generated/types.ts');
-  console.log('    npx firegraph install-skill                           # install skill globally');
-  console.log('    npx firegraph install-skill --project                 # install skill for this project');
   console.log('');
 } else {
   console.error(`Unknown command: ${subcommand}`);

@@ -168,9 +168,9 @@ function printHelp(): void {
   console.log('');
   console.log('  Examples:');
   console.log('    npx firegraph query schema');
-  console.log('    npx firegraph query get user123');
+  console.log('    npx firegraph query get Kj7vNq2mP9xR4wL1tY8s3');
   console.log('    npx firegraph query find-nodes task --limit 10');
-  console.log('    npx firegraph query find-edges --aUid user1 --axbType hasTask');
+  console.log('    npx firegraph query find-edges --aUid Kj7vNq2mP9xR4wL1tY8s3 --axbType hasTask');
   console.log('    npx firegraph query search "John Doe"');
   console.log('');
 }

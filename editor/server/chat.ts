@@ -71,7 +71,7 @@ let systemPromptPath: string | null = null;
 function ensureSystemPrompt(schemaMetadata: SchemaMetadata): string {
   if (systemPromptPath) return systemPromptPath;
 
-  const dir = join(tmpdir(), 'firegraph-chat');
+  const dir = join(tmpdir(), 'firegraph-editor-chat');
   mkdirSync(dir, { recursive: true });
   systemPromptPath = join(dir, 'system-prompt.txt');
 

@@ -209,8 +209,10 @@ The registry validates:
 
 Every record is a triple: `(aType, aUid) -[axbType]-> (bType, bUid)`.
 
-- **Nodes** are self-loops with relation `is`: `(task, task1) -[is]-> (task, task1)`
-- **Edges** are directed: `(task, task1) -[hasStep]-> (step, step1)`
+- **Nodes** are self-loops with relation `is`: `(task, Kj7vNq2mP9xR4wL1tY8s3) -[is]-> (task, Kj7vNq2mP9xR4wL1tY8s3)`
+- **Edges** are directed: `(task, Kj7vNq2mP9xR4wL1tY8s3) -[hasStep]-> (step, Xp4nTk8qW2vR7mL9jY5a1)`
+
+UIDs must be generated via `generateId()` (21-char nanoid). Short sequential strings like `task1` create Firestore write hotspots.
 
 ### ID Generation
 
@@ -409,7 +411,7 @@ npx firegraph editor --readonly
 - Navigate edges (outgoing and incoming) with inverse labels
 - Multi-hop traversal builder
 - View Gallery for custom Web Component views
-- AI chat panel for graph-aware queries (requires abri)
+- AI chat panel for graph-aware queries (auto-detects `claude` CLI)
 - Dark theme UI
 
 ### AI Chat (Optional)
