@@ -124,5 +124,78 @@ describe('pipeline client reads', () => {
       });
       expect(results.length).toBe(2);
     });
+
+    it('findEdges reverse lookup (axbType + bUid)', async () => {
+      const results = await pipeline.findEdges({
+        axbType: 'hasDeparture',
+        bUid: 'dep1',
+      });
+      expect(results.length).toBe(2); // tour1->dep1 and tour2->dep1
+      for (const r of results) {
+        expect(r.bUid).toBe('dep1');
+      }
+    });
+
+    it('findEdges type-scoped forward (aType + axbType)', async () => {
+      const results = await pipeline.findEdges({
+        aType: 'tour',
+        axbType: 'hasDeparture',
+      });
+      expect(results.length).toBe(3);
+      for (const r of results) {
+        expect(r.aType).toBe('tour');
+      }
+    });
+
+    it('findEdges type-scoped reverse (axbType + bType)', async () => {
+      const results = await pipeline.findEdges({
+        axbType: 'hasDeparture',
+        bType: 'departure',
+      });
+      expect(results.length).toBe(3);
+      for (const r of results) {
+        expect(r.bType).toBe('departure');
+      }
+    });
+
+    it('getNode returns null for nonexistent node', async () => {
+      const result = await pipeline.getNode('nonexistent-read');
+      expect(result).toBeNull();
+    });
+
+    it('getEdge returns null for nonexistent edge', async () => {
+      const result = await pipeline.getEdge('nonexistent', 'hasDeparture', 'also-nonexistent');
+      expect(result).toBeNull();
+    });
+
+    it('edgeExists returns false for nonexistent edge', async () => {
+      const result = await pipeline.edgeExists('nonexistent', 'hasDeparture', 'also-nonexistent');
+      expect(result).toBe(false);
+    });
+
+    it('findEdges returns empty for no matches', async () => {
+      const results = await pipeline.findEdges({
+        aUid: 'nonexistent',
+        axbType: 'hasDeparture',
+      });
+      expect(results.length).toBe(0);
+    });
+
+    it('findNodes returns empty for nonexistent type', async () => {
+      const results = await pipeline.findNodes({ aType: 'nonexistent-type' });
+      expect(results.length).toBe(0);
+    });
+
+    it('findEdges smart optimization (aUid + axbType + bUid) uses GET', async () => {
+      // When all 3 identifiers are provided, it should do a direct doc lookup
+      const result = await pipeline.findEdges({
+        aUid: 'tour1',
+        axbType: 'hasDeparture',
+        bUid: 'dep1',
+      });
+      expect(result.length).toBe(1);
+      expect(result[0].aUid).toBe('tour1');
+      expect(result[0].bUid).toBe('dep1');
+    });
   });
 });

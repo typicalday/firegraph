@@ -75,8 +75,8 @@
     "test:watch": "vitest",
     "emulator:start": "cd tests/emulator && firebase emulators:start -P demo-firegraph",
     "emulator:stop": "npx kill-port -y 4188 8188",
-    "test:pipeline": "vitest run tests/pipeline/",
-    "test:pipeline:integration": "vitest run tests/integration-pipeline/"
+    "test:pipeline": "vitest run tests/pipeline/ --config tests/pipeline/vitest.config.ts",
+    "test:pipeline:integration": "vitest run --config tests/integration-pipeline/vitest.config.ts"
   },
   "peerDependencies": {
     "@google-cloud/firestore": "^8.0.0",

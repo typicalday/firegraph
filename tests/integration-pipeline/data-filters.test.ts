@@ -99,4 +99,92 @@ describe('pipeline data filters (no composite index needed)', () => {
     });
     expect(results.length).toBe(0);
   });
+
+  it('data filter with orderBy sorts results correctly', async () => {
+    const results = await g.findEdges({
+      axbType: 'bookedFor',
+      where: [{ field: 'paid', op: '==', value: true }],
+      orderBy: { field: 'data.price', direction: 'desc' },
+    });
+    expect(results.length).toBe(2);
+    expect(results[0].data.price).toBe(5000);
+    expect(results[1].data.price).toBe(4500);
+  });
+
+  it('data filter with limit constrains result set', async () => {
+    const results = await g.findEdges({
+      axbType: 'hasDeparture',
+      where: [{ field: 'guide', op: '==', value: 'Marco' }],
+      limit: 1,
+    });
+    expect(results.length).toBe(1);
+    expect(results[0].data.guide).toBe('Marco');
+  });
+
+  it('data filter with orderBy + limit returns top-N sorted', async () => {
+    const results = await g.findEdges({
+      axbType: 'bookedFor',
+      orderBy: { field: 'data.price', direction: 'asc' },
+      limit: 2,
+    });
+    expect(results.length).toBe(2);
+    expect(results[0].data.price).toBe(4500);
+    expect(results[1].data.price).toBe(5000);
+  });
+
+  it('inequality filter (>=) on data field', async () => {
+    const results = await g.findEdges({
+      axbType: 'bookedFor',
+      where: [{ field: 'price', op: '>=', value: 5000 }],
+    });
+    expect(results.length).toBe(2);
+    for (const r of results) {
+      expect(r.data.price).toBeGreaterThanOrEqual(5000);
+    }
+  });
+
+  it('inequality filter (<) on data field', async () => {
+    const results = await g.findEdges({
+      axbType: 'bookedFor',
+      where: [{ field: 'price', op: '<', value: 5000 }],
+    });
+    expect(results.length).toBe(1);
+    expect(results[0].data.price).toBe(4500);
+  });
+
+  it('bUid + data filter on edges', async () => {
+    const results = await g.findEdges({
+      axbType: 'bookedFor',
+      bUid: 'dep1',
+      where: [{ field: 'paid', op: '==', value: true }],
+    });
+    expect(results.length).toBe(2);
+    for (const r of results) {
+      expect(r.bUid).toBe('dep1');
+      expect(r.data.paid).toBe(true);
+    }
+  });
+
+  it('findEdges (is) with data filter queries nodes via pipeline', async () => {
+    // findNodes doesn't support where clauses, so use findEdges with axbType: 'is'
+    const results = await g.findEdges({
+      aType: 'tour',
+      axbType: 'is',
+      where: [{ field: 'difficulty', op: '==', value: 'hard' }],
+    });
+    expect(results.length).toBe(1);
+    expect(results[0].data.name).toBe('Dolomites Classic');
+  });
+
+  it('findEdges (is) with orderBy + limit queries nodes via pipeline', async () => {
+    const results = await g.findEdges({
+      aType: 'tour',
+      axbType: 'is',
+      orderBy: { field: 'data.price', direction: 'asc' },
+      limit: 2,
+    });
+    expect(results.length).toBe(2);
+    expect(results[0].data.price).toBe(2000);
+    expect(results[1].data.price).toBe(3500);
+  });
 });
