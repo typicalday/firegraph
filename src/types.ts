@@ -1,4 +1,4 @@
-import type { Timestamp, FieldValue, WhereFilterOp } from 'firebase-admin/firestore';
+import type { Timestamp, FieldValue, WhereFilterOp } from '@google-cloud/firestore';
 
 export interface GraphRecord {
   aType: string;

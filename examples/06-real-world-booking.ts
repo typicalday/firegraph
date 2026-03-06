@@ -10,8 +10,7 @@
  * Run against the emulator:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/06-real-world-booking.ts
  */
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { Firestore } from '@google-cloud/firestore';
 import {
   createGraphClient,
   createRegistry,
@@ -20,8 +19,7 @@ import {
 } from '../src/index.js';
 import type { GraphClient, GraphTransaction } from '../src/types.js';
 
-initializeApp({ projectId: 'demo-firegraph' });
-const db = getFirestore();
+const db = new Firestore({ projectId: 'demo-firegraph' });
 
 // ── JSON Schemas ────────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ echo "Using configuration:"
 echo "  FIREBASE_PROJECT_ID:    $PROJECT"
 echo "  FIRESTORE_EMULATOR:     $HOST:$PORT"
 
-# Export for firebase-admin SDK
+# Export for @google-cloud/firestore SDK
 export FIRESTORE_EMULATOR_HOST="$HOST:$PORT"
 
 # Check if emulator is already running

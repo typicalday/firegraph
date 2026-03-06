@@ -13,12 +13,14 @@ export interface ViewBundle {
  * `firegraph/svelte` imports.
  *
  * View files import from these paths. Rather than bundling the entire
- * firegraph package (which pulls in firebase-admin, crypto, fs, etc.),
+ * firegraph package (which pulls in @google-cloud/firestore, crypto, fs, etc.),
  * we provide virtual modules containing only the browser-safe adapter
  * functions with zero Node.js dependencies.
  *
  * React and Svelte themselves are NOT shimmed — they are resolved from
  * the project's node_modules and bundled by esbuild.
+ *
+ * Note: firegraph now depends on @google-cloud/firestore (not firebase-admin).
  */
 function firegraphBrowserShim(): Plugin {
   const SHIM_NAMESPACE = 'firegraph-browser-shim';

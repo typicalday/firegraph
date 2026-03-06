@@ -2,9 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
-import type { Firestore } from 'firebase-admin/firestore';
+import { Firestore } from '@google-cloud/firestore';
 import { createGraphClient } from '../../src/index.js';
 import type { GraphClient, GraphRegistry, DiscoveryResult } from '../../src/types.js';
 import { createRegistry } from '../../src/registry.js';
@@ -131,28 +129,15 @@ async function init() {
   const isProduction = process.env.NODE_ENV === 'production';
   resolvedPort = cliArgs.port ?? fileConfig.editor?.port ?? (isProduction ? 3883 : 3884);
 
-  // 3. Init Firebase with merged values
+  // 3. Init Firestore with merged values
   if (resolvedEmulator) {
     process.env.FIRESTORE_EMULATOR_HOST = resolvedEmulator;
   }
 
-  const appOptions: Record<string, unknown> = {};
-  if (resolvedProject) appOptions.projectId = resolvedProject;
+  const firestoreOptions: ConstructorParameters<typeof Firestore>[0] = {};
+  if (resolvedProject) firestoreOptions.projectId = resolvedProject;
 
-  try {
-    if (resolvedEmulator) {
-      initializeApp(appOptions);
-    } else {
-      initializeApp({
-        ...appOptions,
-        credential: applicationDefault(),
-      });
-    }
-  } catch {
-    // App may already be initialized
-  }
-
-  db = getFirestore();
+  db = new Firestore(firestoreOptions);
 
   // 4. Load entities
   if (resolvedEntitiesPath) {

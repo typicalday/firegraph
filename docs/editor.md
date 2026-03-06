@@ -14,11 +14,10 @@ This starts the editor at `http://localhost:3883`. It imports your TypeScript re
 ## Prerequisites
 
 - **Node.js 18+**
-- **firebase-admin** installed in your project (peer dependency)
-- **zod** installed in your project (peer dependency)
+- **@google-cloud/firestore** `^8.0.0` installed in your project (peer dependency — auto-installed by npm 7+/pnpm)
 - **Authentication**: Either Application Default Credentials (`gcloud auth application-default login`) or the Firestore emulator running
 
-The editor resolves `firebase-admin` and `zod` from your project's `node_modules` at runtime. `jiti` (used to import TypeScript registry files) is included as a dependency of firegraph. Everything else (Express, React, etc.) is bundled inside firegraph.
+The editor resolves `@google-cloud/firestore` from your project's `node_modules` at runtime. `jiti` (used to import TypeScript registry files) is included as a dependency of firegraph. Everything else (Express, React, etc.) is bundled inside firegraph.
 
 ## Registry Requirement
 

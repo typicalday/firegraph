@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from '@google-cloud/firestore';
 import { createGraphClient } from '../../src/client.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 

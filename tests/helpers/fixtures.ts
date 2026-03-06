@@ -11,9 +11,9 @@ export const departureData = {
 };
 
 export const riderData = {
-  firstName: 'Alex',
-  lastName: 'Rojas',
-  email: 'alex@example.com',
+  firstName: 'Jamie',
+  lastName: 'Chen',
+  email: 'jamie@example.com',
 };
 
 export const bookingEdgeData = {

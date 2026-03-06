@@ -5,10 +5,12 @@ A typed graph data layer for Firebase Cloud Firestore. Store nodes and edges in 
 ## Install
 
 ```bash
-npm install firegraph firebase-admin
+npm install firegraph
 # or
-pnpm add firegraph firebase-admin
+pnpm add firegraph
 ```
+
+Firegraph requires `@google-cloud/firestore` `^8.0.0` as a peer dependency. npm 7+ and pnpm auto-install peer deps, so this is typically handled for you.
 
 When installing from git (not npm), firegraph builds itself via a `prepare` script. The consuming project needs `tsup` and `typescript` as dev dependencies:
 
@@ -29,12 +31,10 @@ npm install -D tsup typescript
 ## Quick Start
 
 ```typescript
-import { initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { Firestore } from '@google-cloud/firestore';
 import { createGraphClient, generateId } from 'firegraph';
 
-initializeApp();
-const db = getFirestore();
+const db = new Firestore();
 const g = createGraphClient(db, 'graph');
 
 // Create nodes
@@ -88,7 +88,7 @@ const g = createGraphClient(db, 'graph', { registry });
 ```
 
 **Parameters:**
-- `db` — A `firestore.Firestore` instance from firebase-admin
+- `db` — A `Firestore` instance from `@google-cloud/firestore`
 - `collectionPath` — Firestore collection path for all graph data
 - `options.registry` — Optional `GraphRegistry` for schema validation
 

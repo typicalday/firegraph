@@ -1,4 +1,4 @@
-import type { Firestore, Query, Transaction } from 'firebase-admin/firestore';
+import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
 import type { StoredGraphRecord, QueryFilter, QueryOptions } from '../types.js';
 
 export interface FirestoreAdapter {

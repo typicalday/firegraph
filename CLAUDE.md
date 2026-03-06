@@ -73,20 +73,20 @@ pnpm emulator:stop      # kill emulator
 
 - **Unit tests** (`tests/unit/`): Pure logic, no Firestore. Mock `GraphReader` for traverse tests.
 - **Integration tests** (`tests/integration/`): Real Firestore emulator. Each test gets a unique collection path via `uniqueCollectionPath()`.
-- **Setup**: `tests/integration/setup.ts` initializes firebase-admin against `127.0.0.1:8188`.
+- **Setup**: `tests/integration/setup.ts` initializes `@google-cloud/firestore` against `127.0.0.1:8188`.
 - **Fixtures**: `tests/helpers/fixtures.ts` has `tourData`, `departureData`, `riderData`, etc.
 
 ### Build
 
 - tsup with `esm` + `cjs` dual format
 - Target: Node 18+
-- External: `firebase-admin`, `json-schema-to-typescript`
+- External: `@google-cloud/firestore`, `json-schema-to-typescript`
 - Entry: `src/index.ts`, `src/codegen/index.ts`
 
 ### Dependencies
 
 - **Runtime**: `nanoid` (ID generation), `ajv` (JSON Schema validation)
-- **Peer**: `firebase-admin` (required)
+- **Peer**: `@google-cloud/firestore` `^8.0.0` (required)
 - **Dev**: `json-schema-to-typescript` (codegen CLI)
 
 ### Per-Entity Folder Convention
@@ -293,7 +293,7 @@ npx firegraph codegen --entities ./entities --out src/types.ts  # generate TS ty
 ### Editor Build Pipeline
 
 - **Client**: Vite → `dist/editor/client/` (React SPA)
-- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; firebase-admin, jiti, esbuild external)
+- **Server**: esbuild → `dist/editor/server/index.mjs` (Express + cors bundled in; @google-cloud/firestore, jiti, esbuild external)
 - **CLI**: `bin/firegraph.mjs` dispatches subcommands (`editor`, `codegen`)
 
 ### Model Views

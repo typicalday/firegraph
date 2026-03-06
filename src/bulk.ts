@@ -1,4 +1,4 @@
-import type { Firestore } from 'firebase-admin/firestore';
+import type { Firestore } from '@google-cloud/firestore';
 import { computeEdgeDocId, computeNodeDocId } from './docid.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type {

@@ -1,5 +1,5 @@
-import { FieldValue } from 'firebase-admin/firestore';
-import type { Firestore } from 'firebase-admin/firestore';
+import { FieldValue } from '@google-cloud/firestore';
+import type { Firestore } from '@google-cloud/firestore';
 import { computeNodeDocId, computeEdgeDocId } from './docid.js';
 import { buildNodeRecord, buildEdgeRecord } from './record.js';
 import { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';

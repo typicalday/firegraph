@@ -8,11 +8,13 @@ Install from the GitHub repository:
 
 ```bash
 # npm
-npm install git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
+npm install git+ssh://git@github.com:typicalday/firegraph.git
 
 # pnpm
-pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin
+pnpm add git+ssh://git@github.com:typicalday/firegraph.git
 ```
+
+Firegraph requires `@google-cloud/firestore` `^8.0.0` as a peer dependency. npm 7+ and pnpm auto-install peer deps.
 
 **Build dependencies:** firegraph ships as source when installed from git. A `prepare` script runs `tsup` automatically after install to build the package. The consuming project must have `tsup` and `typescript` available — install them as dev dependencies:
 
@@ -40,20 +42,17 @@ Requires Node.js 18+.
 
 ## Project Setup
 
-### 1. Initialize Firebase Admin
+### 1. Initialize Firestore
 
 ```typescript
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { Firestore } from '@google-cloud/firestore';
 
-// For production (uses Application Default Credentials)
-initializeApp({ credential: applicationDefault(), projectId: 'my-project' });
+// For production (uses Application Default Credentials automatically)
+const db = new Firestore({ projectId: 'my-project' });
 
 // For local development with emulator
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
-initializeApp({ projectId: 'my-local-project' });
-
-const db = getFirestore();
+const db = new Firestore({ projectId: 'my-local-project' });
 ```
 
 ### 2. Create a Graph Client
@@ -488,7 +487,7 @@ export default [
 
 ## Quick-Start Checklist
 
-1. Install: `pnpm add git+ssh://git@github.com:typicalday/firegraph.git firebase-admin` (also `pnpm add -D tsup typescript` for the build step)
+1. Install: `pnpm add git+ssh://git@github.com:typicalday/firegraph.git @google-cloud/firestore` (also `pnpm add -D tsup typescript` for the build step)
 2. Create `entities/` directory with nodes and edges subdirectories
 3. Define `schema.json` for each node type
 4. Define `schema.json` + `edge.json` for each edge type

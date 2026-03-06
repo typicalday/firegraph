@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateExpressContextOptions } from '@trpc/server/adapters/express';
-import type { Firestore, DocumentData, Query } from 'firebase-admin/firestore';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from '@google-cloud/firestore';
+import type { Firestore, DocumentData, Query, WhereFilterOp } from '@google-cloud/firestore';
 import type { GraphClient, GraphRegistry } from '../../src/types.js';
 import { generateId, ValidationError, RegistryViolationError, computeEdgeDocId } from '../../src/index.js';
 import type { SchemaMetadata } from './schema-introspect.js';
@@ -429,7 +429,7 @@ export const appRouter = t.router({
               for (const clause of hop.where) {
                 if (!allowedOps.includes(clause.op)) continue;
                 const field = clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
-                query = query.where(field, clause.op as FirebaseFirestore.WhereFilterOp, clause.value);
+                query = query.where(field, clause.op as WhereFilterOp, clause.value);
               }
             }
 

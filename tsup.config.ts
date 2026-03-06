@@ -7,5 +7,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: 'node18',
-  external: ['firebase-admin', 'json-schema-to-typescript', 'react', 'react-dom', 'svelte'],
+  external: ['@google-cloud/firestore', 'json-schema-to-typescript', 'react', 'react-dom', 'svelte'],
 });
