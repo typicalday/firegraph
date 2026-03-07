@@ -295,6 +295,50 @@ await g.putNode('tour', id, { name: 123 }); // throws ValidationError
 await g.putEdge('tour', id, 'unknownRel', 'x', generateId(), {}); // throws RegistryViolationError
 ```
 
+### Dynamic Registry
+
+For agent-driven or runtime-extensible schemas, firegraph supports a **dynamic registry** where node and edge types are defined as graph data itself (meta-nodes). The workflow is: **define → reload → write**.
+
+```typescript
+import { createGraphClient } from 'firegraph';
+
+const g = createGraphClient(db, 'graph', {
+  registryMode: { mode: 'dynamic' },
+});
+
+// 1. Define types (stored as meta-nodes in the graph)
+await g.defineNodeType('tour', {
+  type: 'object',
+  required: ['name'],
+  properties: { name: { type: 'string' } },
+  additionalProperties: false,
+});
+
+await g.defineEdgeType(
+  'hasDeparture',
+  { from: 'tour', to: 'departure' },
+  { type: 'object', properties: { order: { type: 'number' } } },
+);
+
+// 2. Compile the registry from stored definitions
+await g.reloadRegistry();
+
+// 3. Write domain data — validated against the compiled registry
+const tourId = generateId();
+await g.putNode('tour', tourId, { name: 'Dolomites Classic' }); // OK
+await g.putNode('booking', generateId(), { total: 500 }); // throws RegistryViolationError
+```
+
+Key behaviors:
+
+- **Before `reloadRegistry()`**: Domain writes are rejected. Only meta-type writes (`defineNodeType`, `defineEdgeType`) are allowed.
+- **After `reloadRegistry()`**: Domain writes are validated against the compiled registry. Unknown types are always rejected.
+- **Upsert semantics**: Calling `defineNodeType('tour', ...)` twice overwrites the previous definition. After reloading, the latest schema is used.
+- **Separate collection**: Meta-nodes can be stored in a different collection via `registryMode: { mode: 'dynamic', collection: 'meta' }`.
+- **Mutual exclusivity**: `registry` (static) and `registryMode` (dynamic) cannot be used together.
+
+Dynamic registry returns a `DynamicGraphClient` which extends `GraphClient` with `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`. Transactions and batches also validate against the compiled dynamic registry.
+
 ### ID Generation
 
 ```typescript
@@ -314,6 +358,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `EdgeNotFoundError` | `EDGE_NOT_FOUND` | Edge lookup fails |
 | `ValidationError` | `VALIDATION_ERROR` | Schema validation fails (registry + Zod) |
 | `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
+| `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | `findEdges` called with no filters |
 | `TraversalError` | `TRAVERSAL_ERROR` | `run()` called with zero hops |
 
@@ -358,6 +403,12 @@ import type {
   // Registry
   RegistryEntry,
   GraphRegistry,
+
+  // Dynamic Registry
+  DynamicGraphClient,
+  DynamicRegistryConfig,
+  NodeTypeData,
+  EdgeTypeData,
 
   // Traversal
   HopDefinition,

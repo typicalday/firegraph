@@ -105,8 +105,41 @@ export interface DiscoveryResult {
 /** Controls which Firestore query backend is used. */
 export type QueryMode = 'pipeline' | 'standard';
 
+/**
+ * Configuration for dynamic registry mode where type definitions
+ * are stored as graph data (meta-nodes) rather than in code.
+ */
+export interface DynamicRegistryConfig {
+  mode: 'dynamic';
+  /**
+   * Collection path for meta-type nodes (`nodeType`, `edgeType`).
+   * Defaults to the main `collectionPath` if omitted.
+   */
+  collection?: string;
+}
+
+/** Data shape stored in a `nodeType` meta-node. */
+export interface NodeTypeData {
+  name: string;
+  jsonSchema: object;
+  description?: string;
+}
+
+/** Data shape stored in an `edgeType` meta-node. */
+export interface EdgeTypeData {
+  name: string;
+  from: string | string[];
+  to: string | string[];
+  jsonSchema?: object;
+  inverseLabel?: string;
+  description?: string;
+}
+
 export interface GraphClientOptions {
+  /** Static registry built from code/discovery. Ignored if registryMode is set. */
   registry?: GraphRegistry;
+  /** Dynamic registry mode — type definitions stored as graph data. */
+  registryMode?: DynamicRegistryConfig;
   /**
    * Query execution backend.
    *
@@ -158,6 +191,26 @@ export interface GraphClient extends GraphReader, GraphWriter {
   removeNodeCascade(uid: string, options?: BulkOptions): Promise<CascadeResult>;
   /** Find all edges matching `params` and delete them in chunked batches. */
   bulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult>;
+}
+
+export interface DynamicGraphClient extends GraphClient {
+  /** Define or update a node type in the dynamic registry. */
+  defineNodeType(
+    name: string,
+    jsonSchema: object,
+    description?: string,
+  ): Promise<void>;
+
+  /** Define or update an edge type in the dynamic registry. */
+  defineEdgeType(
+    name: string,
+    topology: EdgeTopology,
+    jsonSchema?: object,
+    description?: string,
+  ): Promise<void>;
+
+  /** Reload the registry from meta-type nodes in the graph. */
+  reloadRegistry(): Promise<void>;
 }
 
 export interface GraphTransaction extends GraphReader, GraphWriter {}

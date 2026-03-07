@@ -1,5 +1,15 @@
 export { createGraphClient } from './client.js';
 export { createRegistry } from './registry.js';
+export {
+  createRegistryFromGraph,
+  createBootstrapRegistry,
+  generateDeterministicUid,
+  META_NODE_TYPE,
+  META_EDGE_TYPE,
+  NODE_TYPE_SCHEMA,
+  EDGE_TYPE_SCHEMA,
+  BOOTSTRAP_ENTRIES,
+} from './dynamic-registry.js';
 export { generateId } from './id.js';
 export { computeNodeDocId, computeEdgeDocId } from './docid.js';
 export { buildNodeRecord, buildEdgeRecord } from './record.js';
@@ -18,6 +28,7 @@ export {
   RegistryViolationError,
   InvalidQueryError,
   TraversalError,
+  DynamicRegistryError,
 } from './errors.js';
 
 export { DiscoveryError } from './discover.js';
@@ -39,6 +50,10 @@ export type {
   GraphClient,
   GraphTransaction,
   GraphBatch,
+  DynamicGraphClient,
+  DynamicRegistryConfig,
+  NodeTypeData,
+  EdgeTypeData,
   HopDefinition,
   TraversalOptions,
   HopResult,

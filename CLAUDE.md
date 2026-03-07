@@ -29,6 +29,7 @@ All records live in a single Firestore collection. Document IDs:
 | `src/query.ts` | Query planner: routes `FindEdgesParams` to either `get` (direct doc lookup) or `query` (filtered scan) strategy |
 | `src/traverse.ts` | Multi-hop graph traversal with budget enforcement and concurrency control |
 | `src/registry.ts` | Optional schema registry for type-safe edge validation (JSON Schema via ajv) |
+| `src/dynamic-registry.ts` | Dynamic registry: bootstrap schemas, `createRegistryFromGraph()`, deterministic UIDs |
 | `src/json-schema.ts` | JSON Schema validation (ajv) and introspection (JSON Schema → `FieldMeta[]`) |
 | `src/discover.ts` | Convention-based entity auto-discovery from per-entity folders |
 | `src/codegen/index.ts` | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`) |
@@ -50,6 +51,7 @@ All records live in a single Firestore collection. Document IDs:
 - `GraphReader` — read operations (`getNode`, `getEdge`, `edgeExists`, `findEdges`, `findNodes`)
 - `GraphWriter` — write operations (`putNode`, `putEdge`, `updateNode`, `removeNode`, `removeEdge`)
 - `GraphClient` — extends both + `runTransaction()` + `batch()`
+- `DynamicGraphClient` — extends `GraphClient` + `defineNodeType()` + `defineEdgeType()` + `reloadRegistry()` (returned when `registryMode` is set)
 - `GraphTransaction` — extends both (used inside `runTransaction`)
 - `GraphBatch` — extends `GraphWriter` + `commit()`
 
@@ -240,6 +242,134 @@ Alternatively, pass a `DiscoveryResult` directly:
 const { result } = discoverEntities('./entities');
 const registry = createRegistry(result);
 ```
+
+### Dynamic Registry
+
+The dynamic registry allows agents to define new node and edge types at runtime by storing type definitions as graph data itself. Instead of requiring code changes or config files, an agent can write meta-nodes that describe new types, then compile them into a live `GraphRegistry`.
+
+#### Concept
+
+Type definitions are stored as regular firegraph nodes using two reserved meta-types:
+- **`nodeType`** — defines a node type (name + JSON Schema + optional description)
+- **`edgeType`** — defines an edge type (name + topology + optional JSON Schema)
+
+A **bootstrap registry** (hardcoded) validates writes to these meta-types. After defining types, calling `reloadRegistry()` compiles them into a full registry that validates domain data writes.
+
+```
+Agent workflow:
+  defineNodeType('milestone', schema)   ← validated by bootstrap registry
+  defineEdgeType('hasMilestone', ...)   ← validated by bootstrap registry
+  reloadRegistry()                      ← compiles meta-nodes → GraphRegistry
+  putNode('milestone', uid, data)       ← validated by compiled registry
+```
+
+#### Usage
+
+```typescript
+import { createGraphClient, generateId } from 'firegraph';
+
+// Create a dynamic client
+const client = createGraphClient(db, 'graph', {
+  registryMode: { mode: 'dynamic' },
+});
+
+// Agent defines a new node type
+await client.defineNodeType('milestone', {
+  type: 'object',
+  required: ['title', 'date'],
+  properties: {
+    title: { type: 'string', minLength: 1 },
+    date: { type: 'string' },
+    status: { type: 'string', enum: ['planned', 'reached'] },
+  },
+  additionalProperties: false,
+}, 'A project milestone');
+
+// Agent defines a new edge type
+await client.defineEdgeType(
+  'hasMilestone',
+  { from: 'project', to: 'milestone', inverseLabel: 'milestoneOf' },
+  { type: 'object', properties: { order: { type: 'number' } } },
+  'Projects have milestones',
+);
+
+// Compile the registry from graph data
+await client.reloadRegistry();
+
+// Now domain writes are validated against the compiled registry
+await client.putNode('milestone', generateId(), {
+  title: 'Beta Launch',
+  date: '2025-06-01',
+  status: 'planned',
+});
+```
+
+#### Separate Meta-Collection
+
+By default, meta-nodes live in the same Firestore collection as domain data. To isolate them:
+
+```typescript
+const client = createGraphClient(db, 'graph', {
+  registryMode: { mode: 'dynamic', collection: 'graph_meta' },
+});
+```
+
+When `collection` is set, `defineNodeType`/`defineEdgeType` write to the meta-collection, while domain writes go to the main collection. `reloadRegistry()` reads from the meta-collection.
+
+#### How It Works
+
+**Meta-type data shapes:**
+
+`nodeType` nodes store:
+```json
+{ "name": "milestone", "jsonSchema": { ... }, "description": "A project milestone" }
+```
+
+`edgeType` nodes store:
+```json
+{ "name": "hasMilestone", "from": "project", "to": "milestone", "jsonSchema": { ... }, "inverseLabel": "milestoneOf" }
+```
+
+`from`/`to` accept `string | string[]` for edges connecting multiple node types, identical to `edge.json` topology.
+
+**Deterministic UIDs:** `defineNodeType('tour', ...)` always produces the same document ID (SHA-256 hash of `nodeType:tour`, truncated to 21 chars). Calling it again upserts the same document — no duplicates.
+
+**Validation routing:**
+- Meta-type writes (`nodeType`, `edgeType`) are always validated against the hardcoded bootstrap registry
+- Domain writes are validated against the compiled dynamic registry
+- Before `reloadRegistry()` is called, domain writes are rejected (`RegistryViolationError`) because the bootstrap registry only knows meta-types
+
+**Reserved names:** `defineNodeType('nodeType')` and `defineNodeType('edgeType')` throw `DynamicRegistryError` — these names are reserved for the meta-registry itself.
+
+**Mutual exclusivity:** Providing both `registry` (static) and `registryMode` (dynamic) throws `DynamicRegistryError`. Use one or the other.
+
+#### Standalone Compilation
+
+`createRegistryFromGraph()` is a standalone function for external compilation processes (Cloud Functions, CLI tools):
+
+```typescript
+import { createGraphClient, createRegistryFromGraph } from 'firegraph';
+
+// Read meta-nodes from any GraphReader
+const metaReader = createGraphClient(db, 'graph_meta');
+const registry = await createRegistryFromGraph(metaReader);
+
+// Use the compiled registry with a different client
+const client = createGraphClient(db, 'graph', { registry });
+```
+
+The returned registry always includes the bootstrap entries, so meta-type writes remain validateable.
+
+#### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/dynamic-registry.ts` | Bootstrap schemas, `createRegistryFromGraph()`, `generateDeterministicUid()`, meta-type constants |
+| `src/client.ts` | `DynamicGraphClient` implementation: validation routing, convenience methods, meta-reader |
+| `src/types.ts` | `DynamicGraphClient`, `DynamicRegistryConfig`, `NodeTypeData`, `EdgeTypeData` interfaces |
+| `src/errors.ts` | `DynamicRegistryError` |
+| `tests/unit/dynamic-registry.test.ts` | Unit tests for schemas, bootstrap, compilation, deterministic UIDs |
+| `tests/integration/dynamic-registry.test.ts` | Integration tests: full workflow, upserts, separate collections, transactions |
 
 ### Inverse Labels
 
@@ -676,7 +806,7 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 - All source in `src/`, all tests in `tests/`
 - `.js` extensions in imports (ESM resolution)
 - Prefer interfaces over classes for public API surfaces
-- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`, `defineViews`, `defineConfig`, `discoverEntities`) over `new`
+- Factory functions (`createGraphClient`, `createTraversal`, `createRegistry`, `createRegistryFromGraph`, `createBootstrapRegistry`, `defineViews`, `defineConfig`, `discoverEntities`) over `new`
 - Errors extend `FiregraphError` with a string `code`
 - No default exports
 - Internal modules live in `src/internal/`

@@ -55,3 +55,10 @@ export class TraversalError extends FiregraphError {
     this.name = 'TraversalError';
   }
 }
+
+export class DynamicRegistryError extends FiregraphError {
+  constructor(message: string) {
+    super(message, 'DYNAMIC_REGISTRY_ERROR');
+    this.name = 'DynamicRegistryError';
+  }
+}

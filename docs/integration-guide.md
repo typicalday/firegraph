@@ -202,6 +202,123 @@ The registry validates:
 - Unregistered triples throw `RegistryViolationError`
 - Invalid data throws `ValidationError`
 
+## Dynamic Registry
+
+For agent-driven or runtime-extensible schemas, use **dynamic registry mode**. Instead of defining types in code, agents define node and edge types as graph data itself (meta-nodes). The client compiles these definitions into a live registry on demand.
+
+### Setup
+
+```typescript
+import { createGraphClient } from 'firegraph';
+
+const g = createGraphClient(db, 'my-collection', {
+  registryMode: { mode: 'dynamic' },
+});
+```
+
+This returns a `DynamicGraphClient` which extends `GraphClient` with three additional methods: `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`.
+
+`registryMode` and `registry` are mutually exclusive — providing both throws `DynamicRegistryError`.
+
+### Workflow: define → reload → write
+
+```typescript
+// 1. Define node types — stored as meta-nodes in the graph
+await g.defineNodeType('task', {
+  type: 'object',
+  required: ['title', 'status'],
+  properties: {
+    title: { type: 'string', minLength: 1 },
+    status: { type: 'string', enum: ['created', 'active', 'completed'] },
+  },
+  additionalProperties: false,
+}, 'A unit of work');  // optional description
+
+await g.defineNodeType('step', {
+  type: 'object',
+  required: ['title', 'order'],
+  properties: {
+    title: { type: 'string' },
+    order: { type: 'integer', minimum: 0 },
+  },
+});
+
+// 2. Define edge types — topology + optional data schema
+await g.defineEdgeType(
+  'hasStep',
+  { from: 'task', to: 'step', inverseLabel: 'stepOf' },
+  { type: 'object', properties: { order: { type: 'integer' } } },
+  'Task contains a step',
+);
+
+// 3. Compile the registry from stored definitions
+await g.reloadRegistry();
+
+// 4. Write domain data — now validated against compiled schemas
+await g.putNode('task', taskId, { title: 'Build feature', status: 'created' }); // OK
+await g.putNode('task', taskId, { title: 123 }); // throws ValidationError
+await g.putNode('booking', bookingId, { total: 500 }); // throws RegistryViolationError
+```
+
+### Separate meta-collection
+
+By default, meta-nodes live in the same collection as domain data. To keep them separate:
+
+```typescript
+const g = createGraphClient(db, 'my-collection', {
+  registryMode: { mode: 'dynamic', collection: 'graph-meta' },
+});
+```
+
+Meta-nodes are written to `graph-meta`; domain data goes to `my-collection`. When querying domain data, meta-nodes won't appear in results.
+
+### Upsert semantics
+
+Defining the same type twice overwrites the previous definition. After reloading, the latest schema applies:
+
+```typescript
+// First definition: name is required
+await g.defineNodeType('tour', {
+  type: 'object',
+  required: ['name'],
+  properties: { name: { type: 'string' } },
+});
+
+// Second definition: title is required instead
+await g.defineNodeType('tour', {
+  type: 'object',
+  required: ['title'],
+  properties: { title: { type: 'string' } },
+});
+
+await g.reloadRegistry();
+
+await g.putNode('tour', id, { title: 'X' }); // OK — uses latest schema
+await g.putNode('tour', id, { name: 'Y' });  // throws ValidationError
+```
+
+### Transactions and batches
+
+Transactions and batches validate against the compiled dynamic registry:
+
+```typescript
+await g.runTransaction(async (tx) => {
+  await tx.putNode('task', taskId, { title: 'TX task', status: 'created' }); // OK
+  await tx.putNode('booking', bookingId, { total: 500 }); // throws RegistryViolationError
+});
+
+const batch = g.batch();
+await batch.putNode('task', taskId, { title: 'Batch task', status: 'created' }); // OK
+await batch.commit();
+```
+
+### Key behaviors
+
+- **Before `reloadRegistry()`**: Domain writes are rejected. Only meta-type writes (`defineNodeType`, `defineEdgeType`) succeed, validated by the bootstrap registry.
+- **After `reloadRegistry()`**: Domain writes are validated against the compiled registry. Unknown types are always rejected.
+- **Reserved names**: `defineNodeType('nodeType')` and `defineNodeType('edgeType')` throw `DynamicRegistryError` — these names are reserved for the meta-registry itself.
+- **Edge topology**: `from` and `to` accept `string | string[]`. Arrays create a cross-product of registry entries (e.g., `from: ['task', 'project'], to: ['step']` registers both `task→hasStep→step` and `project→hasStep→step`).
+
 ## Core API
 
 ### Graph Model
@@ -351,6 +468,7 @@ All errors extend `FiregraphError` with a `code` property:
 |---|---|---|
 | `ValidationError` | `VALIDATION_ERROR` | Data fails JSON Schema |
 | `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
+| `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | findEdges with no filters |
 | `TraversalError` | `TRAVERSAL_ERROR` | run() with zero hops |
 
