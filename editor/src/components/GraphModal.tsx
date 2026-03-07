@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import cytoscape, { type Core, type ElementDefinition, type LayoutOptions } from 'cytoscape';
-import type { GraphRecord, ViewRegistryData, AppConfig } from '../types';
+import type { GraphRecord, ViewRegistryData, AppConfig, Schema } from '../types';
 import { getTypeHexColor, resolveViewForEntity } from '../utils';
 import { trpc } from '../trpc';
 import { useFocusMaybe } from './focus-context';
@@ -19,6 +19,8 @@ interface GraphModalProps {
   focusUid?: string;
   /** Explicit edges to render. When provided, FocusContext is NOT used. */
   edges?: GraphRecord[];
+  /** Schema — used to resolve titleField/subtitleField per entity type. */
+  schema?: Schema;
   viewRegistry?: ViewRegistryData | null;
   config?: AppConfig;
   onClose: () => void;
@@ -34,10 +36,41 @@ const EMPTY_CONFIG: AppConfig = { projectId: '', collection: '', readonly: true 
 /** Well-known display fields, checked first in priority order. */
 const PREFERRED_LABEL_KEYS = ['title', 'name', 'label', 'displayName', 'summary', 'description', 'text', 'subject'];
 
-function pickLabel(data: Record<string, unknown>, uid: string): string {
+/**
+ * Build a lookup from node/edge type → { titleField, subtitleField } from schema metadata.
+ * Node schemas are keyed by aType (since axbType='is'), edge schemas by axbType.
+ */
+function buildDisplayFieldMap(schema?: Schema): Record<string, { titleField?: string; subtitleField?: string }> {
+  const map: Record<string, { titleField?: string; subtitleField?: string }> = {};
+  if (!schema) return map;
+  for (const n of schema.nodeSchemas ?? []) {
+    if (n.titleField || n.subtitleField) {
+      map[n.aType] = { titleField: n.titleField, subtitleField: n.subtitleField };
+    }
+  }
+  for (const e of schema.edgeSchemas ?? []) {
+    if (e.titleField || e.subtitleField) {
+      map[e.axbType] = { titleField: e.titleField, subtitleField: e.subtitleField };
+    }
+  }
+  return map;
+}
+
+function pickLabel(
+  data: Record<string, unknown>,
+  uid: string,
+  titleField?: string,
+): string {
   const truncate = (s: string) => (s.length > 24 ? s.slice(0, 22) + '\u2026' : s);
 
-  // 1. Check well-known keys first
+  // 0. Schema-configured titleField takes priority
+  if (titleField) {
+    const v = data[titleField];
+    if (typeof v === 'string' && v.length > 0) return truncate(v);
+    if (typeof v === 'number' || typeof v === 'boolean') return truncate(String(v));
+  }
+
+  // 1. Check well-known keys
   for (const key of PREFERRED_LABEL_KEYS) {
     const v = data[key];
     if (typeof v === 'string' && v.length > 0) return truncate(v);
@@ -51,11 +84,23 @@ function pickLabel(data: Record<string, unknown>, uid: string): string {
   return uid.slice(0, 8);
 }
 
+type DisplayFieldMap = Record<string, { titleField?: string; subtitleField?: string }>;
+
+function pickNodeLabel(
+  data: Record<string, unknown>,
+  uid: string,
+  nodeType: string,
+  dfm: DisplayFieldMap,
+): string {
+  return pickLabel(data, uid, dfm[nodeType]?.titleField);
+}
+
 function graphDataToElements(
   node: GraphRecord,
   outEdges: GraphRecord[],
   inEdges: GraphRecord[],
   resolvedNodes: Record<string, GraphRecord | null>,
+  dfm: DisplayFieldMap,
 ): ElementDefinition[] {
   const nodes: ElementDefinition[] = [];
   const edges: ElementDefinition[] = [];
@@ -67,7 +112,7 @@ function graphDataToElements(
   nodes.push({
     data: {
       id: node.aUid,
-      label: pickLabel(node.data as Record<string, unknown>, node.aUid),
+      label: pickNodeLabel(node.data as Record<string, unknown>, node.aUid, node.aType, dfm),
       nodeType: node.aType,
       isFocus: true,
     },
@@ -82,7 +127,7 @@ function graphDataToElements(
         data: {
           id: edge.bUid,
           label: resolved
-            ? pickLabel(resolved.data as Record<string, unknown>, edge.bUid)
+            ? pickNodeLabel(resolved.data as Record<string, unknown>, edge.bUid, edge.bType, dfm)
             : edge.bUid.slice(0, 8),
           nodeType: edge.bType,
         },
@@ -112,7 +157,7 @@ function graphDataToElements(
         data: {
           id: edge.aUid,
           label: resolved
-            ? pickLabel(resolved.data as Record<string, unknown>, edge.aUid)
+            ? pickNodeLabel(resolved.data as Record<string, unknown>, edge.aUid, edge.aType, dfm)
             : edge.aUid.slice(0, 8),
           nodeType: edge.aType,
         },
@@ -144,6 +189,7 @@ function traversalEdgesToElements(
   focusUid: string,
   allEdges: GraphRecord[],
   resolvedNodes: Record<string, GraphRecord | null>,
+  dfm: DisplayFieldMap,
 ): ElementDefinition[] {
   const nodes: ElementDefinition[] = [];
   const edges: ElementDefinition[] = [];
@@ -158,7 +204,7 @@ function traversalEdgesToElements(
       data: {
         id: focusUid,
         label: resolved
-          ? pickLabel(resolved.data as Record<string, unknown>, focusUid)
+          ? pickNodeLabel(resolved.data as Record<string, unknown>, focusUid, resolved.aType, dfm)
           : focusUid.slice(0, 8),
         nodeType: resolved?.aType ?? '',
         isFocus: true,
@@ -175,7 +221,7 @@ function traversalEdgesToElements(
         data: {
           id: edge.aUid,
           label: resolved
-            ? pickLabel(resolved.data as Record<string, unknown>, edge.aUid)
+            ? pickNodeLabel(resolved.data as Record<string, unknown>, edge.aUid, edge.aType, dfm)
             : edge.aUid.slice(0, 8),
           nodeType: edge.aType,
         },
@@ -189,7 +235,7 @@ function traversalEdgesToElements(
         data: {
           id: edge.bUid,
           label: resolved
-            ? pickLabel(resolved.data as Record<string, unknown>, edge.bUid)
+            ? pickNodeLabel(resolved.data as Record<string, unknown>, edge.bUid, edge.bType, dfm)
             : edge.bUid.slice(0, 8),
           nodeType: edge.bType,
         },
@@ -355,6 +401,7 @@ export default function GraphModal({
   node,
   focusUid: focusUidProp,
   edges: explicitEdges,
+  schema,
   viewRegistry,
   config: configProp,
   onClose,
@@ -428,12 +475,14 @@ export default function GraphModal({
     return map;
   }, [allEdgesForTooltip]);
 
+  const displayFieldMap = useMemo(() => buildDisplayFieldMap(schema), [schema]);
+
   const elements = useMemo(() => {
     if (isExplicitMode) {
-      return traversalEdgesToElements(effectiveFocusUid, allExplicitEdges, resolvedNodes);
+      return traversalEdgesToElements(effectiveFocusUid, allExplicitEdges, resolvedNodes, displayFieldMap);
     }
-    return graphDataToElements(node!, outEdges, inEdges, resolvedNodes);
-  }, [isExplicitMode, effectiveFocusUid, allExplicitEdges, node, outEdges, inEdges, resolvedNodes]);
+    return graphDataToElements(node!, outEdges, inEdges, resolvedNodes, displayFieldMap);
+  }, [isExplicitMode, effectiveFocusUid, allExplicitEdges, node, outEdges, inEdges, resolvedNodes, displayFieldMap]);
   const nodeCount = elements.filter((e) => !e.data.source).length;
   const edgeCount = elements.filter((e) => e.data.source).length;
 

@@ -1,6 +1,8 @@
 export interface NodeType {
   type: string;
   description?: string;
+  titleField?: string;
+  subtitleField?: string;
 }
 
 export interface EdgeType {
@@ -9,6 +11,8 @@ export interface EdgeType {
   bType: string;
   description?: string;
   inverseLabel?: string;
+  titleField?: string;
+  subtitleField?: string;
 }
 
 export interface FieldMeta {
@@ -33,6 +37,8 @@ export interface RegistryEntryMeta {
   bType: string;
   description?: string;
   inverseLabel?: string;
+  titleField?: string;
+  subtitleField?: string;
   hasDataSchema: boolean;
   fields: FieldMeta[];
   isNodeEntry: boolean;

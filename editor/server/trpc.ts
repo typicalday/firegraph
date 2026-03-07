@@ -107,6 +107,8 @@ export const appRouter = t.router({
     const nodeTypes = ctx.schemaMetadata.nodeTypes.map((n) => ({
       type: n.aType,
       description: n.description,
+      titleField: n.titleField,
+      subtitleField: n.subtitleField,
     }));
     const edgeTypes = ctx.schemaMetadata.edgeTypes.map((e) => ({
       aType: e.aType,
@@ -114,6 +116,8 @@ export const appRouter = t.router({
       bType: e.bType,
       description: e.description,
       inverseLabel: e.inverseLabel,
+      titleField: e.titleField,
+      subtitleField: e.subtitleField,
     }));
     return {
       nodeTypes,

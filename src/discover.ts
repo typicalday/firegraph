@@ -149,7 +149,7 @@ function findViewsFile(dir: string): string | undefined {
 function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
   const schema = loadSchema(dir, `node type "${name}"`);
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; viewDefaults?: ViewResolverConfig }
+    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
@@ -161,6 +161,8 @@ function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
     name,
     schema,
     description: meta?.description,
+    titleField: meta?.titleField,
+    subtitleField: meta?.subtitleField,
     viewDefaults: meta?.viewDefaults,
     viewsPath,
     sampleData,
@@ -192,7 +194,7 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
   }
 
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; viewDefaults?: ViewResolverConfig }
+    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
@@ -205,6 +207,8 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
     schema,
     topology,
     description: meta?.description,
+    titleField: meta?.titleField,
+    subtitleField: meta?.subtitleField,
     viewDefaults: meta?.viewDefaults,
     viewsPath,
     sampleData,

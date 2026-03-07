@@ -1,5 +1,6 @@
 {
   "description": "A specific departure date for a tour",
+  "titleField": "date",
   "viewDefaults": {
     "default": "badge",
     "listing": "badge",

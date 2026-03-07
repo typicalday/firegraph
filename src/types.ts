@@ -66,6 +66,10 @@ export interface RegistryEntry {
   jsonSchema?: object;
   description?: string;
   inverseLabel?: string;
+  /** Data field to use as the display title (e.g. 'name', 'date'). */
+  titleField?: string;
+  /** Data field to use as the display subtitle (e.g. 'status', 'difficulty'). */
+  subtitleField?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +92,10 @@ export interface DiscoveredEntity {
   /** Edge topology (only for edges). */
   topology?: EdgeTopology;
   description?: string;
+  /** Data field to use as the display title (e.g. 'name', 'date'). */
+  titleField?: string;
+  /** Data field to use as the display subtitle (e.g. 'status', 'difficulty'). */
+  subtitleField?: string;
   /** View defaults from meta.json. */
   viewDefaults?: import('./config.js').ViewResolverConfig;
   /** Absolute path to views.ts if present. */

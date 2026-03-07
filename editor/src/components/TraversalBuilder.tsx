@@ -791,6 +791,7 @@ function TraversalResults({
         <GraphModal
           focusUid={startUid}
           edges={allEdges}
+          schema={schema}
           viewRegistry={viewRegistry}
           config={config}
           onClose={() => setShowGraph(false)}

@@ -686,6 +686,7 @@ export function NodeDetailContent({
       {showGraph && node && (
         <GraphModal
           node={node}
+          schema={schema}
           viewRegistry={viewRegistry}
           config={config}
           onClose={() => setShowGraph(false)}

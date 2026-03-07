@@ -93,6 +93,8 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
       bType: name,
       jsonSchema: entity.schema,
       description: entity.description,
+      titleField: entity.titleField,
+      subtitleField: entity.subtitleField,
     });
   }
 
@@ -113,6 +115,8 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
           jsonSchema: entity.schema,
           description: entity.description,
           inverseLabel: topology.inverseLabel,
+          titleField: entity.titleField,
+          subtitleField: entity.subtitleField,
         });
       }
     }
