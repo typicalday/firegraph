@@ -11,6 +11,7 @@ import { TraversalPanel } from './TraversalBuilder';
 import NodeEditor from './NodeEditor';
 import EdgeEditor from './EdgeEditor';
 import ConfirmDialog from './ConfirmDialog';
+import GraphModal from './GraphModal';
 import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
 import { useFocusMaybe } from './focus-context';
@@ -133,10 +134,11 @@ export function NodeDetailContent({
   laneId,
 }: NodeDetailContentProps) {
   const navigate = useNavigate();
-  const { popTo, setRootType } = useDrill();
+  const { drillIn, popTo, setRootType } = useDrill();
   const focus = useFocusMaybe();
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
+  const [showGraph, setShowGraph] = useState(false);
   const [deleteStep, setDeleteStep] = useState<null | 'choose' | 'confirm-cascade' | 'confirm-node-only'>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [showCreateEdge, setShowCreateEdge] = useState(false);
@@ -385,22 +387,30 @@ export function NodeDetailContent({
             {node.aType}
           </Link>
           <h1 className="text-xl font-bold font-mono">{node.aUid}</h1>
-          {canWrite && (
-            <div className="ml-auto flex gap-2">
-              <button
-                onClick={() => setEditing(true)}
-                className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors"
-              >
-                Edit
-              </button>
-              <button
-                onClick={() => setDeleteStep('choose')}
-                className="px-3 py-1.5 bg-red-600/20 text-red-400 rounded-lg text-xs hover:bg-red-600/30 transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          )}
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={() => setShowGraph(true)}
+              className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors"
+            >
+              Graph
+            </button>
+            {canWrite && (
+              <>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => setDeleteStep('choose')}
+                  className="px-3 py-1.5 bg-red-600/20 text-red-400 rounded-lg text-xs hover:bg-red-600/30 transition-colors"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </div>
         </div>
         <div className="flex gap-4 text-xs text-slate-500 mt-2">
           <span>Created: {formatTimestamp(node.createdAt)}</span>
@@ -669,6 +679,20 @@ export function NodeDetailContent({
           onConfirm={handleBulkDeleteEdges}
           onCancel={() => setBulkDeleteRequest(null)}
           loading={bulkDeleteEdgesMutation.isPending || deleteEdgesBatchMutation.isPending}
+        />
+      )}
+
+      {/* Graph modal */}
+      {showGraph && node && (
+        <GraphModal
+          node={node}
+          viewRegistry={viewRegistry}
+          config={config}
+          onClose={() => setShowGraph(false)}
+          onNodeClick={(clickedUid, nodeType) => {
+            setShowGraph(false);
+            drillIn({ uid: clickedUid, nodeType, edgeType: '', direction: 'out' });
+          }}
         />
       )}
     </div>

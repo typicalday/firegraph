@@ -4,6 +4,7 @@ import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClau
 import { trpc } from '../trpc';
 import { getTypeBadgeColor, resolveViewForEntity } from '../utils';
 import { useDrillMaybe, type DrillFrame } from './drill-context';
+import GraphModal from './GraphModal';
 import JsonView from './JsonView';
 import ViewSwitcher from './ViewSwitcher';
 import CustomView from './CustomView';
@@ -682,6 +683,13 @@ function TraversalResults({
 }) {
   const drill = useDrillMaybe();
   const navigate = useNavigate();
+  const [showGraph, setShowGraph] = useState(false);
+
+  // Flatten all hop edges into a single array for the graph modal
+  const allEdges = useMemo(
+    () => result.hops.flatMap((hop) => hop.edges) as GraphRecord[],
+    [result.hops],
+  );
 
   const handleExplore = (hopIndex: number) => {
     const hop = result.hops[hopIndex];
@@ -722,6 +730,12 @@ function TraversalResults({
             Truncated (budget exceeded)
           </div>
         )}
+        <button
+          onClick={() => setShowGraph(true)}
+          className="ml-auto px-3 py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition-colors"
+        >
+          Graph
+        </button>
       </div>
 
       {/* Hops */}
@@ -771,6 +785,25 @@ function TraversalResults({
           </div>
         ))}
       </div>
+
+      {/* Graph modal for traversal results */}
+      {showGraph && allEdges.length > 0 && (
+        <GraphModal
+          focusUid={startUid}
+          edges={allEdges}
+          viewRegistry={viewRegistry}
+          config={config}
+          onClose={() => setShowGraph(false)}
+          onNodeClick={(clickedUid, nodeType) => {
+            setShowGraph(false);
+            if (drill) {
+              drill.drillIn({ uid: clickedUid, nodeType, edgeType: '', direction: 'out' });
+            } else {
+              navigate(`/node/${encodeURIComponent(clickedUid)}`);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -37,6 +37,19 @@ const TYPE_BG_LIGHT_COLORS = [
   'bg-orange-500/15 text-orange-400',
 ];
 
+const TYPE_HEX_COLORS = [
+  '#3b82f6', // blue-500
+  '#10b981', // emerald-500
+  '#f59e0b', // amber-500
+  '#f43f5e', // rose-500
+  '#8b5cf6', // violet-500
+  '#06b6d4', // cyan-500
+  '#ec4899', // pink-500
+  '#84cc16', // lime-500
+  '#14b8a6', // teal-500
+  '#f97316', // orange-500
+];
+
 function hashString(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -55,6 +68,10 @@ export function getTypeTextColor(type: string): string {
 
 export function getTypeBadgeColor(type: string): string {
   return TYPE_BG_LIGHT_COLORS[hashString(type) % TYPE_BG_LIGHT_COLORS.length];
+}
+
+export function getTypeHexColor(type: string): string {
+  return TYPE_HEX_COLORS[hashString(type) % TYPE_HEX_COLORS.length];
 }
 
 export function formatTimestamp(ts: string | null | undefined): string {
