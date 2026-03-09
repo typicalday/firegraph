@@ -1,5 +1,7 @@
 # Firegraph
 
+> **Warning:** This library is experimental. APIs may change without notice between releases.
+
 A typed graph data layer for Firebase Cloud Firestore. Store nodes and edges in a single collection with smart query planning, sharded document IDs, optional schema validation, and multi-hop traversal.
 
 ## Install
