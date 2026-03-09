@@ -118,6 +118,42 @@ describe('NODE_TYPE_SCHEMA', () => {
       }),
     ).toThrow(ValidationError);
   });
+
+  it('accepts optional titleField and subtitleField', () => {
+    expect(() =>
+      registry.validate('nodeType', 'is', 'nodeType', {
+        name: 'tour',
+        jsonSchema: { type: 'object' },
+        titleField: 'name',
+        subtitleField: 'status',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts optional viewTemplate and viewCss', () => {
+    expect(() =>
+      registry.validate('nodeType', 'is', 'nodeType', {
+        name: 'tour',
+        jsonSchema: { type: 'object' },
+        viewTemplate: '<div>{{name}}</div>',
+        viewCss: 'div { color: red; }',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts all optional fields together', () => {
+    expect(() =>
+      registry.validate('nodeType', 'is', 'nodeType', {
+        name: 'tour',
+        jsonSchema: { type: 'object' },
+        description: 'A tour',
+        titleField: 'name',
+        subtitleField: 'status',
+        viewTemplate: '<h1>{{name}}</h1>',
+        viewCss: 'h1 { font-size: 2em; }',
+      }),
+    ).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -208,6 +244,30 @@ describe('EDGE_TYPE_SCHEMA', () => {
         to: 'departure',
       }),
     ).toThrow(ValidationError);
+  });
+
+  it('accepts optional titleField and subtitleField', () => {
+    expect(() =>
+      registry.validate('edgeType', 'is', 'edgeType', {
+        name: 'hasDeparture',
+        from: 'tour',
+        to: 'departure',
+        titleField: 'label',
+        subtitleField: 'since',
+      }),
+    ).not.toThrow();
+  });
+
+  it('accepts optional viewTemplate and viewCss', () => {
+    expect(() =>
+      registry.validate('edgeType', 'is', 'edgeType', {
+        name: 'hasDeparture',
+        from: 'tour',
+        to: 'departure',
+        viewTemplate: '<span>{{label}}</span>',
+        viewCss: 'span { color: blue; }',
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -434,6 +494,41 @@ describe('createRegistryFromGraph', () => {
     expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(
       RegistryViolationError,
     );
+  });
+
+  it('threads titleField and subtitleField through to nodeType entries', async () => {
+    const reader = mockReader([
+      makeStoredRecord('nodeType', 'uid1', {
+        name: 'tour',
+        jsonSchema: { type: 'object', properties: { name: { type: 'string' } } },
+        titleField: 'name',
+        subtitleField: 'status',
+      }),
+    ]);
+    const registry = await createRegistryFromGraph(reader);
+
+    const entry = registry.lookup('tour', 'is', 'tour');
+    expect(entry).toBeDefined();
+    expect(entry!.titleField).toBe('name');
+    expect(entry!.subtitleField).toBe('status');
+  });
+
+  it('threads titleField and subtitleField through to edgeType entries', async () => {
+    const reader = mockReader([
+      makeStoredRecord('edgeType', 'uid2', {
+        name: 'hasDeparture',
+        from: 'tour',
+        to: 'departure',
+        titleField: 'label',
+        subtitleField: 'date',
+      }),
+    ]);
+    const registry = await createRegistryFromGraph(reader);
+
+    const entry = registry.lookup('tour', 'hasDeparture', 'departure');
+    expect(entry).toBeDefined();
+    expect(entry!.titleField).toBe('label');
+    expect(entry!.subtitleField).toBe('date');
   });
 
   it('handles edgeType with optional jsonSchema', async () => {

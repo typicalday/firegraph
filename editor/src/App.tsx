@@ -1,5 +1,5 @@
 import { Routes, Route } from 'react-router-dom';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import NodeBrowser from './components/NodeBrowser';
@@ -22,10 +22,13 @@ export default function App() {
   const loading = schemaLoading || configLoading || viewsLoading;
   const error = schemaError || configError || viewsError;
 
+  // Track dynamic bundle version for cache-busting on reload
+  const dynamicBundleVersion = useRef(0);
+
   // Load views bundle when view data is available
   const loadViewsBundle = useCallback(() => {
     if (viewsData?.hasViews) {
-      // Only inject script once
+      // Only inject static bundle once
       if (!document.querySelector('script[src="/api/views/bundle"]')) {
         const script = document.createElement('script');
         script.type = 'module';
@@ -39,6 +42,27 @@ export default function App() {
   if (viewsData && !loading) {
     loadViewsBundle();
   }
+
+  // Load/reload dynamic views bundle when schema changes
+  useEffect(() => {
+    if (!schema?.dynamicMode || !viewsData?.hasViews) return;
+
+    // Remove any existing dynamic bundle script
+    const existing = document.querySelector('script[data-dynamic-views]');
+    if (existing) existing.remove();
+
+    // Inject new script with cache-bust
+    dynamicBundleVersion.current++;
+    const script = document.createElement('script');
+    script.type = 'module';
+    script.src = `/api/views/dynamic-bundle?v=${dynamicBundleVersion.current}`;
+    script.setAttribute('data-dynamic-views', 'true');
+    document.head.appendChild(script);
+
+    return () => {
+      script.remove();
+    };
+  }, [schema, viewsData]);
 
   if (loading) {
     return (

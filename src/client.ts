@@ -27,6 +27,7 @@ import {
   META_EDGE_TYPE,
 } from './dynamic-registry.js';
 import type {
+  DefineTypeOptions,
   DynamicGraphClient,
   DynamicRegistryConfig,
   GraphClient,
@@ -329,6 +330,7 @@ class GraphClientImpl implements DynamicGraphClient {
     name: string,
     jsonSchema: object,
     description?: string,
+    options?: DefineTypeOptions,
   ): Promise<void> {
     if (!this.dynamicConfig) {
       throw new DynamicRegistryError(
@@ -346,6 +348,10 @@ class GraphClientImpl implements DynamicGraphClient {
     const uid = generateDeterministicUid(META_NODE_TYPE, name);
     const data: Record<string, unknown> = { name, jsonSchema };
     if (description !== undefined) data.description = description;
+    if (options?.titleField !== undefined) data.titleField = options.titleField;
+    if (options?.subtitleField !== undefined) data.subtitleField = options.subtitleField;
+    if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
+    if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
 
     await this.putNode(META_NODE_TYPE, uid, data);
   }
@@ -355,6 +361,7 @@ class GraphClientImpl implements DynamicGraphClient {
     topology: EdgeTopology,
     jsonSchema?: object,
     description?: string,
+    options?: DefineTypeOptions,
   ): Promise<void> {
     if (!this.dynamicConfig) {
       throw new DynamicRegistryError(
@@ -378,6 +385,10 @@ class GraphClientImpl implements DynamicGraphClient {
     if (jsonSchema !== undefined) data.jsonSchema = jsonSchema;
     if (topology.inverseLabel !== undefined) data.inverseLabel = topology.inverseLabel;
     if (description !== undefined) data.description = description;
+    if (options?.titleField !== undefined) data.titleField = options.titleField;
+    if (options?.subtitleField !== undefined) data.subtitleField = options.subtitleField;
+    if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
+    if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
 
     await this.putNode(META_EDGE_TYPE, uid, data);
   }

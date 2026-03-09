@@ -15,6 +15,8 @@ export interface RegistryEntryMeta {
   hasDataSchema: boolean;
   fields: FieldMeta[];
   isNodeEntry: boolean;
+  /** True if this type was loaded from the dynamic registry (Firestore meta-nodes). */
+  isDynamic?: boolean;
 }
 
 export interface SchemaMetadata {
@@ -22,7 +24,17 @@ export interface SchemaMetadata {
   edgeTypes: RegistryEntryMeta[];
 }
 
-export function introspectRegistry(registry: GraphRegistry): SchemaMetadata {
+/**
+ * Convert a GraphRegistry into SchemaMetadata for the editor frontend.
+ *
+ * @param registry - The compiled registry to introspect.
+ * @param dynamicNames - Optional set of type names that came from the dynamic registry.
+ *   Node types are identified by aType, edge types by axbType.
+ */
+export function introspectRegistry(
+  registry: GraphRegistry,
+  dynamicNames?: Set<string>,
+): SchemaMetadata {
   const entries = registry.entries();
   const nodeTypes: RegistryEntryMeta[] = [];
   const edgeTypes: RegistryEntryMeta[] = [];
@@ -31,6 +43,11 @@ export function introspectRegistry(registry: GraphRegistry): SchemaMetadata {
     const fields = entry.jsonSchema
       ? jsonSchemaToFieldMeta(entry.jsonSchema)
       : [];
+
+    const isNode = entry.axbType === 'is';
+    const isDynamic = dynamicNames
+      ? dynamicNames.has(isNode ? entry.aType : entry.axbType)
+      : undefined;
 
     const meta: RegistryEntryMeta = {
       aType: entry.aType,
@@ -42,7 +59,8 @@ export function introspectRegistry(registry: GraphRegistry): SchemaMetadata {
       subtitleField: entry.subtitleField,
       hasDataSchema: !!entry.jsonSchema,
       fields,
-      isNodeEntry: entry.axbType === 'is',
+      isNodeEntry: isNode,
+      isDynamic,
     };
 
     if (meta.isNodeEntry) {

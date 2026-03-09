@@ -69,7 +69,7 @@ export function NodeDataCard({ nodeType, data, viewRegistry, config }: NodeDataC
           <JsonView data={data} defaultExpanded />
         </div>
       ) : (
-        <CustomView tagName={activeView} data={data} />
+        <CustomView tagName={activeView} data={data} onError={() => setActiveView('json')} />
       )}
     </section>
   );
@@ -1682,7 +1682,7 @@ function EdgeRow({
                   <JsonView data={edge.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={edgeViewMode} data={edge.data as Record<string, unknown>} />
+                <CustomView tagName={edgeViewMode} data={edge.data as Record<string, unknown>} onError={() => setEdgeViewMode('json')} />
               )}
             </div>
           )}
@@ -1710,7 +1710,7 @@ function EdgeRow({
                   <JsonView data={effectiveNode.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={nodeViewMode} data={effectiveNode.data as Record<string, unknown>} />
+                <CustomView tagName={nodeViewMode} data={effectiveNode.data as Record<string, unknown>} onError={() => setNodeViewMode('json')} />
               )}
             </div>
           )}

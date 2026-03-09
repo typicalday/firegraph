@@ -31,6 +31,10 @@ export const NODE_TYPE_SCHEMA: object = {
     name: { type: 'string', minLength: 1 },
     jsonSchema: { type: 'object' },
     description: { type: 'string' },
+    titleField: { type: 'string' },
+    subtitleField: { type: 'string' },
+    viewTemplate: { type: 'string' },
+    viewCss: { type: 'string' },
   },
   additionalProperties: false,
 };
@@ -56,6 +60,10 @@ export const EDGE_TYPE_SCHEMA: object = {
     jsonSchema: { type: 'object' },
     inverseLabel: { type: 'string' },
     description: { type: 'string' },
+    titleField: { type: 'string' },
+    subtitleField: { type: 'string' },
+    viewTemplate: { type: 'string' },
+    viewCss: { type: 'string' },
   },
   additionalProperties: false,
 };
@@ -139,6 +147,8 @@ export async function createRegistryFromGraph(
       bType: data.name,
       jsonSchema: data.jsonSchema,
       description: data.description,
+      titleField: data.titleField,
+      subtitleField: data.subtitleField,
     });
   }
 
@@ -157,6 +167,8 @@ export async function createRegistryFromGraph(
           jsonSchema: data.jsonSchema,
           description: data.description,
           inverseLabel: data.inverseLabel,
+          titleField: data.titleField,
+          subtitleField: data.subtitleField,
         });
       }
     }

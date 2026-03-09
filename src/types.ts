@@ -126,11 +126,27 @@ export interface DynamicRegistryConfig {
   collection?: string;
 }
 
+/** Options for defineNodeType / defineEdgeType beyond the core fields. */
+export interface DefineTypeOptions {
+  /** Data field to use as the display title (e.g. 'name', 'date'). */
+  titleField?: string;
+  /** Data field to use as the display subtitle (e.g. 'status', 'difficulty'). */
+  subtitleField?: string;
+  /** Mustache HTML template for rendering this type in the editor. */
+  viewTemplate?: string;
+  /** Scoped CSS for the view template (injected via Shadow DOM). */
+  viewCss?: string;
+}
+
 /** Data shape stored in a `nodeType` meta-node. */
 export interface NodeTypeData {
   name: string;
   jsonSchema: object;
   description?: string;
+  titleField?: string;
+  subtitleField?: string;
+  viewTemplate?: string;
+  viewCss?: string;
 }
 
 /** Data shape stored in an `edgeType` meta-node. */
@@ -141,6 +157,10 @@ export interface EdgeTypeData {
   jsonSchema?: object;
   inverseLabel?: string;
   description?: string;
+  titleField?: string;
+  subtitleField?: string;
+  viewTemplate?: string;
+  viewCss?: string;
 }
 
 export interface GraphClientOptions {
@@ -207,6 +227,7 @@ export interface DynamicGraphClient extends GraphClient {
     name: string,
     jsonSchema: object,
     description?: string,
+    options?: DefineTypeOptions,
   ): Promise<void>;
 
   /** Define or update an edge type in the dynamic registry. */
@@ -215,6 +236,7 @@ export interface DynamicGraphClient extends GraphClient {
     topology: EdgeTopology,
     jsonSchema?: object,
     description?: string,
+    options?: DefineTypeOptions,
   ): Promise<void>;
 
   /** Reload the registry from meta-type nodes in the graph. */

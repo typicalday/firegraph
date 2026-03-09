@@ -3,6 +3,7 @@ export interface NodeType {
   description?: string;
   titleField?: string;
   subtitleField?: string;
+  isDynamic?: boolean;
 }
 
 export interface EdgeType {
@@ -13,6 +14,7 @@ export interface EdgeType {
   inverseLabel?: string;
   titleField?: string;
   subtitleField?: string;
+  isDynamic?: boolean;
 }
 
 export interface FieldMeta {
@@ -42,6 +44,7 @@ export interface RegistryEntryMeta {
   hasDataSchema: boolean;
   fields: FieldMeta[];
   isNodeEntry: boolean;
+  isDynamic?: boolean;
 }
 
 export interface Schema {
@@ -50,6 +53,7 @@ export interface Schema {
   readonly: boolean;
   nodeSchemas?: RegistryEntryMeta[];
   edgeSchemas?: RegistryEntryMeta[];
+  dynamicMode?: boolean;
 }
 
 export interface GraphRecord {

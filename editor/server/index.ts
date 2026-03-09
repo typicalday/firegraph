@@ -20,6 +20,9 @@ import { discoverEntities } from '../../src/discover.js';
 import * as trpcExpress from '@trpc/server/adapters/express';
 import { appRouter, createContext } from './trpc.js';
 import { detectClaude, registerChatRoutes } from './chat.js';
+import { loadDynamicTypes } from './dynamic-loader.js';
+import type { DynamicTypeMetadata } from './dynamic-loader.js';
+import { generateDynamicViewsBundle, getDynamicViewTags, validateTemplate } from './dynamic-views-generator.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +37,8 @@ interface CliArgs {
   emulator?: string;
   queryMode?: QueryMode;
   readonly: boolean;
+  registryMode?: 'dynamic';
+  metaCollection?: string;
 }
 
 function parseArgs(): CliArgs {
@@ -46,6 +51,8 @@ function parseArgs(): CliArgs {
   let emulator: string | undefined;
   let queryMode: QueryMode | undefined;
   let readonly = false;
+  let registryMode: 'dynamic' | undefined;
+  let metaCollection: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -70,6 +77,12 @@ function parseArgs(): CliArgs {
       if (val === 'pipeline' || val === 'standard') queryMode = val;
     }
     else if (arg === '--readonly') readonly = true;
+    else if (arg === '--registry-mode=dynamic' || arg === '--registry-mode' && args[i + 1] === 'dynamic') {
+      registryMode = 'dynamic';
+      if (arg === '--registry-mode') i++; // consume the 'dynamic' arg
+    }
+    else if (arg.startsWith('--meta-collection=')) metaCollection = arg.split('=')[1];
+    else if (arg === '--meta-collection' && args[i + 1]) metaCollection = args[++i];
   }
 
   // Env var fallbacks (applied before config merge — CLI + env override config file)
@@ -78,7 +91,7 @@ function parseArgs(): CliArgs {
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
 
-  return { configPath, entitiesPath, project, collection, port, emulator, queryMode, readonly };
+  return { configPath, entitiesPath, project, collection, port, emulator, queryMode, readonly, registryMode, metaCollection };
 }
 
 const cliArgs = parseArgs();
@@ -97,16 +110,41 @@ let resolvedChatEnabled = false;
 let resolvedChatModel = 'sonnet';
 let resolvedChatMaxConcurrency = 2;
 let viewDefaultsData: LoadedConfig['viewDefaults'] | null = null;
+let resolvedRegistryMode: { mode: 'dynamic'; collection?: string } | undefined;
 
-// --- State ---
+// --- State (mutable — updated on reload for dynamic registry) ---
 
 let db: Firestore;
-let registry: GraphRegistry;
-let schemaMetadata: SchemaMetadata;
-let graphClient: GraphClient;
-let viewRegistry: ViewRegistry | null = null;
-let viewBundle: ViewBundle | null = null;
-let schemaViewWarnings: SchemaViewWarning[] = [];
+
+interface EditorState {
+  registry: GraphRegistry;
+  schemaMetadata: SchemaMetadata;
+  graphClient: GraphClient;
+  viewRegistry: ViewRegistry | null;
+  viewBundle: ViewBundle | null;
+  schemaViewWarnings: SchemaViewWarning[];
+  dynamicTypeMeta: DynamicTypeMetadata | null;
+  dynamicViewsCode: string | null;
+}
+
+const state: EditorState = {
+  registry: null!,
+  schemaMetadata: null!,
+  graphClient: null!,
+  viewRegistry: null,
+  viewBundle: null,
+  schemaViewWarnings: [],
+  dynamicTypeMeta: null,
+  dynamicViewsCode: null,
+};
+
+/** Static entries from filesystem discovery (kept for hybrid merge). */
+let staticEntries: ReadonlyArray<import('../../src/types.js').RegistryEntry> = [];
+let staticNodeNames: Set<string> = new Set();
+let staticEdgeNames: Set<string> = new Set();
+/** Names of types loaded from dynamic registry. */
+let dynamicNodeNames: Set<string> = new Set();
+let dynamicEdgeNames: Set<string> = new Set();
 
 async function init() {
   // 1. Load config file (if any)
@@ -124,6 +162,13 @@ async function init() {
   resolvedEntitiesPath = cliArgs.entitiesPath ?? fileConfig.entities;
   resolvedReadonly = cliArgs.readonly || (fileConfig.editor?.readonly ?? false);
   resolvedQueryMode = cliArgs.queryMode ?? fileConfig.queryMode;
+
+  // Registry mode: CLI flag overrides config file
+  if (cliArgs.registryMode === 'dynamic') {
+    resolvedRegistryMode = { mode: 'dynamic', collection: cliArgs.metaCollection };
+  } else if (fileConfig.registryMode) {
+    resolvedRegistryMode = fileConfig.registryMode;
+  }
 
   // Chat config: auto-detect claude on PATH unless chat is explicitly disabled
   const chatConfig = fileConfig.chat;
@@ -169,10 +214,115 @@ async function init() {
   }
 
   // 5. Create graph client
-  graphClient = createGraphClient(db, resolvedCollection, {
-    registry,
+  state.graphClient = createGraphClient(db, resolvedCollection, {
+    registry: state.registry,
     queryMode: resolvedQueryMode,
   });
+
+  // 6. If dynamic registry mode, do initial load from Firestore
+  if (resolvedRegistryMode) {
+    console.log(`  Dynamic registry mode enabled`);
+    const metaCol = resolvedRegistryMode.collection ?? resolvedCollection;
+    if (resolvedRegistryMode.collection) {
+      console.log(`  Meta-collection: ${metaCol}`);
+    }
+    await reloadDynamicSchema();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic schema reload
+// ---------------------------------------------------------------------------
+
+export interface ReloadResult {
+  nodeTypeCount: number;
+  edgeTypeCount: number;
+  shadowed: string[];
+}
+
+async function reloadDynamicSchema(): Promise<ReloadResult> {
+  const metaCollection = resolvedRegistryMode?.collection ?? resolvedCollection;
+
+  // 1. Load dynamic types from Firestore
+  const dynamic = await loadDynamicTypes(db, metaCollection, resolvedQueryMode);
+
+  // 2. Filter: filesystem types take precedence on conflict
+  const shadowed: string[] = [];
+  const filteredEntries = dynamic.entries.filter(entry => {
+    if (entry.axbType === 'is') {
+      // Node type
+      if (staticNodeNames.has(entry.aType)) {
+        shadowed.push(`node:${entry.aType}`);
+        return false;
+      }
+      return true;
+    }
+    // Edge type
+    if (staticEdgeNames.has(entry.axbType)) {
+      if (!shadowed.includes(`edge:${entry.axbType}`)) {
+        shadowed.push(`edge:${entry.axbType}`);
+      }
+      return false;
+    }
+    return true;
+  });
+
+  // 3. Track dynamic names (after filtering)
+  dynamicNodeNames = new Set(
+    filteredEntries.filter(e => e.axbType === 'is').map(e => e.aType),
+  );
+  dynamicEdgeNames = new Set(
+    filteredEntries.filter(e => e.axbType !== 'is').map(e => e.axbType),
+  );
+
+  // 4. Merge: static entries + filtered dynamic entries
+  const mergedEntries = [...staticEntries, ...filteredEntries];
+  state.registry = createRegistry(mergedEntries);
+
+  // 5. Introspect with isDynamic tagging
+  const allDynamicNames = new Set([...dynamicNodeNames, ...dynamicEdgeNames]);
+  state.schemaMetadata = introspectRegistry(state.registry, allDynamicNames);
+
+  // 6. Recreate graph client with merged registry
+  state.graphClient = createGraphClient(db, resolvedCollection, {
+    registry: state.registry,
+    queryMode: resolvedQueryMode,
+  });
+
+  // 7. Store dynamic type metadata (templates, css)
+  state.dynamicTypeMeta = dynamic.dynamicTypeMeta;
+
+  // 8. Generate dynamic views bundle
+  state.dynamicViewsCode = generateDynamicViewsBundle(dynamic.dynamicTypeMeta);
+
+  // 9. Validate templates against schemas
+  for (const [name, meta] of Object.entries(dynamic.dynamicTypeMeta.nodes)) {
+    if (!meta.viewTemplate) continue;
+    const entry = state.registry.lookup(name, 'is', name);
+    const warnings = validateTemplate(meta.viewTemplate, entry?.jsonSchema);
+    for (const w of warnings) {
+      console.log(`    [template-warn] ${name}: ${w}`);
+    }
+  }
+  for (const [name, meta] of Object.entries(dynamic.dynamicTypeMeta.edges)) {
+    if (!meta.viewTemplate) continue;
+    // Find any entry with this axbType
+    const entry = state.registry.entries().find(e => e.axbType === name);
+    const warnings = validateTemplate(meta.viewTemplate, entry?.jsonSchema);
+    for (const w of warnings) {
+      console.log(`    [template-warn] ${name}: ${w}`);
+    }
+  }
+
+  if (shadowed.length > 0) {
+    console.log(`  Dynamic types shadowed by filesystem: ${shadowed.join(', ')}`);
+  }
+
+  const nodeTypeCount = dynamic.dynamicNodeNames.length;
+  const edgeTypeCount = dynamic.dynamicEdgeNames.length;
+  console.log(`  Dynamic types loaded: ${nodeTypeCount} node types, ${edgeTypeCount} edge types`);
+
+  return { nodeTypeCount, edgeTypeCount, shadowed };
 }
 
 async function initEntitiesMode(fileConfig: LoadedConfig) {
@@ -186,24 +336,33 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
   }
 
   // Build registry from discovery
-  registry = createRegistry(discovery);
-  schemaMetadata = introspectRegistry(registry);
+  const filesystemRegistry = createRegistry(discovery);
+  staticEntries = filesystemRegistry.entries();
+  staticNodeNames = new Set(
+    staticEntries.filter(e => e.axbType === 'is').map(e => e.aType),
+  );
+  staticEdgeNames = new Set(
+    staticEntries.filter(e => e.axbType !== 'is').map(e => e.axbType),
+  );
+
+  state.registry = filesystemRegistry;
+  state.schemaMetadata = introspectRegistry(state.registry);
   console.log(
-    `  Entities loaded: ${schemaMetadata.nodeTypes.length} node types, ${schemaMetadata.edgeTypes.length} edge types`,
+    `  Entities loaded: ${state.schemaMetadata.nodeTypes.length} node types, ${state.schemaMetadata.edgeTypes.length} edge types`,
   );
 
   // Build view registry from per-entity view files
-  viewRegistry = await buildViewRegistryFromDiscovery(discovery);
-  if (viewRegistry) {
-    const nodeViewCount = Object.values(viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
-    const edgeViewCount = Object.values(viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
+  state.viewRegistry = await buildViewRegistryFromDiscovery(discovery);
+  if (state.viewRegistry) {
+    const nodeViewCount = Object.values(state.viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
+    const edgeViewCount = Object.values(state.viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
     console.log(`  Views loaded: ${nodeViewCount} node views, ${edgeViewCount} edge views`);
 
     // Bundle views for browser
     console.log(`  Bundling views for browser...`);
-    viewBundle = await bundleEntityViews(discovery);
-    if (viewBundle) {
-      console.log(`  Views bundled (${(viewBundle.code.length / 1024).toFixed(1)} KB)`);
+    state.viewBundle = await bundleEntityViews(discovery);
+    if (state.viewBundle) {
+      console.log(`  Views bundled (${(state.viewBundle.code.length / 1024).toFixed(1)} KB)`);
     }
   }
 
@@ -216,21 +375,21 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
 
 function crossValidate() {
   try {
-    schemaViewWarnings = validateSchemaViews(
-      schemaMetadata,
-      viewRegistry,
+    state.schemaViewWarnings = validateSchemaViews(
+      state.schemaMetadata,
+      state.viewRegistry,
       viewDefaultsData ?? null,
-      registry,
+      state.registry,
     );
-    if (schemaViewWarnings.length > 0) {
-      console.log(`  Warnings: ${schemaViewWarnings.length} schema/views issue(s) detected`);
-      for (const w of schemaViewWarnings) {
+    if (state.schemaViewWarnings.length > 0) {
+      console.log(`  Warnings: ${state.schemaViewWarnings.length} schema/views issue(s) detected`);
+      for (const w of state.schemaViewWarnings) {
         console.log(`    [${w.severity}] ${w.message}`);
       }
     }
   } catch (err) {
     console.error('  Warning: schema/views validation failed:', err instanceof Error ? err.message : String(err));
-    schemaViewWarnings = [];
+    state.schemaViewWarnings = [];
   }
 }
 
@@ -243,13 +402,24 @@ app.use(express.json());
 // --- Views bundle (non-tRPC, serves raw JS) ---
 
 app.get('/api/views/bundle', (_req, res) => {
-  if (!viewBundle) {
+  if (!state.viewBundle) {
     return res.status(404).json({ error: 'No views configured' });
   }
   res.set('Content-Type', 'application/javascript');
   res.set('Cache-Control', 'public, max-age=3600');
-  res.set('ETag', viewBundle.hash);
-  res.send(viewBundle.code);
+  res.set('ETag', state.viewBundle.hash);
+  res.send(state.viewBundle.code);
+});
+
+// --- Dynamic views bundle (template-based, no esbuild) ---
+
+app.get('/api/views/dynamic-bundle', (_req, res) => {
+  if (!state.dynamicViewsCode) {
+    return res.status(404).json({ error: 'No dynamic views' });
+  }
+  res.set('Content-Type', 'application/javascript');
+  res.set('Cache-Control', 'no-cache');
+  res.send(state.dynamicViewsCode);
 });
 
 // --- Start ---
@@ -257,33 +427,31 @@ app.get('/api/views/bundle', (_req, res) => {
 async function start() {
   await init();
 
-  // Mount tRPC router
+  // Mount tRPC router — context factory reads from `state` per-request
   app.use(
     '/api/trpc',
     trpcExpress.createExpressMiddleware({
       router: appRouter,
-      createContext: createContext({
-        db,
-        collection: resolvedCollection,
-        registry,
-        schemaMetadata,
-        graphClient,
-        viewRegistry,
-        viewBundle,
-        readonly: resolvedReadonly,
-        projectId: resolvedProject,
-        viewDefaults: viewDefaultsData,
-        schemaViewWarnings,
-        chatEnabled: resolvedChatEnabled,
-        chatModel: resolvedChatModel,
-      }),
+      createContext: createContext(
+        {
+          db,
+          collection: resolvedCollection,
+          readonly: resolvedReadonly,
+          projectId: resolvedProject,
+          viewDefaults: viewDefaultsData,
+          chatEnabled: resolvedChatEnabled,
+          chatModel: resolvedChatModel,
+        },
+        state,
+        resolvedRegistryMode ? reloadDynamicSchema : undefined,
+      ),
     }),
   );
 
   // Mount chat routes (Express SSE — not tRPC)
   if (resolvedChatEnabled) {
     registerChatRoutes(app, {
-      schemaMetadata,
+      schemaMetadata: state.schemaMetadata,
       model: resolvedChatModel,
       maxConcurrency: resolvedChatMaxConcurrency,
     });
@@ -323,6 +491,10 @@ async function start() {
     const effectiveQueryMode = resolvedEmulator ? 'standard (emulator)' : (resolvedQueryMode ?? 'pipeline');
     console.log(`  Queries:    ${effectiveQueryMode}`);
     console.log(`  Chat:       ${resolvedChatEnabled ? `enabled (model: ${resolvedChatModel})` : 'disabled (claude CLI not found)'}`);
+    if (resolvedRegistryMode) {
+      const metaCol = resolvedRegistryMode.collection ?? resolvedCollection;
+      console.log(`  Registry:   dynamic (meta: ${metaCol})`);
+    }
     console.log(`  Mode:       ${resolvedReadonly ? 'Read-Only' : 'Read/Write'}`);
     console.log(`  Server:     http://localhost:${resolvedPort}`);
     if (!isProduction) {

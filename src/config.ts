@@ -89,6 +89,13 @@ export interface FiregraphConfig {
 
   /** Declarative view defaults per entity type (overrides per-entity meta.json). */
   viewDefaults?: ViewDefaultsConfig;
+
+  /**
+   * Dynamic registry mode. When set, the editor loads type definitions
+   * from Firestore meta-nodes in addition to filesystem entities.
+   * Filesystem types take precedence on name conflicts.
+   */
+  registryMode?: import('./types.js').DynamicRegistryConfig;
 }
 
 // ---------------------------------------------------------------------------

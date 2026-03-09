@@ -9,9 +9,34 @@ import type { ViewRegistry } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import type { LoadedConfig } from './config-loader.js';
 import type { SchemaViewWarning } from './schema-views-validator.js';
+import type { DynamicTypeMetadata } from './dynamic-loader.js';
+import type { ReloadResult } from './index.js';
 import { z } from 'zod';
 
 // --- Context ---
+
+/** Static deps set once at startup. */
+export interface StaticDeps {
+  db: Firestore;
+  collection: string;
+  readonly: boolean;
+  projectId: string | undefined;
+  viewDefaults: LoadedConfig['viewDefaults'] | null;
+  chatEnabled: boolean;
+  chatModel: string;
+}
+
+/** Mutable state that changes on dynamic schema reload. */
+export interface MutableState {
+  registry: GraphRegistry;
+  schemaMetadata: SchemaMetadata;
+  graphClient: GraphClient;
+  viewRegistry: ViewRegistry | null;
+  viewBundle: ViewBundle | null;
+  schemaViewWarnings: SchemaViewWarning[];
+  dynamicTypeMeta: DynamicTypeMetadata | null;
+  dynamicViewsCode: string | null;
+}
 
 export interface TRPCContext {
   db: Firestore;
@@ -27,10 +52,30 @@ export interface TRPCContext {
   schemaViewWarnings: SchemaViewWarning[];
   chatEnabled: boolean;
   chatModel: string;
+  dynamicTypeMeta: DynamicTypeMetadata | null;
+  reloadFn: (() => Promise<ReloadResult>) | null;
 }
 
-export function createContext(deps: TRPCContext) {
-  return (_opts: CreateExpressContextOptions) => deps;
+/**
+ * Context factory — reads mutable `state` per-request so each tRPC
+ * call sees the latest schema after a dynamic reload.
+ */
+export function createContext(
+  staticDeps: StaticDeps,
+  state: MutableState,
+  reloadFn?: () => Promise<ReloadResult>,
+) {
+  return (_opts: CreateExpressContextOptions): TRPCContext => ({
+    ...staticDeps,
+    registry: state.registry,
+    schemaMetadata: state.schemaMetadata,
+    graphClient: state.graphClient,
+    viewRegistry: state.viewRegistry,
+    viewBundle: state.viewBundle,
+    schemaViewWarnings: state.schemaViewWarnings,
+    dynamicTypeMeta: state.dynamicTypeMeta,
+    reloadFn: reloadFn ?? null,
+  });
 }
 
 // --- tRPC init ---
@@ -109,6 +154,7 @@ export const appRouter = t.router({
       description: n.description,
       titleField: n.titleField,
       subtitleField: n.subtitleField,
+      isDynamic: n.isDynamic,
     }));
     const edgeTypes = ctx.schemaMetadata.edgeTypes.map((e) => ({
       aType: e.aType,
@@ -118,6 +164,7 @@ export const appRouter = t.router({
       inverseLabel: e.inverseLabel,
       titleField: e.titleField,
       subtitleField: e.subtitleField,
+      isDynamic: e.isDynamic,
     }));
     return {
       nodeTypes,
@@ -125,15 +172,56 @@ export const appRouter = t.router({
       readonly: ctx.readonly,
       nodeSchemas: ctx.schemaMetadata.nodeTypes,
       edgeSchemas: ctx.schemaMetadata.edgeTypes,
+      dynamicMode: ctx.reloadFn !== null,
     };
   }),
 
   // --- Views ---
   getViews: publicProcedure.query(({ ctx }) => {
-    if (!ctx.viewRegistry) {
-      return { nodes: {} as Record<string, unknown>, edges: {} as Record<string, unknown>, hasViews: false as const };
+    // Start from filesystem view registry (or empty)
+    const nodes: Record<string, unknown> = ctx.viewRegistry?.nodes ? { ...ctx.viewRegistry.nodes } : {};
+    const edges: Record<string, unknown> = ctx.viewRegistry?.edges ? { ...ctx.viewRegistry.edges } : {};
+
+    // Merge dynamic template views (for types that have viewTemplate)
+    if (ctx.dynamicTypeMeta) {
+      for (const [name, meta] of Object.entries(ctx.dynamicTypeMeta.nodes)) {
+        if (!meta.viewTemplate) continue;
+        const tagName = `fg-${name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase()}-template`;
+        const existing = nodes[name] as { views: unknown[] } | undefined;
+        const templateView = { tagName, viewName: 'template', description: 'Dynamic template view' };
+        if (existing) {
+          existing.views = [...existing.views, templateView];
+        } else {
+          nodes[name] = { views: [templateView] };
+        }
+      }
+      for (const [name, meta] of Object.entries(ctx.dynamicTypeMeta.edges)) {
+        if (!meta.viewTemplate) continue;
+        const tagName = `fg-edge-${name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase()}-template`;
+        const existing = edges[name] as { views: unknown[] } | undefined;
+        const templateView = { tagName, viewName: 'template', description: 'Dynamic template view' };
+        if (existing) {
+          existing.views = [...existing.views, templateView];
+        } else {
+          edges[name] = { views: [templateView] };
+        }
+      }
     }
-    return { ...ctx.viewRegistry, hasViews: true as const };
+
+    const hasViews = Object.keys(nodes).length > 0 || Object.keys(edges).length > 0;
+    return { nodes, edges, hasViews };
+  }),
+
+  // --- Reload Schema (dynamic registry) ---
+  reloadSchema: writeProcedure.mutation(async ({ ctx }) => {
+    if (!ctx.reloadFn) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'Dynamic registry mode is not enabled. Add registryMode to your config or use --registry-mode=dynamic.',
+      });
+    }
+    const result = await ctx.reloadFn();
+    return result;
   }),
 
   // --- Warnings ---

@@ -52,6 +52,7 @@ export type {
   GraphBatch,
   DynamicGraphClient,
   DynamicRegistryConfig,
+  DefineTypeOptions,
   NodeTypeData,
   EdgeTypeData,
   HopDefinition,

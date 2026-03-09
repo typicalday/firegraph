@@ -631,14 +631,16 @@ function NodeListingCell({
   views: Array<{ viewName: string; tagName: string }>;
   resolverConfig?: { default?: string; listing?: string; detail?: string; inline?: string };
 }) {
-  if (views.length > 0) {
+  const [viewFailed, setViewFailed] = useState(false);
+
+  if (!viewFailed && views.length > 0) {
     const viewName = resolveViewForEntity(resolverConfig, views, 'listing');
     if (viewName !== 'json') {
       const match = views.find((v) => v.viewName === viewName);
       if (match) {
         return (
           <div>
-            <CustomView tagName={match.tagName} data={node.data as Record<string, unknown>} />
+            <CustomView tagName={match.tagName} data={node.data as Record<string, unknown>} onError={() => setViewFailed(true)} />
           </div>
         );
       }

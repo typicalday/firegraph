@@ -721,6 +721,7 @@ function GraphTooltip({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x + 12, top: y + 12 });
+  const [viewFailed, setViewFailed] = useState(false);
 
   // Reposition after first render to avoid overflowing viewport
   useEffect(() => {
@@ -748,8 +749,8 @@ function GraphTooltip({
       </div>
       {/* Body */}
       <div className="p-2 max-h-64 overflow-auto">
-        {tagName ? (
-          <CustomView tagName={tagName} data={data} />
+        {tagName && !viewFailed ? (
+          <CustomView tagName={tagName} data={data} onError={() => setViewFailed(true)} />
         ) : (
           <div className="text-xs font-mono">
             <JsonView data={data} defaultExpanded depth={0} />

@@ -4,6 +4,8 @@ interface Props {
   tagName: string;
   data: Record<string, unknown>;
   className?: string;
+  /** Called when the view fails to render — parent should switch back to 'json'. */
+  onError?: () => void;
 }
 
 /**
@@ -12,15 +14,27 @@ interface Props {
  * imperatively so React's VDOM doesn't interfere with the component's
  * internal rendering.
  */
-function CustomViewInner({ tagName, data, className }: Props) {
+function CustomViewInner({ tagName, data, className, onError }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const elementRef = useRef<HTMLElement | null>(null);
+  // Keep onError in a ref so the effect doesn't re-run when the parent
+  // passes a new inline arrow (which is every render).
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     try {
+      // Check if the custom element is registered — if not, auto-fallback.
+      if (!customElements.get(tagName)) {
+        console.warn(`[CustomView] <${tagName}> is not registered, falling back to JSON.`);
+        elementRef.current = null;
+        onErrorRef.current?.();
+        return;
+      }
+
       // Create or replace the custom element when the tagName changes
       if (!elementRef.current || elementRef.current.tagName.toLowerCase() !== tagName) {
         container.innerHTML = '';
@@ -36,8 +50,9 @@ function CustomViewInner({ tagName, data, className }: Props) {
       (elementRef.current as any).data = data;
     } catch (err) {
       console.error(`[CustomView] Error rendering <${tagName}>:`, err);
-      container.innerHTML = `<div style="padding:8px;color:#f87171;font-size:11px;">View error: ${err instanceof Error ? err.message : String(err)}</div>`;
+      container.innerHTML = '';
       elementRef.current = null;
+      onErrorRef.current?.();
     }
   }, [tagName, data]);
 
@@ -55,8 +70,7 @@ function CustomViewInner({ tagName, data, className }: Props) {
 
 /**
  * Error boundary that catches render-time errors from custom elements
- * (e.g. connectedCallback throwing) and shows an inline error instead
- * of blanking the entire page.
+ * (e.g. connectedCallback throwing) and auto-falls back to JSON.
  */
 class CustomViewBoundary extends Component<
   Props & { children?: ReactNode },
@@ -70,15 +84,13 @@ class CustomViewBoundary extends Component<
 
   componentDidCatch(error: Error) {
     console.error(`[CustomView] Boundary caught error:`, error);
+    (this.props as Props).onError?.();
   }
 
   render() {
     if (this.state.error) {
-      return (
-        <div style={{ padding: 8, color: '#f87171', fontSize: 11 }}>
-          View error: {this.state.error.message}
-        </div>
-      );
+      // Don't render anything — onError will have switched parent to JSON
+      return null;
     }
     return this.props.children;
   }

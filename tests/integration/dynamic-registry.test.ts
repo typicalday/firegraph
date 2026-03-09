@@ -159,6 +159,92 @@ describe('dynamic registry — full workflow', () => {
 });
 
 // ---------------------------------------------------------------------------
+// DefineTypeOptions (viewTemplate, viewCss, titleField, subtitleField)
+// ---------------------------------------------------------------------------
+
+describe('dynamic registry — DefineTypeOptions', () => {
+  const db = getTestFirestore();
+  let g: DynamicGraphClient;
+
+  beforeEach(() => {
+    g = createGraphClient(db, uniqueCollectionPath(), {
+      registryMode: { mode: 'dynamic' },
+    });
+  });
+
+  it('defineNodeType with titleField and subtitleField', async () => {
+    await g.defineNodeType('tour', tourSchema, 'A tour', {
+      titleField: 'name',
+      subtitleField: 'status',
+    });
+
+    const records = await g.findNodes({ aType: META_NODE_TYPE });
+    const tourDef = records.find((r) => r.data.name === 'tour');
+    expect(tourDef).toBeDefined();
+    expect(tourDef!.data.titleField).toBe('name');
+    expect(tourDef!.data.subtitleField).toBe('status');
+  });
+
+  it('defineNodeType with viewTemplate and viewCss', async () => {
+    await g.defineNodeType('tour', tourSchema, 'A tour', {
+      viewTemplate: '<div>{{name}}</div>',
+      viewCss: 'div { color: red; }',
+    });
+
+    const records = await g.findNodes({ aType: META_NODE_TYPE });
+    const tourDef = records.find((r) => r.data.name === 'tour');
+    expect(tourDef).toBeDefined();
+    expect(tourDef!.data.viewTemplate).toBe('<div>{{name}}</div>');
+    expect(tourDef!.data.viewCss).toBe('div { color: red; }');
+  });
+
+  it('defineEdgeType with all options', async () => {
+    await g.defineEdgeType(
+      'hasDeparture',
+      { from: 'tour', to: 'departure', inverseLabel: 'departureOf' },
+      edgeSchema,
+      'Tours have departures',
+      {
+        titleField: 'label',
+        subtitleField: 'order',
+        viewTemplate: '<span>{{label}}</span>',
+        viewCss: 'span { font-weight: bold; }',
+      },
+    );
+
+    const records = await g.findNodes({ aType: META_EDGE_TYPE });
+    const edgeDef = records.find((r) => r.data.name === 'hasDeparture');
+    expect(edgeDef).toBeDefined();
+    expect(edgeDef!.data.titleField).toBe('label');
+    expect(edgeDef!.data.subtitleField).toBe('order');
+    expect(edgeDef!.data.viewTemplate).toBe('<span>{{label}}</span>');
+    expect(edgeDef!.data.viewCss).toBe('span { font-weight: bold; }');
+  });
+
+  it('options are round-tripped through reloadRegistry', async () => {
+    await g.defineNodeType('tour', tourSchema, 'A tour', {
+      titleField: 'name',
+    });
+    await g.reloadRegistry();
+
+    // After reload, domain writes should work and registry should have titleField
+    await g.putNode('tour', 'tour1', { name: 'Dolomites' });
+    const node = await g.getNode('tour1');
+    expect(node).not.toBeNull();
+    expect(node!.data.name).toBe('Dolomites');
+  });
+
+  it('defineNodeType without options works as before', async () => {
+    await g.defineNodeType('tour', tourSchema);
+    await g.reloadRegistry();
+
+    await g.putNode('tour', 'tour1', { name: 'Basic' });
+    const node = await g.getNode('tour1');
+    expect(node).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Upsert semantics
 // ---------------------------------------------------------------------------
 

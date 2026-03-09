@@ -4,6 +4,7 @@ import type { Schema, AppConfig, ViewRegistryData } from '../types';
 import { getTypeColor } from '../utils';
 import { useFocusMaybe } from './focus-context';
 import NearbyPanel from './NearbyPanel';
+import { trpc } from '../trpc';
 
 interface Props {
   schema: Schema;
@@ -19,6 +20,17 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('navigate');
   const focus = useFocusMaybe();
+
+  const utils = trpc.useUtils();
+  const reloadMutation = trpc.reloadSchema.useMutation({
+    onSuccess: () => {
+      // Invalidate queries so all components re-render with new schema
+      utils.getSchema.invalidate();
+      utils.getViews.invalidate();
+      utils.getWarnings.invalidate();
+    },
+  });
+  const [reloadMessage, setReloadMessage] = useState<string | null>(null);
 
   // Auto-switch to Nearby tab when a node gains focus
   useEffect(() => {
@@ -58,12 +70,49 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
           <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-400">
             Registry
           </span>
+          {schema.dynamicMode && (
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-violet-500/15 text-violet-400">
+              Dynamic
+            </span>
+          )}
           {schema.readonly && (
             <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-slate-500/15 text-slate-400">
               Read-Only
             </span>
           )}
         </div>
+        {/* Refresh schemas button */}
+        {schema.dynamicMode && (
+          <div className="mt-2">
+            <button
+              onClick={() => {
+                setReloadMessage(null);
+                reloadMutation.mutate(undefined, {
+                  onSuccess: (data) => {
+                    setReloadMessage(`Loaded ${data.nodeTypeCount} node, ${data.edgeTypeCount} edge types`);
+                    setTimeout(() => setReloadMessage(null), 3000);
+                  },
+                  onError: (err) => {
+                    setReloadMessage(`Error: ${err.message}`);
+                    setTimeout(() => setReloadMessage(null), 5000);
+                  },
+                });
+              }}
+              disabled={reloadMutation.isPending}
+              className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium bg-violet-600/20 text-violet-300 hover:bg-violet-600/30 transition-colors disabled:opacity-50"
+            >
+              <svg className={`w-3 h-3 ${reloadMutation.isPending ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {reloadMutation.isPending ? 'Refreshing...' : 'Refresh Schemas'}
+            </button>
+            {reloadMessage && (
+              <p className={`mt-1 text-[9px] ${reloadMutation.isError ? 'text-red-400' : 'text-emerald-400'}`}>
+                {reloadMessage}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tab bar */}
@@ -164,7 +213,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                   <Link
                     key={nt.type}
                     to={`/browse/${encodeURIComponent(nt.type)}`}
-                    className={`flex items-center px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors ${
                       location.pathname === `/browse/${nt.type}`
                         ? 'bg-slate-800 text-slate-100'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -174,6 +223,11 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                       <span className={`w-2 h-2 rounded-full ${getTypeColor(nt.type)}`} />
                       {nt.type}
                     </span>
+                    {nt.isDynamic && (
+                      <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400" title="Dynamic type (from Firestore)">
+                        D
+                      </span>
+                    )}
                   </Link>
                 ))
               )}
@@ -190,13 +244,20 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 schema.edgeTypes.map((et) => (
                   <div
                     key={`${et.aType}:${et.axbType}:${et.bType}`}
-                    className="px-3 py-1.5 text-[11px] text-slate-500"
+                    className="flex items-center justify-between px-3 py-1.5 text-[11px] text-slate-500"
                   >
-                    <span className="text-slate-400">{et.aType}</span>
-                    <span className="text-indigo-400 mx-1">&rarr;</span>
-                    <span className="text-indigo-400">{et.axbType}</span>
-                    <span className="text-indigo-400 mx-1">&rarr;</span>
-                    <span className="text-slate-400">{et.bType}</span>
+                    <span>
+                      <span className="text-slate-400">{et.aType}</span>
+                      <span className="text-indigo-400 mx-1">&rarr;</span>
+                      <span className="text-indigo-400">{et.axbType}</span>
+                      <span className="text-indigo-400 mx-1">&rarr;</span>
+                      <span className="text-slate-400">{et.bType}</span>
+                    </span>
+                    {et.isDynamic && (
+                      <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400 shrink-0 ml-1" title="Dynamic type (from Firestore)">
+                        D
+                      </span>
+                    )}
                   </div>
                 ))
               )}

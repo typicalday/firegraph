@@ -986,7 +986,7 @@ function HopEdgeRow({
               <JsonView data={data} defaultExpanded />
             </div>
           ) : (
-            <CustomView tagName={edgeViewMode} data={data as Record<string, unknown>} />
+            <CustomView tagName={edgeViewMode} data={data as Record<string, unknown>} onError={() => setEdgeViewMode('json')} />
           )}
         </div>
       )}
@@ -1011,7 +1011,7 @@ function HopEdgeRow({
                   <JsonView data={nodeData.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={nodeViewMode} data={nodeData.data as Record<string, unknown>} />
+                <CustomView tagName={nodeViewMode} data={nodeData.data as Record<string, unknown>} onError={() => setNodeViewMode('json')} />
               )}
             </div>
           )}

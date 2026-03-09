@@ -12,6 +12,7 @@ export interface LoadedConfig {
   project?: string;
   collection?: string;
   emulator?: string;
+  queryMode?: 'pipeline' | 'standard';
   editor?: {
     port?: number;
     readonly?: boolean;
@@ -23,6 +24,12 @@ export interface LoadedConfig {
   viewDefaults?: {
     nodes?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
     edges?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
+  };
+  /** Dynamic registry mode — load type definitions from Firestore meta-nodes. */
+  registryMode?: {
+    mode: 'dynamic';
+    /** Firestore collection for meta-type nodes. Defaults to main collection. */
+    collection?: string;
   };
 }
 
