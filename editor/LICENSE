@@ -1,0 +1,98 @@
+Firegraph Editor License
+Version 1.0, 2025
+
+Copyright (c) 2025 Typical Day. All rights reserved.
+
+This license applies to the firegraph editor software contained in the
+`editor/` directory of the firegraph repository (the "Editor"). The core
+firegraph library (everything outside `editor/`) is licensed separately
+under the MIT License — see the root `LICENSE` file.
+
+
+1. GRANT OF RIGHTS
+
+   Subject to the terms of this license, Typical Day grants you a
+   non-exclusive, worldwide, non-transferable right to use, copy, and
+   modify the Editor source code, provided that you comply with the
+   conditions below.
+
+
+2. FREE USE
+
+   You may use the Editor free of charge if ANY of the following apply:
+
+   a) You are an individual using the Editor for personal, educational,
+      or evaluation purposes.
+
+   b) You are using the Editor solely for non-commercial open-source
+      projects.
+
+   c) You are a registered nonprofit or charitable organization.
+
+   d) You are using the Editor in a development, testing, or staging
+      environment that does not serve production traffic or end users.
+
+   e) Your organization (including parent companies, subsidiaries, and
+      affiliates) has less than US $1,000,000 (one million dollars) in
+      total annual gross revenue.
+
+
+3. COMMERCIAL LICENSE REQUIRED
+
+   If none of the conditions in Section 2 apply to you — specifically,
+   if you are a for-profit entity with US $1,000,000 or more in total
+   annual gross revenue and you deploy, host, or otherwise use the
+   Editor in a production environment — you must obtain a commercial
+   license from Typical Day.
+
+   Contact: licensing@typical.day
+
+
+4. RESTRICTIONS
+
+   Regardless of whether your use is free or commercially licensed:
+
+   a) You may NOT remove or alter this license notice, copyright
+      notices, or attribution from any copy of the Editor.
+
+   b) You may NOT sell, sublicense, or redistribute the Editor as a
+      standalone product or as part of a competing graph database
+      editor, visual graph builder, or substantially similar tool.
+
+   c) You may NOT offer the Editor as a hosted or managed service
+      (SaaS) to third parties without a separate written agreement
+      from Typical Day.
+
+
+5. CONTRIBUTIONS
+
+   By submitting a pull request, patch, or other contribution to the
+   Editor, you grant Typical Day a perpetual, irrevocable, worldwide,
+   royalty-free license to use, modify, sublicense, and distribute
+   your contribution under the terms of this license or any future
+   license chosen by Typical Day for the Editor.
+
+
+6. NO WARRANTY
+
+   THE EDITOR IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NONINFRINGEMENT. IN NO EVENT SHALL TYPICAL DAY BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+   CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+   WITH THE EDITOR OR THE USE OR OTHER DEALINGS IN THE EDITOR.
+
+
+7. TERMINATION
+
+   This license terminates automatically if you violate any of its
+   terms. Upon termination, you must cease all use and destroy all
+   copies of the Editor in your possession.
+
+
+8. GOVERNING LAW
+
+   This license shall be governed by and construed in accordance with
+   the laws of the jurisdiction in which Typical Day is incorporated,
+   without regard to conflict of law provisions.

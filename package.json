@@ -109,7 +109,7 @@
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=18"
   },
