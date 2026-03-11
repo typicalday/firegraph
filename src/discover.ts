@@ -99,9 +99,10 @@ let _jiti: ((id: string) => unknown) | undefined;
 
 function getJiti(): (id: string) => unknown {
   if (!_jiti) {
-    const esmRequire = createRequire(import.meta.url);
+    const base = typeof __filename !== 'undefined' ? __filename : import.meta.url;
+    const esmRequire = createRequire(base);
     const { createJiti } = esmRequire('jiti') as typeof import('jiti');
-    _jiti = createJiti(import.meta.url, { interopDefault: true });
+    _jiti = createJiti(base, { interopDefault: true });
   }
   return _jiti;
 }

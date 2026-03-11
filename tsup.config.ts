@@ -8,4 +8,9 @@ export default defineConfig({
   clean: true,
   target: 'node18',
   external: ['@google-cloud/firestore', 'json-schema-to-typescript', 'react', 'react-dom', 'svelte'],
+  esbuildOptions(options) {
+    options.logOverride = {
+      'empty-import-meta': 'silent',
+    };
+  },
 });
