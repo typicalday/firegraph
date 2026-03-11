@@ -29,6 +29,7 @@ export {
   InvalidQueryError,
   TraversalError,
   DynamicRegistryError,
+  QuerySafetyError,
 } from './errors.js';
 
 export { DiscoveryError } from './discover.js';
@@ -69,6 +70,7 @@ export type {
   BulkBatchError,
   CascadeResult,
   QueryMode,
+  ScanProtection,
 } from './types.js';
 
 export type {
@@ -93,6 +95,14 @@ export type { DiscoveryWarning, DiscoverResult } from './discover.js';
 
 export { generateTypes } from './codegen/index.js';
 export type { CodegenOptions } from './codegen/index.js';
+
+export { generateIndexConfig } from './indexes.js';
+export type { FirestoreIndexConfig, FirestoreIndex, FirestoreIndexField } from './indexes.js';
+
+export { analyzeQuerySafety } from './query-safety.js';
+export type { QuerySafetyResult } from './query-safety.js';
+
+export { DEFAULT_QUERY_LIMIT } from './internal/constants.js';
 
 export { QueryClient, QueryClientError } from './query-client/index.js';
 export type { QueryClientErrorCode, QueryClientOptions } from './query-client/index.js';

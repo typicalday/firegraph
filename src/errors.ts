@@ -62,3 +62,10 @@ export class DynamicRegistryError extends FiregraphError {
     this.name = 'DynamicRegistryError';
   }
 }
+
+export class QuerySafetyError extends FiregraphError {
+  constructor(message: string) {
+    super(message, 'QUERY_SAFETY');
+    this.name = 'QuerySafetyError';
+  }
+}

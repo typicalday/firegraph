@@ -107,7 +107,13 @@ export async function bulkRemoveEdges(
   params: FindEdgesParams,
   options?: BulkOptions,
 ): Promise<BulkResult> {
-  const edges = await reader.findEdges(params);
+  // Override default query limit for bulk deletion — we need all matching edges.
+  // limit: 0 bypasses DEFAULT_QUERY_LIMIT; an explicit user limit is preserved.
+  // allowCollectionScan: true — bulk deletion inherently implies scanning.
+  const effectiveParams = params.limit !== undefined
+    ? { ...params, allowCollectionScan: params.allowCollectionScan ?? true }
+    : { ...params, limit: 0, allowCollectionScan: params.allowCollectionScan ?? true };
+  const edges = await reader.findEdges(effectiveParams);
   const docIds = edges.map((e) => computeEdgeDocId(e.aUid, e.axbType, e.bUid));
   return bulkDeleteDocIds(db, collectionPath, docIds, options);
 }
@@ -128,9 +134,11 @@ export async function removeNodeCascade(
 ): Promise<CascadeResult> {
   // Find all edges touching this node (outgoing + incoming).
   // Filter out the node's own self-loop record (axbType === 'is').
+  // These queries intentionally scan broadly — allowCollectionScan bypasses safety checks.
+  // limit: 0 bypasses the DEFAULT_QUERY_LIMIT to ensure we find all edges.
   const [outgoingRaw, incomingRaw] = await Promise.all([
-    reader.findEdges({ aUid: uid }),
-    reader.findEdges({ bUid: uid }),
+    reader.findEdges({ aUid: uid, allowCollectionScan: true, limit: 0 }),
+    reader.findEdges({ bUid: uid, allowCollectionScan: true, limit: 0 }),
   ]);
   const outgoing = outgoingRaw.filter((e) => e.axbType !== NODE_RELATION);
   const incoming = incomingRaw.filter((e) => e.axbType !== NODE_RELATION);

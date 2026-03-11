@@ -122,7 +122,12 @@ class TraversalBuilderImpl implements TraversalBuilder {
           if (hop.orderBy) params.orderBy = hop.orderBy;
 
           const limit = hop.limit ?? DEFAULT_LIMIT;
-          if (!hop.filter) {
+          if (hop.filter) {
+            // When post-filtering in memory, bypass the default query limit
+            // so the client-side filter sees all candidates before slicing.
+            // limit: 0 tells the query planner to skip the DEFAULT_QUERY_LIMIT.
+            params.limit = 0;
+          } else {
             params.limit = limit;
           }
 

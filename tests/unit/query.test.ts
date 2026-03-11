@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildEdgeQueryPlan, buildNodeQueryPlan } from '../../src/query.js';
 import { InvalidQueryError } from '../../src/errors.js';
-import { NODE_RELATION } from '../../src/internal/constants.js';
+import { NODE_RELATION, DEFAULT_QUERY_LIMIT } from '../../src/internal/constants.js';
 
 describe('buildEdgeQueryPlan', () => {
   it('returns strategy "get" when all three params provided', () => {
@@ -77,6 +77,64 @@ describe('buildEdgeQueryPlan', () => {
   it('throws InvalidQueryError when no params provided', () => {
     expect(() => buildEdgeQueryPlan({})).toThrow(InvalidQueryError);
   });
+
+  it('applies DEFAULT_QUERY_LIMIT when no explicit limit is set', () => {
+    const plan = buildEdgeQueryPlan({ aUid: 'a1', axbType: 'hasDep' });
+    expect(plan.strategy).toBe('query');
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBe(DEFAULT_QUERY_LIMIT);
+    }
+  });
+
+  it('uses explicit limit over default', () => {
+    const plan = buildEdgeQueryPlan({ aUid: 'a1', axbType: 'hasDep', limit: 10 });
+    expect(plan.strategy).toBe('query');
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBe(10);
+    }
+  });
+
+  it('limit: 0 bypasses default limit (unlimited)', () => {
+    const plan = buildEdgeQueryPlan({ aUid: 'a1', axbType: 'hasDep', limit: 0 });
+    expect(plan.strategy).toBe('query');
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBeUndefined();
+    }
+  });
+
+  it('passes through orderBy in options', () => {
+    const plan = buildEdgeQueryPlan({
+      aUid: 'a1',
+      axbType: 'hasDep',
+      orderBy: { field: 'data.date', direction: 'desc' },
+    });
+    if (plan.strategy === 'query') {
+      expect(plan.options?.orderBy).toEqual({ field: 'data.date', direction: 'desc' });
+    }
+  });
+
+  it('prefixes non-builtin where clause fields with data.', () => {
+    const plan = buildEdgeQueryPlan({
+      aUid: 'a1',
+      axbType: 'hasDep',
+      where: [{ field: 'status', op: '==', value: 'active' }],
+    });
+    expect(plan.strategy).toBe('query');
+    if (plan.strategy === 'query') {
+      expect(plan.filters).toContainEqual({ field: 'data.status', op: '==', value: 'active' });
+    }
+  });
+
+  it('does not prefix already-prefixed data. fields', () => {
+    const plan = buildEdgeQueryPlan({
+      aUid: 'a1',
+      axbType: 'hasDep',
+      where: [{ field: 'data.name', op: '==', value: 'test' }],
+    });
+    if (plan.strategy === 'query') {
+      expect(plan.filters).toContainEqual({ field: 'data.name', op: '==', value: 'test' });
+    }
+  });
 });
 
 describe('buildNodeQueryPlan', () => {
@@ -87,6 +145,58 @@ describe('buildNodeQueryPlan', () => {
       expect(plan.filters).toHaveLength(2);
       expect(plan.filters).toContainEqual({ field: 'aType', op: '==', value: 'tour' });
       expect(plan.filters).toContainEqual({ field: 'axbType', op: '==', value: NODE_RELATION });
+    }
+  });
+
+  it('applies DEFAULT_QUERY_LIMIT when no explicit limit is set', () => {
+    const plan = buildNodeQueryPlan({ aType: 'tour' });
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBe(DEFAULT_QUERY_LIMIT);
+    }
+  });
+
+  it('uses explicit limit over default', () => {
+    const plan = buildNodeQueryPlan({ aType: 'tour', limit: 25 });
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBe(25);
+    }
+  });
+
+  it('limit: 0 bypasses default limit (unlimited)', () => {
+    const plan = buildNodeQueryPlan({ aType: 'tour', limit: 0 });
+    if (plan.strategy === 'query') {
+      expect(plan.options?.limit).toBeUndefined();
+    }
+  });
+
+  it('supports orderBy', () => {
+    const plan = buildNodeQueryPlan({
+      aType: 'tour',
+      orderBy: { field: 'data.name', direction: 'asc' },
+    });
+    if (plan.strategy === 'query') {
+      expect(plan.options?.orderBy).toEqual({ field: 'data.name', direction: 'asc' });
+    }
+  });
+
+  it('supports where clauses with data. prefix', () => {
+    const plan = buildNodeQueryPlan({
+      aType: 'tour',
+      where: [{ field: 'status', op: '==', value: 'active' }],
+    });
+    if (plan.strategy === 'query') {
+      expect(plan.filters).toHaveLength(3);
+      expect(plan.filters).toContainEqual({ field: 'data.status', op: '==', value: 'active' });
+    }
+  });
+
+  it('passes through builtin field where clauses', () => {
+    const plan = buildNodeQueryPlan({
+      aType: 'tour',
+      where: [{ field: 'createdAt', op: '>', value: '2024-01-01' }],
+    });
+    if (plan.strategy === 'query') {
+      expect(plan.filters).toContainEqual({ field: 'createdAt', op: '>', value: '2024-01-01' });
     }
   });
 });

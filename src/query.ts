@@ -1,4 +1,4 @@
-import { NODE_RELATION } from './internal/constants.js';
+import { NODE_RELATION, DEFAULT_QUERY_LIMIT, BUILTIN_FIELDS } from './internal/constants.js';
 import { computeEdgeDocId } from './docid.js';
 import { InvalidQueryError } from './errors.js';
 import type { FindEdgesParams, FindNodesParams, QueryPlan, QueryFilter } from './types.js';
@@ -18,10 +18,9 @@ export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
   if (bType) filters.push({ field: 'bType', op: '==', value: bType });
   if (bUid) filters.push({ field: 'bUid', op: '==', value: bUid });
 
-  const builtinFields = ['aType', 'aUid', 'axbType', 'bType', 'bUid', 'createdAt', 'updatedAt'];
   if (params.where) {
     for (const clause of params.where) {
-      const field = builtinFields.includes(clause.field) ? clause.field
+      const field = BUILTIN_FIELDS.has(clause.field) ? clause.field
         : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
       filters.push({ field, op: clause.op, value: clause.value });
     }
@@ -31,16 +30,29 @@ export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
     throw new InvalidQueryError('findEdges requires at least one filter parameter');
   }
 
-  const options = (limit !== undefined || orderBy) ? { limit, orderBy } : undefined;
-  return { strategy: 'query', filters, options };
+  // limit: undefined → apply DEFAULT_QUERY_LIMIT
+  // limit: 0         → no limit (unlimited, used by internal bulk operations)
+  // limit: N         → use N
+  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : (limit || undefined);
+  return { strategy: 'query', filters, options: { limit: effectiveLimit, orderBy } };
 }
 
 export function buildNodeQueryPlan(params: FindNodesParams): QueryPlan {
-  return {
-    strategy: 'query',
-    filters: [
-      { field: 'aType', op: '==', value: params.aType },
-      { field: 'axbType', op: '==', value: NODE_RELATION },
-    ],
-  };
+  const { aType, limit, orderBy } = params;
+
+  const filters: QueryFilter[] = [
+    { field: 'aType', op: '==', value: aType },
+    { field: 'axbType', op: '==', value: NODE_RELATION },
+  ];
+
+  if (params.where) {
+    for (const clause of params.where) {
+      const field = BUILTIN_FIELDS.has(clause.field) ? clause.field
+        : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+      filters.push({ field, op: clause.op, value: clause.value });
+    }
+  }
+
+  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : (limit || undefined);
+  return { strategy: 'query', filters, options: { limit: effectiveLimit, orderBy } };
 }

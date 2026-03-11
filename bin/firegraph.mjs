@@ -86,6 +86,45 @@ if (subcommand === 'editor') {
     console.error(`Error: ${err.message}`);
     process.exit(1);
   }
+} else if (subcommand === 'indexes') {
+  const args = parseArgs(process.argv.slice(3));
+  const entitiesDir = args.entities ? path.resolve(args.entities) : null;
+  const collection = args.collection || 'graph';
+  const outPath = args.out || null;
+
+  const distIndex = path.join(__dirname, '..', 'dist', 'index.js');
+  const { generateIndexConfig, discoverEntities } = await import(distIndex);
+
+  try {
+    let entities = undefined;
+    if (entitiesDir) {
+      const { result, warnings } = discoverEntities(entitiesDir);
+      for (const w of warnings) {
+        console.warn(`  warning: ${w.message}`);
+      }
+      entities = result;
+      const nodeCount = result.nodes.size;
+      const edgeCount = result.edges.size;
+      if (nodeCount > 0 || edgeCount > 0) {
+        console.error(`Discovered ${nodeCount} node type(s) + ${edgeCount} edge type(s)`);
+      }
+    }
+
+    const config = generateIndexConfig(collection, entities);
+    const output = JSON.stringify(config, null, 2) + '\n';
+
+    if (outPath) {
+      const resolved = path.resolve(outPath);
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      fs.writeFileSync(resolved, output, 'utf-8');
+      console.log(`Generated ${config.indexes.length} index(es) → ${resolved}`);
+    } else {
+      process.stdout.write(output);
+    }
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
 } else if (subcommand === '--help' || subcommand === '-h' || !subcommand) {
   console.log('');
   console.log('  Usage: firegraph <command> [options]');
@@ -94,6 +133,7 @@ if (subcommand === 'editor') {
   console.log('    editor         Launch the Firegraph Editor UI');
   console.log('    query          Query the graph via the editor API');
   console.log('    codegen        Generate TypeScript types from entity schemas');
+  console.log('    indexes        Generate recommended Firestore index definitions');
   console.log('');
   console.log('  Editor options:');
   console.log('    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)');
@@ -111,6 +151,11 @@ if (subcommand === 'editor') {
   console.log('    --entities <path>      Path to entities directory (default: ./entities)');
   console.log('    --out <path>           Output file path (default: stdout)');
   console.log('');
+  console.log('  Indexes options:');
+  console.log('    --entities <path>      Path to entities directory (adds per-entity data field indexes)');
+  console.log('    --collection <name>    Firestore collection name (default: graph)');
+  console.log('    --out <path>           Output file path (default: stdout)');
+  console.log('');
   console.log('  Config file:');
   console.log('    Create a firegraph.config.ts in your project root to avoid passing');
   console.log('    flags every time. CLI flags override config file values.');
@@ -121,6 +166,8 @@ if (subcommand === 'editor') {
   console.log('    npx firegraph editor --entities ./entities            # per-entity convention');
   console.log('    npx firegraph codegen --entities ./entities           # types to stdout');
   console.log('    npx firegraph codegen --entities ./entities --out src/generated/types.ts');
+  console.log('    npx firegraph indexes                                  # 4 base indexes to stdout');
+  console.log('    npx firegraph indexes --entities ./entities --out firestore.indexes.json');
   console.log('');
 } else {
   console.error(`Unknown command: ${subcommand}`);

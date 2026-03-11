@@ -18,7 +18,8 @@ import {
   removeNodeCascade as removeNodeCascadeImpl,
   bulkRemoveEdges as bulkRemoveEdgesImpl,
 } from './bulk.js';
-import { DynamicRegistryError } from './errors.js';
+import { DynamicRegistryError, QuerySafetyError } from './errors.js';
+import { analyzeQuerySafety } from './query-safety.js';
 import {
   createBootstrapRegistry,
   createRegistryFromGraph,
@@ -43,6 +44,7 @@ import type {
   QueryFilter,
   QueryOptions,
   QueryMode,
+  ScanProtection,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -56,6 +58,7 @@ class GraphClientImpl implements DynamicGraphClient {
   private readonly adapter: FirestoreAdapter;
   private readonly pipelineAdapter?: PipelineQueryAdapter;
   private readonly queryMode: QueryMode;
+  readonly scanProtection: ScanProtection;
 
   // Static mode
   private readonly staticRegistry?: GraphRegistry;
@@ -121,6 +124,9 @@ class GraphClientImpl implements DynamicGraphClient {
         '  See: https://github.com/typicalday/firegraph#query-modes',
       );
     }
+
+    // Scan protection
+    this.scanProtection = options?.scanProtection ?? 'error';
 
     // Create pipeline adapter when in pipeline mode
     if (this.queryMode === 'pipeline') {
@@ -200,6 +206,24 @@ class GraphClientImpl implements DynamicGraphClient {
     return this.adapter.query(filters, options);
   }
 
+  /**
+   * Check whether a query's filter set is safe (matches a known index pattern).
+   * Throws QuerySafetyError or logs a warning depending on scanProtection config.
+   */
+  private checkQuerySafety(filters: QueryFilter[], allowCollectionScan?: boolean): void {
+    if (allowCollectionScan || this.scanProtection === 'off') return;
+
+    const result = analyzeQuerySafety(filters);
+    if (result.safe) return;
+
+    if (this.scanProtection === 'error') {
+      throw new QuerySafetyError(result.reason!);
+    }
+
+    // scanProtection === 'warn'
+    console.warn(`[firegraph] Query safety warning: ${result.reason}`);
+  }
+
   // ---------------------------------------------------------------------------
   // GraphReader
   // ---------------------------------------------------------------------------
@@ -225,6 +249,7 @@ class GraphClientImpl implements DynamicGraphClient {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
     return this.executeQuery(plan.filters, plan.options);
   }
 
@@ -234,6 +259,7 @@ class GraphClientImpl implements DynamicGraphClient {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
     return this.executeQuery(plan.filters, plan.options);
   }
 
@@ -300,7 +326,7 @@ class GraphClientImpl implements DynamicGraphClient {
         firestoreTx,
       );
       // Transactions always use standard queries — Pipeline is not transactionally bound
-      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry());
+      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry(), this.scanProtection);
       return fn(graphTx);
     });
   }

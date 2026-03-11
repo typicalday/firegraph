@@ -242,7 +242,7 @@ describe('createTraversal', () => {
       expect(result.nodes.every((e) => e.data.status === 'confirmed')).toBe(true);
     });
 
-    it('does not pass limit to Firestore when filter is used', async () => {
+    it('passes limit: 0 to Firestore when filter is used (bypass default limit)', async () => {
       const reader = createMockReader(async () => []);
 
       await createTraversal(reader, 'start')
@@ -250,7 +250,7 @@ describe('createTraversal', () => {
         .run();
 
       const call = (reader.findEdges as any).mock.calls[0][0] as FindEdgesParams;
-      expect(call.limit).toBeUndefined();
+      expect(call.limit).toBe(0);
     });
   });
 

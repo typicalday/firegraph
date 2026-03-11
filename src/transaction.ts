@@ -3,6 +3,8 @@ import { computeNodeDocId, computeEdgeDocId } from './docid.js';
 import { buildNodeRecord, buildEdgeRecord } from './record.js';
 import { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';
 import { NODE_RELATION } from './internal/constants.js';
+import { QuerySafetyError } from './errors.js';
+import { analyzeQuerySafety } from './query-safety.js';
 import type { TransactionAdapter } from './internal/firestore-adapter.js';
 import type {
   GraphTransaction,
@@ -10,12 +12,15 @@ import type {
   StoredGraphRecord,
   FindEdgesParams,
   FindNodesParams,
+  ScanProtection,
+  QueryFilter,
 } from './types.js';
 
 export class GraphTransactionImpl implements GraphTransaction {
   constructor(
     private readonly adapter: TransactionAdapter,
     private readonly registry?: GraphRegistry,
+    private readonly scanProtection: ScanProtection = 'error',
   ) {}
 
   async getNode(uid: string): Promise<StoredGraphRecord | null> {
@@ -33,12 +38,27 @@ export class GraphTransactionImpl implements GraphTransaction {
     return record !== null;
   }
 
+  private checkQuerySafety(filters: QueryFilter[], allowCollectionScan?: boolean): void {
+    if (allowCollectionScan || this.scanProtection === 'off') return;
+
+    const result = analyzeQuerySafety(filters);
+    if (result.safe) return;
+
+    if (this.scanProtection === 'error') {
+      throw new QuerySafetyError(result.reason!);
+    }
+
+    // scanProtection === 'warn'
+    console.warn(`[firegraph] Query safety warning: ${result.reason}`);
+  }
+
   async findEdges(params: FindEdgesParams): Promise<StoredGraphRecord[]> {
     const plan = buildEdgeQueryPlan(params);
     if (plan.strategy === 'get') {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
     return this.adapter.query(plan.filters, plan.options);
   }
 
@@ -48,6 +68,7 @@ export class GraphTransactionImpl implements GraphTransaction {
       const record = await this.adapter.getDoc(plan.docId);
       return record ? [record] : [];
     }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
     return this.adapter.query(plan.filters, plan.options);
   }
 

@@ -198,7 +198,7 @@ describe('bulkRemoveEdges', () => {
     const result = await bulkRemoveEdges(db, 'col', reader, { aUid: 'n1', axbType: 'hasX' });
 
     expect(result.deleted).toBe(2);
-    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'n1', axbType: 'hasX' });
+    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'n1', axbType: 'hasX', limit: 0, allowCollectionScan: true });
   });
 
   it('returns zero when no edges match', async () => {
@@ -226,6 +226,8 @@ describe('bulkRemoveEdges', () => {
       aUid: 'n1',
       axbType: 'hasX',
       where: whereClause,
+      limit: 0,
+      allowCollectionScan: true,
     });
   });
 
@@ -235,7 +237,7 @@ describe('bulkRemoveEdges', () => {
 
     await bulkRemoveEdges(db, 'col', reader, { bUid: 'target1', axbType: 'relType' });
 
-    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'target1', axbType: 'relType' });
+    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'target1', axbType: 'relType', limit: 0, allowCollectionScan: true });
   });
 
   it('computes correct sharded doc IDs for deletion', async () => {
@@ -258,8 +260,8 @@ describe('removeNodeCascade', () => {
     await removeNodeCascade(db, 'col', reader, 'node1');
 
     expect(reader.findEdges).toHaveBeenCalledTimes(2);
-    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'node1' });
-    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'node1' });
+    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'node1', allowCollectionScan: true, limit: 0 });
+    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'node1', allowCollectionScan: true, limit: 0 });
   });
 
   it('filters out self-loop (is) records from edge queries', async () => {

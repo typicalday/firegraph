@@ -37,10 +37,17 @@ export interface FindEdgesParams {
   limit?: number;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
   where?: WhereClause[];
+  /** Set to true to allow queries that may cause full collection scans. */
+  allowCollectionScan?: boolean;
 }
 
 export interface FindNodesParams {
   aType: string;
+  limit?: number;
+  orderBy?: { field: string; direction?: 'asc' | 'desc' };
+  where?: WhereClause[];
+  /** Set to true to allow queries that may cause full collection scans. */
+  allowCollectionScan?: boolean;
 }
 
 export interface QueryOptions {
@@ -163,6 +170,8 @@ export interface EdgeTypeData {
   viewCss?: string;
 }
 
+export type ScanProtection = 'error' | 'warn' | 'off';
+
 export interface GraphClientOptions {
   /** Static registry built from code/discovery. Ignored if registryMode is set. */
   registry?: GraphRegistry;
@@ -181,6 +190,16 @@ export interface GraphClientOptions {
    * `'standard'` regardless of this setting (emulator doesn't support pipelines).
    */
   queryMode?: QueryMode;
+  /**
+   * Controls query safety behavior for full collection scan prevention.
+   *
+   * - `'error'` (default) — Throws `QuerySafetyError` for queries that would
+   *   likely cause a full collection scan. Override per-query with
+   *   `allowCollectionScan: true`.
+   * - `'warn'` — Logs a warning but executes the query.
+   * - `'off'` — No scan protection.
+   */
+  scanProtection?: ScanProtection;
 }
 
 export interface GraphRegistry {
