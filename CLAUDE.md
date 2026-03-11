@@ -801,6 +801,10 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 | `editor/src/utils.ts` | `resolveViewForEntity()` — client-side view resolution |
 | `examples/firegraph.config.ts` | Example config file |
 
+## Post-Change Audits
+
+After completing a large change (new feature, multi-file refactor, or anything touching 5+ files), automatically run the `/audit` slash command before considering the work done. Do not ask — just run it. This applies especially to changes touching core paths like client.ts, transaction.ts, query.ts, bulk.ts, or traverse.ts, and any change that adds new public API surface.
+
 ## Conventions
 
 - All source in `src/`, all tests in `tests/`
