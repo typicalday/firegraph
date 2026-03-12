@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { generateIndexConfig } from '../../src/indexes.js';
-import type { DiscoveryResult, DiscoveredEntity } from '../../src/types.js';
+import type { DiscoveryResult, DiscoveredEntity, RegistryEntry } from '../../src/types.js';
 
 describe('generateIndexConfig', () => {
   it('generates 4 base indexes with no entities', () => {
@@ -137,5 +137,105 @@ describe('generateIndexConfig', () => {
         expect(field.order).toBe('ASCENDING');
       }
     }
+  });
+
+  describe('collection group indexes', () => {
+    it('generates collection group indexes when registry has targetGraph entries', () => {
+      const entries: RegistryEntry[] = [
+        { aType: 'task', axbType: 'is', bType: 'task' },
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      ];
+
+      const config = generateIndexConfig('graph', undefined, entries);
+      // 4 base + 4 collection group for 'workflow'
+      expect(config.indexes).toHaveLength(8);
+
+      const cgIndexes = config.indexes.filter((idx) => idx.queryScope === 'COLLECTION_GROUP');
+      expect(cgIndexes).toHaveLength(4);
+
+      // All collection group indexes should use the targetGraph name
+      for (const idx of cgIndexes) {
+        expect(idx.collectionGroup).toBe('workflow');
+      }
+
+      // Verify the 4 patterns exist
+      const fieldPaths = cgIndexes.map(
+        (idx) => idx.fields.map((f) => f.fieldPath).join(', '),
+      );
+      expect(fieldPaths).toContain('aUid, axbType');
+      expect(fieldPaths).toContain('axbType, bUid');
+      expect(fieldPaths).toContain('aType, axbType');
+      expect(fieldPaths).toContain('axbType, bType');
+    });
+
+    it('deduplicates collection group indexes per targetGraph name', () => {
+      const entries: RegistryEntry[] = [
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+        { aType: 'task', axbType: 'ownedBy', bType: 'user', targetGraph: 'workflow' },
+      ];
+
+      const config = generateIndexConfig('graph', undefined, entries);
+      const cgIndexes = config.indexes.filter((idx) => idx.queryScope === 'COLLECTION_GROUP');
+      // Only 4 (not 8), because both edges share the same targetGraph name
+      expect(cgIndexes).toHaveLength(4);
+    });
+
+    it('generates separate collection group indexes for distinct targetGraph names', () => {
+      const entries: RegistryEntry[] = [
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+        { aType: 'project', axbType: 'hasMilestone', bType: 'milestone', targetGraph: 'milestones' },
+      ];
+
+      const config = generateIndexConfig('graph', undefined, entries);
+      const cgIndexes = config.indexes.filter((idx) => idx.queryScope === 'COLLECTION_GROUP');
+      // 4 for 'workflow' + 4 for 'milestones'
+      expect(cgIndexes).toHaveLength(8);
+
+      const workflowIndexes = cgIndexes.filter((idx) => idx.collectionGroup === 'workflow');
+      const milestoneIndexes = cgIndexes.filter((idx) => idx.collectionGroup === 'milestones');
+      expect(workflowIndexes).toHaveLength(4);
+      expect(milestoneIndexes).toHaveLength(4);
+    });
+
+    it('skips collection group indexes when no registry entries provided', () => {
+      const config = generateIndexConfig('graph');
+      const cgIndexes = config.indexes.filter((idx) => idx.queryScope === 'COLLECTION_GROUP');
+      expect(cgIndexes).toHaveLength(0);
+    });
+
+    it('skips collection group indexes when no entries have targetGraph', () => {
+      const entries: RegistryEntry[] = [
+        { aType: 'task', axbType: 'is', bType: 'task' },
+        { aType: 'task', axbType: 'hasStep', bType: 'step' },
+      ];
+
+      const config = generateIndexConfig('graph', undefined, entries);
+      const cgIndexes = config.indexes.filter((idx) => idx.queryScope === 'COLLECTION_GROUP');
+      expect(cgIndexes).toHaveLength(0);
+    });
+
+    it('combines entity data indexes with collection group indexes', () => {
+      const entities: DiscoveryResult = {
+        nodes: new Map<string, DiscoveredEntity>([
+          ['task', {
+            kind: 'node',
+            name: 'task',
+            schema: {
+              type: 'object',
+              properties: { title: { type: 'string' } },
+            },
+          }],
+        ]),
+        edges: new Map(),
+      };
+
+      const entries: RegistryEntry[] = [
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      ];
+
+      const config = generateIndexConfig('graph', entities, entries);
+      // 4 base + 1 data field (title) + 4 collection group
+      expect(config.indexes).toHaveLength(9);
+    });
   });
 });

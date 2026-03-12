@@ -196,7 +196,7 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
   }
 
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[] }
+    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; targetGraph?: string }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
@@ -215,6 +215,7 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
     viewsPath,
     sampleData,
     allowedIn: meta?.allowedIn,
+    targetGraph: topology.targetGraph ?? (meta as { targetGraph?: string } | undefined)?.targetGraph,
   };
 }
 

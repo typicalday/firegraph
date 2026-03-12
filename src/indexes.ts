@@ -1,4 +1,4 @@
-import type { DiscoveryResult } from './types.js';
+import type { DiscoveryResult, RegistryEntry } from './types.js';
 
 export interface FirestoreIndexField {
   fieldPath: string;
@@ -7,7 +7,7 @@ export interface FirestoreIndexField {
 
 export interface FirestoreIndex {
   collectionGroup: string;
-  queryScope: 'COLLECTION';
+  queryScope: 'COLLECTION' | 'COLLECTION_GROUP';
   fields: FirestoreIndexField[];
 }
 
@@ -72,6 +72,51 @@ function extractSchemaFields(schema: object): string[] {
 }
 
 /**
+ * Collection group indexes for `findEdgesGlobal()` queries.
+ *
+ * These mirror the base collection indexes but with `COLLECTION_GROUP` scope,
+ * which allows querying across all subcollections with the given name.
+ * Only generated when the registry has edge types with `targetGraph` set,
+ * indicating cross-graph edges exist and global queries are likely.
+ */
+function collectionGroupIndexes(collectionName: string): FirestoreIndex[] {
+  return [
+    {
+      collectionGroup: collectionName,
+      queryScope: 'COLLECTION_GROUP',
+      fields: [
+        { fieldPath: 'aUid', order: 'ASCENDING' },
+        { fieldPath: 'axbType', order: 'ASCENDING' },
+      ],
+    },
+    {
+      collectionGroup: collectionName,
+      queryScope: 'COLLECTION_GROUP',
+      fields: [
+        { fieldPath: 'axbType', order: 'ASCENDING' },
+        { fieldPath: 'bUid', order: 'ASCENDING' },
+      ],
+    },
+    {
+      collectionGroup: collectionName,
+      queryScope: 'COLLECTION_GROUP',
+      fields: [
+        { fieldPath: 'aType', order: 'ASCENDING' },
+        { fieldPath: 'axbType', order: 'ASCENDING' },
+      ],
+    },
+    {
+      collectionGroup: collectionName,
+      queryScope: 'COLLECTION_GROUP',
+      fields: [
+        { fieldPath: 'axbType', order: 'ASCENDING' },
+        { fieldPath: 'bType', order: 'ASCENDING' },
+      ],
+    },
+  ];
+}
+
+/**
  * Generates a Firestore index configuration for a firegraph collection.
  *
  * Always includes the 4 base composite indexes. If an entity discovery result
@@ -79,12 +124,20 @@ function extractSchemaFields(schema: object): string[] {
  * patterns on node data fields:
  *   (aType, axbType, data.{field})
  *
+ * When registry entries with `targetGraph` are provided, also generates
+ * collection group indexes for `findEdgesGlobal()` queries. The collection
+ * group name defaults to `'graph'` (the standard subgraph name) but can be
+ * overridden per `targetGraph` value.
+ *
  * @param collection - Firestore collection name (e.g. 'graph')
  * @param entities - Optional discovery result for per-entity data field indexes
+ * @param registryEntries - Optional registry entries; when any have `targetGraph`,
+ *   collection group indexes are generated for the distinct subgraph names
  */
 export function generateIndexConfig(
   collection: string,
   entities?: DiscoveryResult,
+  registryEntries?: ReadonlyArray<RegistryEntry>,
 ): FirestoreIndexConfig {
   const indexes = baseIndexes(collection);
 
@@ -122,6 +175,20 @@ export function generateIndexConfig(
           ],
         });
       }
+    }
+  }
+
+  // Generate collection group indexes when cross-graph edges exist.
+  // Each distinct targetGraph value gets its own set of collection group indexes.
+  if (registryEntries) {
+    const targetGraphNames = new Set<string>();
+    for (const entry of registryEntries) {
+      if (entry.targetGraph) {
+        targetGraphNames.add(entry.targetGraph);
+      }
+    }
+    for (const name of targetGraphNames) {
+      indexes.push(...collectionGroupIndexes(name));
     }
   }
 

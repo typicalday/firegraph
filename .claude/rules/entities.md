@@ -51,6 +51,12 @@ entities/
 ```
 `from`/`to` accept string or string[] for edges connecting multiple node types.
 
+For cross-graph edges, add `targetGraph` to declare which subgraph the edge lives in:
+```json
+{ "from": "task", "to": "agent", "targetGraph": "workflow" }
+```
+`targetGraph` must be a single segment (no `/`). See `subgraphs.md` for details.
+
 `meta.json` -- Optional description, view defaults, and scope constraints:
 ```json
 {

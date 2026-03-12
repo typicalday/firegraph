@@ -19,6 +19,7 @@ export { defineViews } from './views.js';
 export { defineConfig, resolveView } from './config.js';
 export { discoverEntities } from './discover.js';
 export { matchScope, matchScopeAny } from './scope.js';
+export { resolveAncestorCollection, isAncestorUid } from './cross-graph.js';
 export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
 
 export {

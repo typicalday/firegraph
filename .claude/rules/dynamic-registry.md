@@ -52,6 +52,14 @@ await client.defineEdgeType(
   'Projects have milestones',
 );
 
+// Cross-graph edge: targetGraph tells traversal which subgraph to query
+await client.defineEdgeType(
+  'assignedTo',
+  { from: 'task', to: 'agent', targetGraph: 'workflow' },
+  { type: 'object', properties: { role: { type: 'string' } } },
+  'Task assigned to an agent in a workflow subgraph',
+);
+
 await client.reloadRegistry();
 ```
 
@@ -69,9 +77,9 @@ When `collection` is set, meta-type writes go to the meta-collection, domain wri
 
 **Meta-type data shapes:**
 - `nodeType`: `{ "name": "milestone", "jsonSchema": { ... }, "description": "..." }`
-- `edgeType`: `{ "name": "hasMilestone", "from": "project", "to": "milestone", "jsonSchema": { ... }, "inverseLabel": "milestoneOf" }`
+- `edgeType`: `{ "name": "hasMilestone", "from": "project", "to": "milestone", "jsonSchema": { ... }, "inverseLabel": "milestoneOf", "targetGraph": "milestones" }`
 
-`from`/`to` accept `string | string[]`.
+`from`/`to` accept `string | string[]`. `targetGraph` is optional -- when set, forward traversal queries this subgraph under the source node. Must be a single segment (no `/`, validated by JSON Schema pattern `^[^/]+$`).
 
 **Deterministic UIDs:** SHA-256 hash of `nodeType:tour` truncated to 21 chars. Calling `defineNodeType` again upserts the same document.
 

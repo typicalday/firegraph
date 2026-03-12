@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { createTraversal } from '../../src/traverse.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createTraversal, _resetCrossGraphWarning } from '../../src/traverse.js';
+import { createRegistry } from '../../src/registry.js';
 import { TraversalError } from '../../src/errors.js';
 import type { GraphReader, StoredGraphRecord, FindEdgesParams } from '../../src/types.js';
 
@@ -329,6 +330,320 @@ describe('createTraversal', () => {
         .run({ returnIntermediates: true });
 
       expect(resultWith.hops[0].edges).toHaveLength(1);
+    });
+  });
+
+  describe('cross-graph with non-GraphClient reader', () => {
+    beforeEach(() => {
+      _resetCrossGraphWarning();
+    });
+
+    it('falls back to local query when reader lacks subgraph()', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const edges = [
+        makeEdge({ aUid: 'task1', bUid: 'agent1', axbType: 'assignedTo' }),
+      ];
+      const reader = createMockReader(async (params) => {
+        if (params.aUid === 'task1' && params.axbType === 'assignedTo') return edges;
+        return [];
+      });
+
+      const registry = createRegistry([
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      ]);
+
+      // Plain reader (no subgraph method) — should still work, just queries locally
+      const result = await createTraversal(reader, 'task1', registry)
+        .follow('assignedTo')
+        .run();
+
+      expect(result.nodes).toHaveLength(1);
+      expect(result.totalReads).toBe(1);
+      warnSpy.mockRestore();
+    });
+
+    it('explicit targetGraph on hop is ignored for non-GraphClient reader', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reader = createMockReader(async () => []);
+
+      const result = await createTraversal(reader, 'start')
+        .follow('assignedTo', { targetGraph: 'workflow' })
+        .run();
+
+      expect(result.nodes).toHaveLength(0);
+      expect(result.totalReads).toBe(1);
+      // No error — just queried locally
+      warnSpy.mockRestore();
+    });
+
+    it('emits one-time console.warn for cross-graph hop on plain reader (registry)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reader = createMockReader(async () => []);
+      const registry = createRegistry([
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      ]);
+
+      await createTraversal(reader, 'task1', registry)
+        .follow('assignedTo')
+        .run();
+
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy.mock.calls[0][0]).toContain('assignedTo');
+      expect(warnSpy.mock.calls[0][0]).toContain('workflow');
+      expect(warnSpy.mock.calls[0][0]).toContain('GraphClient');
+
+      warnSpy.mockRestore();
+    });
+
+    it('emits one-time console.warn for cross-graph hop on plain reader (explicit)', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reader = createMockReader(async () => []);
+
+      await createTraversal(reader, 'start')
+        .follow('rel', { targetGraph: 'sub' })
+        .run();
+
+      expect(warnSpy).toHaveBeenCalledOnce();
+      expect(warnSpy.mock.calls[0][0]).toContain('sub');
+
+      warnSpy.mockRestore();
+    });
+
+    it('only warns once across multiple traversals', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reader = createMockReader(async () => []);
+
+      await createTraversal(reader, 'start')
+        .follow('rel', { targetGraph: 'sub' })
+        .run();
+
+      await createTraversal(reader, 'start')
+        .follow('rel', { targetGraph: 'sub' })
+        .run();
+
+      expect(warnSpy).toHaveBeenCalledOnce();
+
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe('cross-graph targetGraph resolution', () => {
+    it('hop.targetGraph takes precedence over registry', async () => {
+      const subgraphReader = createMockReader(async () => [
+        makeEdge({ aUid: 'task1', bUid: 'agent1', axbType: 'assignedTo' }),
+      ]);
+
+      const registry = createRegistry([
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      ]);
+
+      // Create a mock GraphClient with subgraph method
+      const mockClient = {
+        ...createMockReader(async () => []),
+        subgraph: vi.fn().mockReturnValue(subgraphReader),
+        runTransaction: vi.fn(),
+        batch: vi.fn(),
+        removeNodeCascade: vi.fn(),
+        bulkRemoveEdges: vi.fn(),
+        findEdgesGlobal: vi.fn(),
+      };
+
+      // Override with explicit targetGraph 'team' (not 'workflow' from registry)
+      await createTraversal(mockClient, 'task1', registry)
+        .follow('assignedTo', { targetGraph: 'team' })
+        .run();
+
+      // subgraph should be called with 'team', not 'workflow'
+      expect(mockClient.subgraph).toHaveBeenCalledWith('task1', 'team');
+    });
+  });
+
+  describe('multi-hop context tracking', () => {
+    it('carries forward subgraph reader to subsequent hops without targetGraph', async () => {
+      const subgraphReader = createMockReader(async (params) => {
+        if (params.axbType === 'hasStep') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'step1', axbType: 'hasStep', aType: 'task', bType: 'step' })];
+        }
+        if (params.axbType === 'hasDetail') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'detail1', axbType: 'hasDetail', aType: 'step', bType: 'detail' })];
+        }
+        return [];
+      });
+
+      const rootReader = createMockReader(async () => []);
+
+      const mockClient = {
+        ...rootReader,
+        subgraph: vi.fn().mockReturnValue(subgraphReader),
+        runTransaction: vi.fn(),
+        batch: vi.fn(),
+        removeNodeCascade: vi.fn(),
+        bulkRemoveEdges: vi.fn(),
+        findEdgesGlobal: vi.fn(),
+      };
+
+      const result = await createTraversal(mockClient, 'task1')
+        .follow('hasStep', { targetGraph: 'workflow' })  // crosses into subgraph
+        .follow('hasDetail')                                // should stay in subgraph
+        .run();
+
+      // Hop 1 crosses into subgraph — subgraph() called
+      expect(mockClient.subgraph).toHaveBeenCalledWith('task1', 'workflow');
+
+      // Hop 2 should query the subgraph reader (not root)
+      expect(subgraphReader.findEdges).toHaveBeenCalledTimes(2); // once for hasStep, once for hasDetail
+      expect(rootReader.findEdges).not.toHaveBeenCalled();
+
+      expect(result.nodes).toHaveLength(1);
+      expect(result.nodes[0].bUid).toBe('detail1');
+      expect(result.totalReads).toBe(2);
+    });
+
+    it('explicit targetGraph on later hop overrides carried context (relative to root)', async () => {
+      const workflowReader = createMockReader(async (params) => {
+        if (params.axbType === 'hasStep') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'step1', axbType: 'hasStep' })];
+        }
+        return [];
+      });
+
+      const teamReader = createMockReader(async (params) => {
+        if (params.axbType === 'assignedTo') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'agent1', axbType: 'assignedTo' })];
+        }
+        return [];
+      });
+
+      const rootReader = createMockReader(async () => []);
+
+      const mockClient = {
+        ...rootReader,
+        subgraph: vi.fn((uid: string, name: string) => {
+          if (name === 'workflow') return workflowReader;
+          if (name === 'team') return teamReader;
+          return rootReader;
+        }),
+        runTransaction: vi.fn(),
+        batch: vi.fn(),
+        removeNodeCascade: vi.fn(),
+        bulkRemoveEdges: vi.fn(),
+        findEdgesGlobal: vi.fn(),
+      };
+
+      const result = await createTraversal(mockClient, 'task1')
+        .follow('hasStep', { targetGraph: 'workflow' })  // crosses into workflow
+        .follow('assignedTo', { targetGraph: 'team' })   // crosses into team (relative to root)
+        .run();
+
+      // First hop: subgraph('task1', 'workflow')
+      // Second hop: subgraph('step1', 'team') — relative to root, not nested
+      expect(mockClient.subgraph).toHaveBeenCalledWith('task1', 'workflow');
+      expect(mockClient.subgraph).toHaveBeenCalledWith('step1', 'team');
+      expect(result.nodes).toHaveLength(1);
+      expect(result.nodes[0].bUid).toBe('agent1');
+    });
+
+    it('root reader stays as root when no cross-graph hops', async () => {
+      const rootReader = createMockReader(async (params) => {
+        if (params.axbType === 'rel1') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'mid', axbType: 'rel1' })];
+        }
+        if (params.axbType === 'rel2') {
+          return [makeEdge({ aUid: params.aUid!, bUid: 'end', axbType: 'rel2' })];
+        }
+        return [];
+      });
+
+      const result = await createTraversal(rootReader, 'start')
+        .follow('rel1')
+        .follow('rel2')
+        .run();
+
+      // All queries go to root reader
+      expect(rootReader.findEdges).toHaveBeenCalledTimes(2);
+      expect(result.nodes).toHaveLength(1);
+      expect(result.nodes[0].bUid).toBe('end');
+    });
+
+    it('handles budget exhaustion mid-cross-graph traversal', async () => {
+      const subgraphReader = createMockReader(async (params) => {
+        if (params.axbType === 'hasStep') {
+          return Array.from({ length: 5 }, (_, i) =>
+            makeEdge({ aUid: params.aUid!, bUid: `step${i}`, axbType: 'hasStep' }),
+          );
+        }
+        if (params.axbType === 'hasDetail') {
+          return [makeEdge({ aUid: params.aUid!, bUid: `detail-${params.aUid}`, axbType: 'hasDetail' })];
+        }
+        return [];
+      });
+
+      const rootReader = createMockReader(async () => []);
+      const mockClient = {
+        ...rootReader,
+        subgraph: vi.fn().mockReturnValue(subgraphReader),
+        runTransaction: vi.fn(),
+        batch: vi.fn(),
+        removeNodeCascade: vi.fn(),
+        bulkRemoveEdges: vi.fn(),
+        findEdgesGlobal: vi.fn(),
+      };
+
+      const result = await createTraversal(mockClient, 'task1')
+        .follow('hasStep', { targetGraph: 'workflow' })
+        .follow('hasDetail')
+        .run({ maxReads: 3 });
+
+      // Budget: 3. Hop 1 uses 1 read (gets 5 steps). Hop 2 can do 2 more reads.
+      expect(result.totalReads).toBeLessThanOrEqual(3);
+      expect(result.truncated).toBe(true);
+      // The partial results from hop 2 should still be present
+      expect(result.hops).toHaveLength(2);
+    });
+
+    it('deduplicates UIDs across different subgraph readers (first wins)', async () => {
+      // Two sources from different subgraphs both find the same target UID
+      const subgraphA = createMockReader(async () => [
+        makeEdge({ aUid: 'srcA', bUid: 'shared', axbType: 'rel' }),
+      ]);
+      const subgraphB = createMockReader(async () => [
+        makeEdge({ aUid: 'srcB', bUid: 'shared', axbType: 'rel' }),
+      ]);
+
+      const rootReader = createMockReader(async (params) => {
+        if (params.axbType === 'split') {
+          return [
+            makeEdge({ aUid: 'start', bUid: 'srcA', axbType: 'split' }),
+            makeEdge({ aUid: 'start', bUid: 'srcB', axbType: 'split' }),
+          ];
+        }
+        return [];
+      });
+
+      const mockClient = {
+        ...rootReader,
+        subgraph: vi.fn((uid: string) => {
+          if (uid === 'srcA') return subgraphA;
+          if (uid === 'srcB') return subgraphB;
+          return rootReader;
+        }),
+        runTransaction: vi.fn(),
+        batch: vi.fn(),
+        removeNodeCascade: vi.fn(),
+        bulkRemoveEdges: vi.fn(),
+        findEdgesGlobal: vi.fn(),
+      };
+
+      const result = await createTraversal(mockClient, 'start')
+        .follow('split')
+        .follow('rel', { targetGraph: 'sub' })
+        .follow('next')
+        .run();
+
+      // 'shared' appears from both subgraphA and subgraphB,
+      // but should only be queried once in the next hop (first reader wins).
+      // The third hop should query either subgraphA or subgraphB (whichever came first).
+      expect(result.hops[2].sourceCount).toBe(1);
     });
   });
 

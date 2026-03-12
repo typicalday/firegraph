@@ -34,4 +34,8 @@ Three adapters (`FirestoreAdapter`, `TransactionAdapter`, `BatchAdapter`) provid
 
 ## Traversal
 
-`createTraversal(reader, startUid)` returns a builder. `.follow(axbType, opts)` adds hops. `.run(opts)` executes sequentially hop-by-hop, with parallel fan-out within each hop controlled by a semaphore. Budget (`maxReads`) is checked before each Firestore call.
+`createTraversal(reader, startUid, registry?)` returns a builder. `.follow(axbType, opts)` adds hops. `.run(opts)` executes sequentially hop-by-hop, with parallel fan-out within each hop controlled by a semaphore. Budget (`maxReads`) is checked before each Firestore call.
+
+**Cross-graph traversal:** When `reader` is a `GraphClient` and a hop has `targetGraph` (explicit or from registry), the traversal creates a subgraph reader via `reader.subgraph(sourceUid, targetGraph)` for that hop. Plain `GraphReader` readers silently fall back to local queries.
+
+**targetGraph resolution priority:** hop definition > registry (`lookupByAxbType`) > none.

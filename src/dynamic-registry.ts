@@ -66,6 +66,7 @@ export const EDGE_TYPE_SCHEMA: object = {
     viewTemplate: { type: 'string' },
     viewCss: { type: 'string' },
     allowedIn: { type: 'array', items: { type: 'string', minLength: 1 } },
+    targetGraph: { type: 'string', minLength: 1, pattern: '^[^/]+$' },
   },
   additionalProperties: false,
 };
@@ -173,6 +174,7 @@ export async function createRegistryFromGraph(
           titleField: data.titleField,
           subtitleField: data.subtitleField,
           allowedIn: data.allowedIn,
+          targetGraph: data.targetGraph,
         });
       }
     }

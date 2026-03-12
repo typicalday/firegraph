@@ -40,6 +40,11 @@ export function createRegistry(
   const entryList: ReadonlyArray<RegistryEntry> = Object.freeze([...entries]);
 
   for (const entry of entries) {
+    if (entry.targetGraph && entry.targetGraph.includes('/')) {
+      throw new ValidationError(
+        `Entry (${entry.aType}) -[${entry.axbType}]-> (${entry.bType}) has invalid targetGraph "${entry.targetGraph}" — must be a single segment (no "/")`,
+      );
+    }
     const key = tripleKey(entry.aType, entry.axbType, entry.bType);
     const validator = entry.jsonSchema
       ? compileSchema(entry.jsonSchema, `(${entry.aType}) -[${entry.axbType}]-> (${entry.bType})`)
@@ -47,9 +52,28 @@ export function createRegistry(
     map.set(key, { entry, validate: validator });
   }
 
+  // Build axbType index for lookupByAxbType
+  const axbIndex = new Map<string, ReadonlyArray<RegistryEntry>>();
+  const axbBuild = new Map<string, RegistryEntry[]>();
+  for (const entry of entries) {
+    const existing = axbBuild.get(entry.axbType);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      axbBuild.set(entry.axbType, [entry]);
+    }
+  }
+  for (const [key, arr] of axbBuild) {
+    axbIndex.set(key, Object.freeze(arr));
+  }
+
   return {
     lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined {
       return map.get(tripleKey(aType, axbType, bType))?.entry;
+    },
+
+    lookupByAxbType(axbType: string): ReadonlyArray<RegistryEntry> {
+      return axbIndex.get(axbType) ?? [];
     },
 
     validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void {
@@ -115,6 +139,13 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
     const fromTypes = Array.isArray(topology.from) ? topology.from : [topology.from];
     const toTypes = Array.isArray(topology.to) ? topology.to : [topology.to];
 
+    const resolvedTargetGraph = entity.targetGraph ?? topology.targetGraph;
+    if (resolvedTargetGraph && resolvedTargetGraph.includes('/')) {
+      throw new ValidationError(
+        `Edge "${axbType}" has invalid targetGraph "${resolvedTargetGraph}" — must be a single segment (no "/")`,
+      );
+    }
+
     for (const aType of fromTypes) {
       for (const bType of toTypes) {
         entries.push({
@@ -127,6 +158,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
           titleField: entity.titleField,
           subtitleField: entity.subtitleField,
           allowedIn: entity.allowedIn,
+          targetGraph: resolvedTargetGraph,
         });
       }
     }

@@ -377,6 +377,44 @@ class GraphClientImpl implements DynamicGraphClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Collection group query
+  // ---------------------------------------------------------------------------
+
+  async findEdgesGlobal(
+    params: FindEdgesParams,
+    collectionName?: string,
+  ): Promise<StoredGraphRecord[]> {
+    const name = collectionName ?? this.adapter.collectionPath.split('/').pop()!;
+    const plan = buildEdgeQueryPlan(params);
+
+    if (plan.strategy === 'get') {
+      throw new FiregraphError(
+        'findEdgesGlobal() requires a query, not a direct document lookup. ' +
+        'Omit one of aUid/axbType/bUid to force a query strategy.',
+        'INVALID_QUERY',
+      );
+    }
+
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+
+    // Use Firestore collection group query
+    const collectionGroupRef = this.db.collectionGroup(name);
+    let q: import('@google-cloud/firestore').Query = collectionGroupRef;
+    for (const f of plan.filters) {
+      q = q.where(f.field, f.op, f.value);
+    }
+    if (plan.options?.orderBy) {
+      q = q.orderBy(plan.options.orderBy.field, plan.options.orderBy.direction ?? 'asc');
+    }
+    if (plan.options?.limit !== undefined) {
+      q = q.limit(plan.options.limit);
+    }
+
+    const snap = await q.get();
+    return snap.docs.map((doc) => doc.data() as StoredGraphRecord);
+  }
+
+  // ---------------------------------------------------------------------------
   // Bulk operations
   // ---------------------------------------------------------------------------
 
@@ -451,6 +489,7 @@ class GraphClientImpl implements DynamicGraphClient {
     };
     if (jsonSchema !== undefined) data.jsonSchema = jsonSchema;
     if (topology.inverseLabel !== undefined) data.inverseLabel = topology.inverseLabel;
+    if (topology.targetGraph !== undefined) data.targetGraph = topology.targetGraph;
     if (description !== undefined) data.description = description;
     if (options?.titleField !== undefined) data.titleField = options.titleField;
     if (options?.subtitleField !== undefined) data.subtitleField = options.subtitleField;

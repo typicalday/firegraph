@@ -89,6 +89,27 @@ export interface RegistryEntry {
    *   - `'**​/agents'`       — `**` matches zero or more segments
    */
   allowedIn?: string[];
+  /**
+   * Subgraph name where cross-graph edges of this type live.
+   *
+   * When set, forward traversal queries the named subgraph under each
+   * source node (e.g., `{collection}/{sourceUid}/{targetGraph}`) instead
+   * of the current collection. The subgraph contains both the edge
+   * documents and the target nodes they reference.
+   *
+   * Reverse traversal is unaffected — if you're already in the subgraph,
+   * the edges are local.
+   *
+   * Only applies to edge entries (not node self-loop entries).
+   * Must be a single segment (no `/`).
+   *
+   * @example
+   * ```ts
+   * { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' }
+   * // Forward traversal from task1: queries {collection}/task1/workflow
+   * ```
+   */
+  targetGraph?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +121,11 @@ export interface EdgeTopology {
   from: string | string[];
   to: string | string[];
   inverseLabel?: string;
+  /**
+   * Subgraph name where cross-graph edges of this type live.
+   * See `RegistryEntry.targetGraph` for full documentation.
+   */
+  targetGraph?: string;
 }
 
 /** A discovered entity from the per-entity folder convention. */
@@ -123,6 +149,8 @@ export interface DiscoveredEntity {
   sampleData?: Record<string, unknown>;
   /** Scope patterns constraining where this type can exist in subgraphs. */
   allowedIn?: string[];
+  /** Subgraph name where cross-graph edges of this type live. */
+  targetGraph?: string;
 }
 
 /** Result of scanning an entities directory. */
@@ -186,6 +214,7 @@ export interface EdgeTypeData {
   viewTemplate?: string;
   viewCss?: string;
   allowedIn?: string[];
+  targetGraph?: string;
 }
 
 export type ScanProtection = 'error' | 'warn' | 'off';
@@ -223,6 +252,8 @@ export interface GraphClientOptions {
 export interface GraphRegistry {
   validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void;
   lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined;
+  /** Return all entries matching the given axbType (edge relation name). */
+  lookupByAxbType(axbType: string): ReadonlyArray<RegistryEntry>;
   entries(): ReadonlyArray<RegistryEntry>;
 }
 
@@ -271,6 +302,20 @@ export interface GraphClient extends GraphReader, GraphWriter {
    * @returns A `GraphClient` scoped to `{collectionPath}/{parentNodeUid}/{name}`
    */
   subgraph(parentNodeUid: string, name?: string): GraphClient;
+
+  /**
+   * Find edges across all subgraphs using a Firestore collection group query.
+   *
+   * Queries all collections with the given name (defaults to `'graph'`) across
+   * the entire database. This is useful for cross-cutting reads that span
+   * multiple subgraphs.
+   *
+   * **Requires** a Firestore collection group index for the query pattern.
+   *
+   * @param params - Edge filter parameters (same as `findEdges`)
+   * @param collectionName - Collection name to query across (defaults to last segment of this client's collection path)
+   */
+  findEdgesGlobal(params: FindEdgesParams, collectionName?: string): Promise<StoredGraphRecord[]>;
 }
 
 export interface DynamicGraphClient extends GraphClient {
@@ -309,6 +354,23 @@ export interface HopDefinition {
   limit?: number;
   orderBy?: { field: string; direction?: 'asc' | 'desc' };
   filter?: (edge: StoredGraphRecord) => boolean;
+  /**
+   * Subgraph name to cross into for this hop (forward traversal only).
+   *
+   * When set, the traversal queries the named subgraph under each source node
+   * instead of the current collection (`{collection}/{sourceUid}/{targetGraph}`).
+   *
+   * If omitted but the registry has a `targetGraph` for this `axbType`,
+   * the registry value is used automatically.
+   *
+   * **Context tracking:** Once a hop crosses into a subgraph, subsequent
+   * hops without `targetGraph` stay in that subgraph automatically. To
+   * cross into a different subgraph, set `targetGraph` explicitly on the
+   * next hop — explicit `targetGraph` always resolves relative to the
+   * root client, not the current subgraph. To return to the root graph,
+   * create a separate traversal from the root client.
+   */
+  targetGraph?: string;
 }
 
 export interface TraversalOptions {

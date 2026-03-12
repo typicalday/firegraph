@@ -251,6 +251,113 @@ describe('createRegistry', () => {
     expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents')).toThrow(RegistryScopeError);
   });
 
+  // ---------------------------------------------------------------------------
+  // lookupByAxbType
+  // ---------------------------------------------------------------------------
+
+  it('lookupByAxbType returns all entries with matching axbType', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
+      { aType: 'trek', axbType: 'hasDeparture', bType: 'departure' },
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
+    ]);
+    const results = registry.lookupByAxbType('hasDeparture');
+    expect(results).toHaveLength(2);
+    expect(results.map((e) => e.aType).sort()).toEqual(['tour', 'trek']);
+  });
+
+  it('lookupByAxbType returns empty array for unknown axbType', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'is', bType: 'tour' },
+    ]);
+    expect(registry.lookupByAxbType('nonexistent')).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // targetGraph propagation
+  // ---------------------------------------------------------------------------
+
+  it('preserves targetGraph on lookup', () => {
+    const registry = createRegistry([
+      { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+    ]);
+    const entry = registry.lookup('task', 'assignedTo', 'agent');
+    expect(entry?.targetGraph).toBe('workflow');
+  });
+
+  it('lookupByAxbType includes targetGraph', () => {
+    const registry = createRegistry([
+      { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+    ]);
+    const entries = registry.lookupByAxbType('assignedTo');
+    expect(entries[0]?.targetGraph).toBe('workflow');
+  });
+
+  it('discoveryToEntries propagates targetGraph from topology', () => {
+    const discovery = {
+      nodes: new Map([
+        ['task', { kind: 'node' as const, name: 'task', schema: { type: 'object' } }],
+        ['agent', { kind: 'node' as const, name: 'agent', schema: { type: 'object' } }],
+      ]),
+      edges: new Map([
+        ['assignedTo', {
+          kind: 'edge' as const,
+          name: 'assignedTo',
+          schema: { type: 'object', properties: {} },
+          topology: { from: 'task', to: 'agent', targetGraph: 'workflow' },
+        }],
+      ]),
+    };
+    const registry = createRegistry(discovery);
+    const entry = registry.lookup('task', 'assignedTo', 'agent');
+    expect(entry?.targetGraph).toBe('workflow');
+  });
+
+  it('lookupByAxbType returns a frozen array', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
+    ]);
+    const results = registry.lookupByAxbType('hasDeparture');
+    expect(Object.isFrozen(results)).toBe(true);
+  });
+
+  it('lookupByAxbType returns entries with different targetGraph values', () => {
+    const registry = createRegistry([
+      { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+      { aType: 'project', axbType: 'assignedTo', bType: 'agent', targetGraph: 'team' },
+    ]);
+    const results = registry.lookupByAxbType('assignedTo');
+    expect(results).toHaveLength(2);
+    const graphs = results.map((e) => e.targetGraph).sort();
+    expect(graphs).toEqual(['team', 'workflow']);
+  });
+
+  it('throws ValidationError when targetGraph contains a slash', () => {
+    expect(() =>
+      createRegistry([
+        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'work/flow' },
+      ]),
+    ).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError when discoveryToEntries targetGraph contains a slash', () => {
+    const discovery = {
+      nodes: new Map([
+        ['task', { kind: 'node' as const, name: 'task', schema: { type: 'object' } }],
+        ['agent', { kind: 'node' as const, name: 'agent', schema: { type: 'object' } }],
+      ]),
+      edges: new Map([
+        ['assignedTo', {
+          kind: 'edge' as const,
+          name: 'assignedTo',
+          schema: { type: 'object', properties: {} },
+          topology: { from: 'task', to: 'agent', targetGraph: 'work/flow' },
+        }],
+      ]),
+    };
+    expect(() => createRegistry(discovery)).toThrow(ValidationError);
+  });
+
   it('expands array from/to in edge topology', () => {
     const discovery = {
       nodes: new Map([
