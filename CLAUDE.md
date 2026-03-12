@@ -50,6 +50,7 @@ Context-specific rules are in `.claude/rules/` and load automatically when worki
 | `testing.md` | `tests/**/*` | Test types, emulator setup, fixtures |
 | `entities.md` | `**/entities/**/*`, `**/schema.json`, `**/edge.json` | Per-entity folder convention, codegen CLI |
 | `views.md` | `**/views*.ts`, `**/views*.tsx`, `**/*.svelte` | Model views, defineViews, React/Svelte adapters |
+| `subgraphs.md` | `src/scope.ts`, `src/client.ts`, `src/bulk.ts`, `tests/**/subgraph*`, `tests/**/scope*` | Subgraph scoping, allowedIn patterns, cascade delete |
 | `dynamic-registry.md` | `**/dynamic-registry*`, `**/dynamic*registry*` | Bootstrap, meta-types, runtime type definition |
 | `editor.md` | `editor/**/*` | Editor architecture, server, frontend, build pipeline |
 | `config.md` | `**/firegraph.config.*`, `**/config*.ts` | defineConfig, discovery, view defaults |

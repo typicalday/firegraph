@@ -2,6 +2,7 @@
   "description": "A cycling tour with difficulty and capacity settings",
   "titleField": "name",
   "subtitleField": "difficulty",
+  "allowedIn": ["root"],
   "viewDefaults": {
     "default": "card",
     "listing": "card",

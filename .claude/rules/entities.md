@@ -51,10 +51,15 @@ entities/
 ```
 `from`/`to` accept string or string[] for edges connecting multiple node types.
 
-`meta.json` -- Optional description and view defaults:
+`meta.json` -- Optional description, view defaults, and scope constraints:
 ```json
-{ "description": "A unit of work", "viewDefaults": { "default": "card", "detail": "detail" } }
+{
+  "description": "A unit of work",
+  "allowedIn": ["root", "**/workspace"],
+  "viewDefaults": { "default": "card", "detail": "detail" }
+}
 ```
+`allowedIn` constrains where this type can exist in subgraphs. Patterns: `root`, exact names, `*` (one segment), `**` (zero or more). Omit to allow everywhere.
 
 `views.ts` -- Per-entity Web Component view classes. **Must `export default` an array of view classes:**
 ```typescript

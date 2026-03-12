@@ -31,6 +31,7 @@ All records live in a single Firestore collection. Document IDs:
 | `src/views.ts` | `defineViews()` -- framework-agnostic model view definitions (Web Components) |
 | `src/react.ts` | `wrapReact()` -- React adapter for firegraph views (`firegraph/react`) |
 | `src/svelte.ts` | `wrapSvelte()` -- Svelte 5 adapter for firegraph views (`firegraph/svelte`) |
+| `src/scope.ts` | Scope pattern matching (`matchScope`, `matchScopeAny`) for `allowedIn` constraints |
 | `src/record.ts` | Builds `GraphRecord` objects with server timestamps |
 | `src/docid.ts` | Computes document IDs (passthrough for nodes, sharded hash for edges) |
 | `src/id.ts` | 21-char nanoid generation |
@@ -44,7 +45,7 @@ All records live in a single Firestore collection. Document IDs:
 
 - `GraphReader` -- read operations (`getNode`, `getEdge`, `edgeExists`, `findEdges`, `findNodes`)
 - `GraphWriter` -- write operations (`putNode`, `putEdge`, `updateNode`, `removeNode`, `removeEdge`)
-- `GraphClient` -- extends both + `runTransaction()` + `batch()`
+- `GraphClient` -- extends both + `runTransaction()` + `batch()` + `subgraph()`
 - `DynamicGraphClient` -- extends `GraphClient` + `defineNodeType()` + `defineEdgeType()` + `reloadRegistry()` (returned when `registryMode` is set)
 - `GraphTransaction` -- extends both (used inside `runTransaction`)
 - `GraphBatch` -- extends `GraphWriter` + `commit()`

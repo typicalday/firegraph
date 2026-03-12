@@ -341,6 +341,120 @@ Key behaviors:
 
 Dynamic registry returns a `DynamicGraphClient` which extends `GraphClient` with `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`. Transactions and batches also validate against the compiled dynamic registry.
 
+### Subgraphs
+
+Create isolated graph namespaces inside a parent node's Firestore document as subcollections. Each subgraph is a full `GraphClient` scoped to its own collection path.
+
+```typescript
+const agentId = generateId();
+await g.putNode('agent', agentId, { name: 'ResearchBot' });
+
+// Create a subgraph under the agent's document
+const memories = g.subgraph(agentId, 'memories');
+
+// CRUD works exactly like the parent client
+const memId = generateId();
+await memories.putNode('memory', memId, { text: 'The sky is blue' });
+const mem = await memories.getNode(memId);
+
+// Subgraph data is isolated — parent can't see it
+const parentNodes = await g.findNodes({ aType: 'memory', allowCollectionScan: true });
+// → [] (empty — memories live in the subcollection)
+```
+
+#### Nested Subgraphs
+
+Subgraphs can be nested to any depth:
+
+```typescript
+const workspace = g.subgraph(agentId, 'workspace');
+const taskId = generateId();
+await workspace.putNode('task', taskId, { name: 'Analyze data' });
+
+// Nest further
+const subtasks = workspace.subgraph(taskId, 'subtasks');
+await subtasks.putNode('subtask', generateId(), { name: 'Parse CSV' });
+```
+
+#### Scope Constraints (`allowedIn`)
+
+Registry entries support `allowedIn` patterns that restrict where a type can be used:
+
+```typescript
+const registry = createRegistry([
+  { aType: 'agent', axbType: 'is', bType: 'agent', allowedIn: ['root'] },
+  { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['**/memories'] },
+  { aType: 'task', axbType: 'is', bType: 'task', allowedIn: ['workspace', '**/workspace'] },
+]);
+
+const g = createGraphClient(db, 'graph', { registry });
+
+// Agent only at root
+await g.putNode('agent', agentId, {}); // OK
+await memories.putNode('agent', generateId(), {}); // throws RegistryScopeError
+
+// Memory only in 'memories' subgraphs
+await memories.putNode('memory', generateId(), {}); // OK
+await g.putNode('memory', generateId(), {}); // throws RegistryScopeError
+```
+
+**Pattern syntax:**
+
+| Pattern | Matches |
+|---------|---------|
+| `root` | Top-level collection only |
+| `memories` | Exact subgraph name |
+| `workspace/tasks` | Exact path |
+| `*/memories` | `*` matches one segment |
+| `**/memories` | `**` matches zero or more segments |
+| `**` | Everything including root |
+
+Omitting `allowedIn` (or passing an empty array) means the type is allowed everywhere.
+
+#### Transactions & Batches in Subgraphs
+
+```typescript
+const sub = g.subgraph(agentId, 'memories');
+
+// Transaction
+await sub.runTransaction(async (tx) => {
+  const node = await tx.getNode(memId);
+  await tx.putNode('memory', memId, { text: 'updated' });
+});
+
+// Batch
+const batch = sub.batch();
+await batch.putNode('memory', generateId(), { text: 'first' });
+await batch.putNode('memory', generateId(), { text: 'second' });
+await batch.commit();
+```
+
+#### Cascade Delete
+
+`removeNodeCascade` recursively deletes subcollections by default:
+
+```typescript
+// Deletes the agent node, all its edges, and all subgraph data
+await g.removeNodeCascade(agentId);
+
+// To preserve subgraph data:
+await g.removeNodeCascade(agentId, { deleteSubcollections: false });
+```
+
+#### Firestore Path Layout
+
+```
+graph/                          ← root collection
+  {agentId}                     ← agent node document
+  {agentId}/memories/           ← subgraph subcollection
+    {memId}                     ← memory node document
+    {shard:aUid:rel:bUid}       ← edge document
+  {agentId}/workspace/          ← another subgraph
+    {taskId}                    ← task node document
+    {taskId}/subtasks/          ← nested subgraph
+      {subtaskId}               ← subtask node document
+```
+
 ### ID Generation
 
 ```typescript
@@ -360,6 +474,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `EdgeNotFoundError` | `EDGE_NOT_FOUND` | Edge lookup fails |
 | `ValidationError` | `VALIDATION_ERROR` | Schema validation fails (registry + Zod) |
 | `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
+| `RegistryScopeError` | `REGISTRY_SCOPE` | Type not allowed at this subgraph scope |
 | `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | `findEdges` called with no filters |
 | `TraversalError` | `TRAVERSAL_ERROR` | `run()` called with zero hops |
