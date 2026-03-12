@@ -21,6 +21,7 @@ export class GraphTransactionImpl implements GraphTransaction {
     private readonly adapter: TransactionAdapter,
     private readonly registry?: GraphRegistry,
     private readonly scanProtection: ScanProtection = 'error',
+    private readonly scopePath: string = '',
   ) {}
 
   async getNode(uid: string): Promise<StoredGraphRecord | null> {
@@ -74,7 +75,7 @@ export class GraphTransactionImpl implements GraphTransaction {
 
   async putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, NODE_RELATION, aType, data);
+      this.registry.validate(aType, NODE_RELATION, aType, data, this.scopePath);
     }
     const docId = computeNodeDocId(uid);
     const record = buildNodeRecord(aType, uid, data);
@@ -90,7 +91,7 @@ export class GraphTransactionImpl implements GraphTransaction {
     data: Record<string, unknown>,
   ): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, axbType, bType, data);
+      this.registry.validate(aType, axbType, bType, data, this.scopePath);
     }
     const docId = computeEdgeDocId(aUid, axbType, bUid);
     const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);

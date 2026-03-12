@@ -42,7 +42,10 @@ function createMockFirestore(commitImpl?: () => Promise<void>) {
       commit: commitFn,
     })),
     collection: vi.fn((path: string) => ({
-      doc: (id: string) => ({ _id: id }),
+      doc: (id: string) => ({
+        _id: id,
+        listCollections: vi.fn(async () => []),
+      }),
     })),
   } as any;
 
@@ -329,7 +332,10 @@ describe('removeNodeCascade', () => {
         }),
       })),
       collection: vi.fn(() => ({
-        doc: (id: string) => ({ _id: id }),
+        doc: (id: string) => ({
+          _id: id,
+          listCollections: vi.fn(async () => []),
+        }),
       })),
     } as any;
 
@@ -395,5 +401,74 @@ describe('removeNodeCascade', () => {
     expect(deletedDocIds).toContain(computeEdgeDocId('n1', 'owns', 'x1'));
     expect(deletedDocIds).toContain(computeEdgeDocId('p1', 'parentOf', 'n1'));
     expect(deletedDocIds).toContain(computeNodeDocId('n1'));
+  });
+
+  it('deletes subcollections recursively when deleteSubcollections is true (default)', async () => {
+    const reader = createMockReader(async () => []);
+
+    const subDocs = [{ id: 'sub1' }, { id: 'sub2' }];
+    const subCollectionRef = {
+      path: 'col/n1/graph',
+      select: vi.fn(() => ({
+        get: vi.fn(async () => ({ docs: subDocs })),
+      })),
+    };
+
+    const deletedDocIds: string[] = [];
+    const db = {
+      batch: vi.fn(() => ({
+        delete: vi.fn((docRef: any) => {
+          deletedDocIds.push(docRef._path ?? docRef._id);
+        }),
+        commit: vi.fn(async () => {}),
+      })),
+      collection: vi.fn((path: string) => ({
+        doc: (id: string) => ({
+          _id: id,
+          _path: `${path}/${id}`,
+          listCollections: vi.fn(async () => {
+            // Only the top-level node doc has subcollections
+            if (path === 'col' && id === computeNodeDocId('n1')) {
+              return [subCollectionRef];
+            }
+            return [];
+          }),
+        }),
+      })),
+    } as any;
+
+    const result = await removeNodeCascade(db, 'col', reader, 'n1');
+
+    expect(result.nodeDeleted).toBe(true);
+    // 2 subcollection docs + 1 node doc (0 edges)
+    expect(result.deleted).toBe(3);
+    // No top-level edges
+    expect(result.edgesDeleted).toBe(0);
+  });
+
+  it('skips subcollection deletion when deleteSubcollections is false', async () => {
+    const reader = createMockReader(async () => []);
+
+    const listCollectionsFn = vi.fn(async () => []);
+
+    const db = {
+      batch: vi.fn(() => ({
+        delete: vi.fn(),
+        commit: vi.fn(async () => {}),
+      })),
+      collection: vi.fn((path: string) => ({
+        doc: (id: string) => ({
+          _id: id,
+          listCollections: listCollectionsFn,
+        }),
+      })),
+    } as any;
+
+    await removeNodeCascade(db, 'col', reader, 'n1', {
+      deleteSubcollections: false,
+    });
+
+    // listCollections should never be called
+    expect(listCollectionsFn).not.toHaveBeenCalled();
   });
 });

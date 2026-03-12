@@ -1,5 +1,6 @@
-import { RegistryViolationError, ValidationError } from './errors.js';
+import { RegistryViolationError, RegistryScopeError, ValidationError } from './errors.js';
 import { compileSchema } from './json-schema.js';
+import { matchScopeAny } from './scope.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type { GraphRegistry, RegistryEntry, DiscoveryResult } from './types.js';
 
@@ -51,11 +52,18 @@ export function createRegistry(
       return map.get(tripleKey(aType, axbType, bType))?.entry;
     },
 
-    validate(aType: string, axbType: string, bType: string, data: unknown): void {
+    validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void {
       const rec = map.get(tripleKey(aType, axbType, bType));
 
       if (!rec) {
         throw new RegistryViolationError(aType, axbType, bType);
+      }
+
+      // Scope validation: check allowedIn patterns when a scope context is provided
+      if (scopePath !== undefined && rec.entry.allowedIn && rec.entry.allowedIn.length > 0) {
+        if (!matchScopeAny(scopePath, rec.entry.allowedIn)) {
+          throw new RegistryScopeError(aType, axbType, bType, scopePath, rec.entry.allowedIn);
+        }
       }
 
       if (rec.validate) {
@@ -95,6 +103,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
       description: entity.description,
       titleField: entity.titleField,
       subtitleField: entity.subtitleField,
+      allowedIn: entity.allowedIn,
     });
   }
 
@@ -117,6 +126,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
           inverseLabel: topology.inverseLabel,
           titleField: entity.titleField,
           subtitleField: entity.subtitleField,
+          allowedIn: entity.allowedIn,
         });
       }
     }

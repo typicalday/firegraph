@@ -18,7 +18,7 @@ import {
   removeNodeCascade as removeNodeCascadeImpl,
   bulkRemoveEdges as bulkRemoveEdgesImpl,
 } from './bulk.js';
-import { DynamicRegistryError, QuerySafetyError } from './errors.js';
+import { DynamicRegistryError, FiregraphError, QuerySafetyError } from './errors.js';
 import { analyzeQuerySafety } from './query-safety.js';
 import {
   createBootstrapRegistry,
@@ -70,11 +70,17 @@ class GraphClientImpl implements DynamicGraphClient {
   private readonly metaAdapter?: FirestoreAdapter;
   private readonly metaPipelineAdapter?: PipelineQueryAdapter;
 
+  // Subgraph scope tracking
+  private readonly scopePath: string;
+
   constructor(
     private readonly db: Firestore,
     collectionPath: string,
     options?: GraphClientOptions,
+    /** @internal Scope path for subgraph clients (empty string = root). */
+    scopePath: string = '',
   ) {
+    this.scopePath = scopePath;
     this.adapter = createFirestoreAdapter(db, collectionPath);
 
     // Validate mutual exclusivity
@@ -270,7 +276,7 @@ class GraphClientImpl implements DynamicGraphClient {
   async putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
     const registry = this.getRegistryForType(aType);
     if (registry) {
-      registry.validate(aType, NODE_RELATION, aType, data);
+      registry.validate(aType, NODE_RELATION, aType, data, this.scopePath);
     }
     const adapter = this.getAdapterForType(aType);
     const docId = computeNodeDocId(uid);
@@ -288,7 +294,7 @@ class GraphClientImpl implements DynamicGraphClient {
   ): Promise<void> {
     const registry = this.getRegistryForType(aType);
     if (registry) {
-      registry.validate(aType, axbType, bType, data);
+      registry.validate(aType, axbType, bType, data, this.scopePath);
     }
     const adapter = this.getAdapterForType(aType);
     const docId = computeEdgeDocId(aUid, axbType, bUid);
@@ -326,14 +332,48 @@ class GraphClientImpl implements DynamicGraphClient {
         firestoreTx,
       );
       // Transactions always use standard queries — Pipeline is not transactionally bound
-      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry(), this.scanProtection);
+      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry(), this.scanProtection, this.scopePath);
       return fn(graphTx);
     });
   }
 
   batch(): GraphBatch {
     const adapter = createBatchAdapter(this.db, this.adapter.collectionPath);
-    return new GraphBatchImpl(adapter, this.getCombinedRegistry());
+    return new GraphBatchImpl(adapter, this.getCombinedRegistry(), this.scopePath);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subgraph
+  // ---------------------------------------------------------------------------
+
+  subgraph(parentNodeUid: string, name: string = 'graph'): GraphClient {
+    if (!parentNodeUid || parentNodeUid.includes('/')) {
+      throw new FiregraphError(
+        `Invalid parentNodeUid for subgraph: "${parentNodeUid}". ` +
+        'Must be a non-empty string without "/".',
+        'INVALID_SUBGRAPH',
+      );
+    }
+    if (name.includes('/')) {
+      throw new FiregraphError(
+        `Subgraph name must not contain "/": got "${name}". ` +
+        'Use chained .subgraph() calls for nested subgraphs.',
+        'INVALID_SUBGRAPH',
+      );
+    }
+    const subCollectionPath = `${this.adapter.collectionPath}/${parentNodeUid}/${name}`;
+    const newScopePath = this.scopePath ? `${this.scopePath}/${name}` : name;
+
+    return new GraphClientImpl(
+      this.db,
+      subCollectionPath,
+      {
+        registry: this.getCombinedRegistry(),
+        queryMode: this.queryMode === 'pipeline' ? 'pipeline' : 'standard',
+        scanProtection: this.scanProtection,
+      },
+      newScopePath,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -378,6 +418,7 @@ class GraphClientImpl implements DynamicGraphClient {
     if (options?.subtitleField !== undefined) data.subtitleField = options.subtitleField;
     if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
     if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
+    if (options?.allowedIn !== undefined) data.allowedIn = options.allowedIn;
 
     await this.putNode(META_NODE_TYPE, uid, data);
   }
@@ -415,6 +456,7 @@ class GraphClientImpl implements DynamicGraphClient {
     if (options?.subtitleField !== undefined) data.subtitleField = options.subtitleField;
     if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
     if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
+    if (options?.allowedIn !== undefined) data.allowedIn = options.allowedIn;
 
     await this.putNode(META_EDGE_TYPE, uid, data);
   }

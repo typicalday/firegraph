@@ -69,3 +69,14 @@ export class QuerySafetyError extends FiregraphError {
     this.name = 'QuerySafetyError';
   }
 }
+
+export class RegistryScopeError extends FiregraphError {
+  constructor(aType: string, axbType: string, bType: string, scopePath: string, allowedIn: string[]) {
+    super(
+      `Type (${aType}) -[${axbType}]-> (${bType}) is not allowed at scope "${scopePath || 'root'}". ` +
+        `Allowed in: [${allowedIn.join(', ')}]`,
+      'REGISTRY_SCOPE',
+    );
+    this.name = 'RegistryScopeError';
+  }
+}

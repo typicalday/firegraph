@@ -35,6 +35,7 @@ export const NODE_TYPE_SCHEMA: object = {
     subtitleField: { type: 'string' },
     viewTemplate: { type: 'string' },
     viewCss: { type: 'string' },
+    allowedIn: { type: 'array', items: { type: 'string', minLength: 1 } },
   },
   additionalProperties: false,
 };
@@ -64,6 +65,7 @@ export const EDGE_TYPE_SCHEMA: object = {
     subtitleField: { type: 'string' },
     viewTemplate: { type: 'string' },
     viewCss: { type: 'string' },
+    allowedIn: { type: 'array', items: { type: 'string', minLength: 1 } },
   },
   additionalProperties: false,
 };
@@ -149,6 +151,7 @@ export async function createRegistryFromGraph(
       description: data.description,
       titleField: data.titleField,
       subtitleField: data.subtitleField,
+      allowedIn: data.allowedIn,
     });
   }
 
@@ -169,6 +172,7 @@ export async function createRegistryFromGraph(
           inverseLabel: data.inverseLabel,
           titleField: data.titleField,
           subtitleField: data.subtitleField,
+          allowedIn: data.allowedIn,
         });
       }
     }

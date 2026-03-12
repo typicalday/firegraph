@@ -18,6 +18,7 @@ export { createTraversal } from './traverse.js';
 export { defineViews } from './views.js';
 export { defineConfig, resolveView } from './config.js';
 export { discoverEntities } from './discover.js';
+export { matchScope, matchScopeAny } from './scope.js';
 export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
 
 export {
@@ -30,6 +31,7 @@ export {
   TraversalError,
   DynamicRegistryError,
   QuerySafetyError,
+  RegistryScopeError,
 } from './errors.js';
 
 export { DiscoveryError } from './discover.js';

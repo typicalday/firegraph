@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRegistry } from '../../src/registry.js';
-import { RegistryViolationError, ValidationError } from '../../src/errors.js';
+import { RegistryViolationError, RegistryScopeError, ValidationError } from '../../src/errors.js';
 
 const tourSchema = {
   type: 'object',
@@ -155,6 +155,100 @@ describe('createRegistry', () => {
     expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).not.toThrow();
     expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 1 })).not.toThrow();
     expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 'bad' })).toThrow(ValidationError);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Scope validation (allowedIn)
+  // ---------------------------------------------------------------------------
+
+  it('validate passes when no allowedIn is defined (backwards compatible)', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
+    ]);
+    // Passing a scopePath should still pass when there's no allowedIn restriction
+    expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' }, 'agents')).not.toThrow();
+    expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' }, '')).not.toThrow();
+  });
+
+  it('validate passes when scopePath is undefined (skips scope check)', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema, allowedIn: ['root'] },
+    ]);
+    // undefined scopePath means we're not in a scope-aware context — skip check
+    expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).not.toThrow();
+  });
+
+  it('validate passes when allowedIn matches the scopePath', () => {
+    const registry = createRegistry([
+      { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['agents', '**/memories'] },
+    ]);
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents')).not.toThrow();
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'foo/memories')).not.toThrow();
+  });
+
+  it('validate throws RegistryScopeError when scopePath is not allowed', () => {
+    const registry = createRegistry([
+      { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['agents'] },
+    ]);
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'tasks')).toThrow(
+      RegistryScopeError,
+    );
+    expect(() => registry.validate('memory', 'is', 'memory', {}, '')).toThrow(
+      RegistryScopeError,
+    );
+  });
+
+  it('validate passes when allowedIn is empty (allowed everywhere)', () => {
+    const registry = createRegistry([
+      { aType: 'tour', axbType: 'is', bType: 'tour', allowedIn: [] },
+    ]);
+    expect(() => registry.validate('tour', 'is', 'tour', {}, 'anywhere')).not.toThrow();
+  });
+
+  it('RegistryScopeError includes scope and allowedIn info', () => {
+    const registry = createRegistry([
+      { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['agents'] },
+    ]);
+    try {
+      registry.validate('memory', 'is', 'memory', {}, 'tasks');
+      expect.fail('Should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegistryScopeError);
+      expect((err as RegistryScopeError).message).toContain('tasks');
+      expect((err as RegistryScopeError).message).toContain('agents');
+      expect((err as RegistryScopeError).code).toBe('REGISTRY_SCOPE');
+    }
+  });
+
+  it('discoveryToEntries propagates allowedIn', () => {
+    const discovery = {
+      nodes: new Map([
+        ['memory', { kind: 'node' as const, name: 'memory', schema: { type: 'object' }, allowedIn: ['**/memories'] }],
+      ]),
+      edges: new Map([
+        ['recalls', {
+          kind: 'edge' as const,
+          name: 'recalls',
+          schema: { type: 'object', properties: {} },
+          topology: { from: 'memory', to: 'memory' },
+          allowedIn: ['**/memories'],
+        }],
+      ]),
+    };
+    const registry = createRegistry(discovery);
+
+    // Both should have scope constraints from discovery
+    const nodeEntry = registry.lookup('memory', 'is', 'memory');
+    expect(nodeEntry?.allowedIn).toEqual(['**/memories']);
+
+    const edgeEntry = registry.lookup('memory', 'recalls', 'memory');
+    expect(edgeEntry?.allowedIn).toEqual(['**/memories']);
+
+    // Should pass at correct scope
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents/memories')).not.toThrow();
+
+    // Should fail at wrong scope
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents')).toThrow(RegistryScopeError);
   });
 
   it('expands array from/to in edge topology', () => {

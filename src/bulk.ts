@@ -118,12 +118,75 @@ export async function bulkRemoveEdges(
   return bulkDeleteDocIds(db, collectionPath, docIds, options);
 }
 
+/** Result from recursive subcollection deletion. */
+interface SubcollectionDeleteResult {
+  deleted: number;
+  errors: BulkBatchError[];
+}
+
+/**
+ * Recursively delete all documents in all subcollections under a given document.
+ * Uses `listCollections()` (Admin SDK) to discover subcollections, then for each
+ * subcollection: recurse into each document's subcollections first (depth-first),
+ * then bulk delete all documents in the subcollection.
+ *
+ * The `onProgress` callback is intentionally NOT forwarded to subcollection
+ * deletes to avoid confusing callers with interleaved progress from different
+ * collection depths.
+ */
+async function deleteSubcollectionsRecursive(
+  db: Firestore,
+  collectionPath: string,
+  docId: string,
+  options?: BulkOptions,
+): Promise<SubcollectionDeleteResult> {
+  const docRef = db.collection(collectionPath).doc(docId);
+  const subcollections = await docRef.listCollections();
+
+  if (subcollections.length === 0) return { deleted: 0, errors: [] };
+
+  let totalDeleted = 0;
+  const allErrors: BulkBatchError[] = [];
+
+  // Strip onProgress for subcollection deletes — callers should only see
+  // top-level progress, not interleaved reports from nested depths.
+  const subOptions: BulkOptions | undefined = options
+    ? { batchSize: options.batchSize, maxRetries: options.maxRetries }
+    : undefined;
+
+  for (const subCollRef of subcollections) {
+    const subCollPath = subCollRef.path;
+    // List all documents in this subcollection
+    const snapshot = await subCollRef.select().get();
+    const subDocIds = snapshot.docs.map((d) => d.id);
+
+    // Depth-first: recurse into each document's subcollections
+    for (const subDocId of subDocIds) {
+      const subResult = await deleteSubcollectionsRecursive(db, subCollPath, subDocId, subOptions);
+      totalDeleted += subResult.deleted;
+      allErrors.push(...subResult.errors);
+    }
+
+    // Now delete all documents in this subcollection
+    if (subDocIds.length > 0) {
+      const result = await bulkDeleteDocIds(db, subCollPath, subDocIds, subOptions);
+      totalDeleted += result.deleted;
+      allErrors.push(...result.errors);
+    }
+  }
+
+  return { deleted: totalDeleted, errors: allErrors };
+}
+
 /**
  * Deletes a node and all of its outgoing and incoming edges.
  *
  * Edges are deleted first in chunked batches, then the node document
  * is deleted in the final batch. This is NOT atomic across batches —
  * if a batch fails after retries, remaining batches still execute.
+ *
+ * By default, subcollections (subgraphs) under the node's document are
+ * recursively deleted. Set `options.deleteSubcollections` to `false` to skip.
  */
 export async function removeNodeCascade(
   db: Firestore,
@@ -154,9 +217,19 @@ export async function removeNodeCascade(
     }
   }
 
+  // Delete subcollections (subgraphs) under this node's document (depth-first).
+  const shouldDeleteSubcollections = options?.deleteSubcollections !== false;
+  const nodeDocId = computeNodeDocId(uid);
+  let subcollectionResult: SubcollectionDeleteResult = { deleted: 0, errors: [] };
+
+  if (shouldDeleteSubcollections) {
+    subcollectionResult = await deleteSubcollectionsRecursive(
+      db, collectionPath, nodeDocId, options,
+    );
+  }
+
   // Build doc IDs: edges first, then the node last.
   const edgeDocIds = allEdges.map((e) => computeEdgeDocId(e.aUid, e.axbType, e.bUid));
-  const nodeDocId = computeNodeDocId(uid);
   const allDocIds = [...edgeDocIds, nodeDocId];
 
   // Wrap the progress callback to track overall progress.
@@ -172,9 +245,15 @@ export async function removeNodeCascade(
   const nodeChunkIndex = totalChunks - 1;
   const nodeDeleted = !result.errors.some((e) => e.batchIndex === nodeChunkIndex);
 
+  // edgesDeleted counts only top-level edges (not subcollection docs).
+  // deleted includes everything: top-level edges + node + subcollection docs.
+  const topLevelEdgesDeleted = nodeDeleted ? result.deleted - 1 : result.deleted;
+
   return {
-    ...result,
-    edgesDeleted: nodeDeleted ? result.deleted - 1 : result.deleted,
+    deleted: result.deleted + subcollectionResult.deleted,
+    batches: result.batches,
+    errors: [...result.errors, ...subcollectionResult.errors],
+    edgesDeleted: topLevelEdgesDeleted,
     nodeDeleted,
   };
 }

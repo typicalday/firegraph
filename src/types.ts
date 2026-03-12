@@ -77,6 +77,18 @@ export interface RegistryEntry {
   titleField?: string;
   /** Data field to use as the display subtitle (e.g. 'status', 'difficulty'). */
   subtitleField?: string;
+  /**
+   * Scope patterns constraining where this type can exist.
+   * Omit or leave empty to allow everywhere (backwards compatible).
+   *
+   * Patterns:
+   *   - `'root'`            — top-level collection only
+   *   - `'agents'`          — exact subgraph name match
+   *   - `'workflow/agents'`  — exact path match
+   *   - `'*​/agents'`        — `*` matches one segment
+   *   - `'**​/agents'`       — `**` matches zero or more segments
+   */
+  allowedIn?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +121,8 @@ export interface DiscoveredEntity {
   viewsPath?: string;
   /** Sample data from sample.json. */
   sampleData?: Record<string, unknown>;
+  /** Scope patterns constraining where this type can exist in subgraphs. */
+  allowedIn?: string[];
 }
 
 /** Result of scanning an entities directory. */
@@ -143,6 +157,8 @@ export interface DefineTypeOptions {
   viewTemplate?: string;
   /** Scoped CSS for the view template (injected via Shadow DOM). */
   viewCss?: string;
+  /** Scope patterns constraining where this type can exist in subgraphs. */
+  allowedIn?: string[];
 }
 
 /** Data shape stored in a `nodeType` meta-node. */
@@ -154,6 +170,7 @@ export interface NodeTypeData {
   subtitleField?: string;
   viewTemplate?: string;
   viewCss?: string;
+  allowedIn?: string[];
 }
 
 /** Data shape stored in an `edgeType` meta-node. */
@@ -168,6 +185,7 @@ export interface EdgeTypeData {
   subtitleField?: string;
   viewTemplate?: string;
   viewCss?: string;
+  allowedIn?: string[];
 }
 
 export type ScanProtection = 'error' | 'warn' | 'off';
@@ -203,7 +221,7 @@ export interface GraphClientOptions {
 }
 
 export interface GraphRegistry {
-  validate(aType: string, axbType: string, bType: string, data: unknown): void;
+  validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void;
   lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined;
   entries(): ReadonlyArray<RegistryEntry>;
 }
@@ -238,6 +256,21 @@ export interface GraphClient extends GraphReader, GraphWriter {
   removeNodeCascade(uid: string, options?: BulkOptions): Promise<CascadeResult>;
   /** Find all edges matching `params` and delete them in chunked batches. */
   bulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Create a scoped client for a Firestore subcollection under the given
+   * parent node's document.
+   *
+   * The returned client shares a snapshot of the parent's registry at
+   * the time of this call. If the parent is a `DynamicGraphClient` and
+   * `reloadRegistry()` is called later, existing subgraph clients will
+   * NOT see the updated types — create a new subgraph client after
+   * reloading to pick up changes.
+   *
+   * @param parentNodeUid - UID of the parent node whose document owns the subcollection
+   * @param name - Subcollection name (defaults to `'graph'`). Must not contain `/`.
+   * @returns A `GraphClient` scoped to `{collectionPath}/{parentNodeUid}/{name}`
+   */
+  subgraph(parentNodeUid: string, name?: string): GraphClient;
 }
 
 export interface DynamicGraphClient extends GraphClient {
@@ -315,6 +348,11 @@ export interface BulkOptions {
   maxRetries?: number;
   /** Called after each batch commits. */
   onProgress?: (progress: BulkProgress) => void;
+  /**
+   * Recursively delete subcollections (subgraphs) under the node's document.
+   * Defaults to `true` for `removeNodeCascade`.
+   */
+  deleteSubcollections?: boolean;
 }
 
 export interface BulkProgress {

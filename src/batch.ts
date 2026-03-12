@@ -9,11 +9,12 @@ export class GraphBatchImpl implements GraphBatch {
   constructor(
     private readonly adapter: BatchAdapter,
     private readonly registry?: GraphRegistry,
+    private readonly scopePath: string = '',
   ) {}
 
   async putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, NODE_RELATION, aType, data);
+      this.registry.validate(aType, NODE_RELATION, aType, data, this.scopePath);
     }
     const docId = computeNodeDocId(uid);
     const record = buildNodeRecord(aType, uid, data);
@@ -29,7 +30,7 @@ export class GraphBatchImpl implements GraphBatch {
     data: Record<string, unknown>,
   ): Promise<void> {
     if (this.registry) {
-      this.registry.validate(aType, axbType, bType, data);
+      this.registry.validate(aType, axbType, bType, data, this.scopePath);
     }
     const docId = computeEdgeDocId(aUid, axbType, bUid);
     const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);
