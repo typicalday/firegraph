@@ -1,6 +1,6 @@
 {
   "name": "@typicalday/firegraph",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generic Firestore adjacency graph client with smart query planning",
   "type": "module",
   "main": "./dist/index.cjs",
