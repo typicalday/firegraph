@@ -1,6 +1,6 @@
 # Firegraph Integration Guide
 
-Firegraph is a typed graph data layer for Firebase Cloud Firestore. It stores nodes and edges as triples in a single collection with smart query planning, sharded document IDs, JSON Schema validation, and multi-hop traversal.
+Firegraph is a typed graph data layer for Firebase Cloud Firestore. It stores nodes and edges as triples in a Firestore collection with smart query planning, sharded document IDs, JSON Schema validation, multi-hop traversal, and nested subgraphs.
 
 ## Installation
 
@@ -67,7 +67,7 @@ const g = createGraphClient(db, 'my-collection');
 const g = createGraphClient(db, 'my-collection', { registry });
 ```
 
-All graph data lives in a single Firestore collection specified by the second argument.
+The second argument specifies the root Firestore collection. All graph data lives here by default; subgraphs extend into nested subcollections beneath individual nodes.
 
 ### 3. Create a Configuration File
 

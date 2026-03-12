@@ -2,7 +2,7 @@
 
 > **Warning:** This library is experimental. APIs may change without notice between releases.
 
-A typed graph data layer for Firebase Cloud Firestore. Store nodes and edges in a single collection with smart query planning, sharded document IDs, optional schema validation, and multi-hop traversal.
+A typed graph data layer for Firebase Cloud Firestore. Store nodes and edges as triples in a Firestore collection with smart query planning, sharded document IDs, optional schema validation, multi-hop traversal, and nested subgraphs.
 
 ## Install
 
@@ -57,7 +57,7 @@ const departures = await g.findEdges({ aUid: tourId, axbType: 'hasDeparture' });
 
 ### Graph Model
 
-Firegraph stores everything as **triples** in a single Firestore collection:
+Firegraph stores everything as **triples** in a Firestore collection (with optional nested subcollections for [subgraphs](#subgraphs)):
 
 ```
 (aType, aUid) -[axbType]-> (bType, bUid)
@@ -193,7 +193,7 @@ await batch.commit();
 
 ### Graph Traversal
 
-Multi-hop traversal with budget enforcement, concurrency control, and in-memory filtering:
+Multi-hop traversal with budget enforcement, concurrency control, in-memory filtering, and cross-graph hops:
 
 ```typescript
 import { createTraversal } from 'firegraph';
@@ -212,6 +212,8 @@ result.hops;       // HopResult[] — per-hop breakdown
 result.totalReads; // number — Firestore reads consumed
 result.truncated;  // boolean — true if budget was hit
 ```
+
+`createTraversal` accepts a `GraphClient` or `GraphReader`. When passed a `GraphClient`, cross-graph hops via `targetGraph` are supported (see [Cross-Graph Edges](#cross-graph-edges)).
 
 #### Reverse Traversal
 
@@ -249,6 +251,7 @@ await g.runTransaction(async (tx) => {
 | `limit` | `number` | `10` | Max edges per source node |
 | `orderBy` | `{ field, direction? }` | — | Firestore-level ordering |
 | `filter` | `(edge) => boolean` | — | In-memory post-filter |
+| `targetGraph` | `string` | — | Subgraph to cross into (forward only). See [Cross-Graph Edges](#cross-graph-edges) |
 
 #### Run Options
 
@@ -455,6 +458,127 @@ graph/                          ← root collection
       {subtaskId}               ← subtask node document
 ```
 
+### Cross-Graph Edges
+
+Edges that connect nodes across different subgraphs. The key rule: **edges live with the target node**. A cross-graph edge is stored in the same collection as its target (bUid), while the source (aUid) may be a parent node in an ancestor graph.
+
+```typescript
+import { createGraphClient, createRegistry, createTraversal, generateId } from 'firegraph';
+
+// Registry declares that 'assignedTo' edges live in the 'workflow' subgraph
+const registry = createRegistry([
+  { aType: 'task', axbType: 'is', bType: 'task', jsonSchema: taskSchema },
+  { aType: 'agent', axbType: 'is', bType: 'agent', jsonSchema: agentSchema },
+  { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+]);
+
+const g = createGraphClient(db, 'graph', { registry });
+
+// Create a task in the root graph
+const taskId = generateId();
+await g.putNode('task', taskId, { title: 'Build API' });
+
+// Create agents in a workflow subgraph under the task
+const workflow = g.subgraph(taskId, 'workflow');
+const agentId = generateId();
+await workflow.putNode('agent', agentId, { name: 'Backend Dev' });
+
+// Create the cross-graph edge in the workflow subgraph
+// The edge lives alongside the target (agent), source (task) is an ancestor
+await workflow.putEdge('task', taskId, 'assignedTo', 'agent', agentId, { role: 'lead' });
+
+// Forward traversal: task → agents (automatically crosses into workflow subgraph)
+const result = await createTraversal(g, taskId, registry)
+  .follow('assignedTo')
+  .run();
+// result.nodes contains the agent edges from the workflow subgraph
+```
+
+#### How It Works
+
+1. **Writing**: You explicitly call `putEdge` on the subgraph client where the target node lives. The caller decides where the edge goes.
+
+2. **Reverse traversal is free**: Since the edge lives with the target, querying from the agent's perspective (`findEdges({ bUid: agentId })` on the workflow client) finds it locally.
+
+3. **Forward traversal uses `targetGraph`**: When traversing from the task, the engine sees `targetGraph: 'workflow'` on the registry entry and queries `g.subgraph(taskId, 'workflow')` automatically.
+
+4. **Path-scanning resolution**: To determine if an edge's `aUid` is an ancestor node, firegraph parses the Firestore collection path. The path `graph/taskId/workflow` reveals that `taskId` is a document in the `graph` collection.
+
+#### Registry `targetGraph`
+
+The `targetGraph` field on a `RegistryEntry` tells forward traversal which subgraph to query under each source node:
+
+```typescript
+createRegistry([
+  // When traversing forward from a task along 'assignedTo',
+  // look in the 'workflow' subgraph under each task
+  { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
+]);
+```
+
+`targetGraph` must be a single segment (no `/`). It can also be set in entity discovery via `edge.json`:
+
+```json
+{ "from": "task", "to": "agent", "targetGraph": "workflow" }
+```
+
+#### Explicit Hop Override
+
+You can override the registry's `targetGraph` on a per-hop basis:
+
+```typescript
+// Use 'team' subgraph instead of registry's default
+const result = await createTraversal(g, taskId)
+  .follow('assignedTo', { targetGraph: 'team' })
+  .run();
+```
+
+Resolution priority: explicit hop `targetGraph` > registry `targetGraph` > no cross-graph.
+
+#### `findEdgesGlobal` — Collection Group Queries
+
+For cross-cutting reads across all subgraphs, use `findEdgesGlobal`:
+
+```typescript
+// Find all 'assignedTo' edges across all 'workflow' subgraphs in the database
+const allAssignments = await g.findEdgesGlobal(
+  { axbType: 'assignedTo', allowCollectionScan: true },
+  'workflow',  // collection name to query across
+);
+```
+
+This uses Firestore collection group queries and requires collection group indexes. The collection name defaults to the last segment of the client's collection path if omitted.
+
+#### Multi-Hop Limitation
+
+Each hop resolves its reader from the root client. If hop 1 crosses into a subgraph, hop 2 does **not** stay in that subgraph — it reverts to the root. To chain hops within a subgraph, create a separate traversal from the subgraph client:
+
+```typescript
+// This traversal finds agents in the workflow subgraph
+const agents = await createTraversal(g, taskId, registry)
+  .follow('assignedTo')
+  .run();
+
+// To continue traversing within the workflow subgraph,
+// create a new traversal from the subgraph client
+const workflow = g.subgraph(taskId, 'workflow');
+for (const agent of agents.nodes) {
+  const mentees = await createTraversal(workflow, agent.bUid)
+    .follow('mentors')
+    .run();
+}
+```
+
+#### Firestore Path Layout
+
+```
+graph/                              <- root collection
+  {taskId}                          <- task node
+  {taskId}/workflow/                <- workflow subgraph
+    {agentId}                       <- agent node
+    {shard:taskId:assignedTo:agentId} <- cross-graph edge
+```
+
 ### ID Generation
 
 ```typescript
@@ -477,6 +601,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `RegistryScopeError` | `REGISTRY_SCOPE` | Type not allowed at this subgraph scope |
 | `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | `findEdges` called with no filters |
+| `QuerySafetyError` | `QUERY_SAFETY` | Query would cause a full collection scan |
 | `TraversalError` | `TRAVERSAL_ERROR` | `run()` called with zero hops |
 
 ```typescript
@@ -518,8 +643,9 @@ import type {
   GraphClientOptions,
 
   // Registry
-  RegistryEntry,
-  GraphRegistry,
+  RegistryEntry,       // includes targetGraph, allowedIn
+  GraphRegistry,       // includes lookupByAxbType
+  EdgeTopology,        // includes targetGraph
 
   // Dynamic Registry
   DynamicGraphClient,
@@ -528,11 +654,15 @@ import type {
   EdgeTypeData,
 
   // Traversal
-  HopDefinition,
+  HopDefinition,       // includes targetGraph
   TraversalOptions,
   HopResult,
   TraversalResult,
   TraversalBuilder,
+
+  // Entity Discovery
+  DiscoveredEntity,
+  DiscoveryResult,
 } from 'firegraph';
 ```
 
@@ -564,6 +694,8 @@ When you call `findEdges`, the query planner decides the strategy:
 
 1. Start with `sourceUids = [startUid]`
 2. For each hop in sequence:
+   - Resolve `targetGraph`: check hop override, then registry, then none
+   - If cross-graph (forward + `targetGraph` + `GraphClient` reader): create a subgraph reader via `reader.subgraph(sourceUid, targetGraph)` for each source
    - Fan out: query edges for each source UID (parallel, bounded by semaphore)
    - Each `findEdges` call counts as 1 read against the budget
    - Apply in-memory `filter` if specified, then apply `limit`

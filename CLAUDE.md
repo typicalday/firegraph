@@ -1,6 +1,6 @@
 # Firegraph — Project Guide
 
-Firegraph is a TypeScript library that provides a graph data model on top of Firebase Cloud Firestore. It stores nodes and edges in a single Firestore collection, with smart query planning, sharded document IDs, optional schema validation, and multi-hop graph traversal.
+Firegraph is a TypeScript library that provides a graph data model on top of Firebase Cloud Firestore. It stores nodes and edges as triples in a Firestore collection (with optional nested subcollections for subgraphs), featuring smart query planning, sharded document IDs, optional schema validation, and multi-hop graph traversal.
 
 ## Commands
 
