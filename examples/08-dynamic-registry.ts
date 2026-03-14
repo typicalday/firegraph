@@ -7,6 +7,9 @@
  *
  * Workflow: define → reload → write
  *
+ * This example shows pure dynamic mode (no static registry). To combine a
+ * static registry with dynamic extensions, see 11-merged-registry.ts.
+ *
  * Run against the emulator:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/08-dynamic-registry.ts
  */

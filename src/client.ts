@@ -27,6 +27,7 @@ import {
   META_NODE_TYPE,
   META_EDGE_TYPE,
 } from './dynamic-registry.js';
+import { createMergedRegistry } from './registry.js';
 import type {
   DefineTypeOptions,
   DynamicGraphClient,
@@ -83,17 +84,15 @@ class GraphClientImpl implements DynamicGraphClient {
     this.scopePath = scopePath;
     this.adapter = createFirestoreAdapter(db, collectionPath);
 
-    // Validate mutual exclusivity
-    if (options?.registry && options?.registryMode) {
-      throw new DynamicRegistryError(
-        'Cannot provide both "registry" and "registryMode". ' +
-        'Use "registry" for static mode or "registryMode" for dynamic mode.',
-      );
-    }
-
     if (options?.registryMode) {
       this.dynamicConfig = options.registryMode;
       this.bootstrapRegistry = createBootstrapRegistry();
+
+      // Merged mode: static registry provided alongside dynamic config.
+      // Static entries take priority; dynamic can only add new types.
+      if (options.registry) {
+        this.staticRegistry = options.registry;
+      }
 
       // If meta-collection differs from main, create separate adapter
       const metaCollectionPath = options.registryMode.collection;
@@ -155,11 +154,13 @@ class GraphClientImpl implements DynamicGraphClient {
   /**
    * Get the appropriate registry for validating a write to the given type.
    *
-   * - Static mode: returns staticRegistry (or undefined if none set)
-   * - Dynamic mode:
+   * - Static-only mode: returns staticRegistry (or undefined if none set)
+   * - Dynamic mode (pure or merged):
    *   - Meta-types (nodeType, edgeType): validated against bootstrapRegistry
    *   - Domain types: validated against dynamicRegistry (falls back to
    *     bootstrapRegistry which rejects unknown types)
+   *   - Merged mode: dynamicRegistry is a merged wrapper (static + dynamic
+   *     extension), so static entries take priority automatically.
    */
   private getRegistryForType(aType: string): GraphRegistry | undefined {
     if (!this.dynamicConfig) return this.staticRegistry;
@@ -168,7 +169,7 @@ class GraphClientImpl implements DynamicGraphClient {
       return this.bootstrapRegistry;
     }
 
-    return this.dynamicRegistry ?? this.bootstrapRegistry;
+    return this.dynamicRegistry ?? this.staticRegistry ?? this.bootstrapRegistry;
   }
 
   /**
@@ -187,13 +188,13 @@ class GraphClientImpl implements DynamicGraphClient {
 
   /**
    * Get the combined registry for transaction/batch context.
-   * In static mode, returns staticRegistry.
+   * In static-only mode, returns staticRegistry.
    * In dynamic mode, returns dynamicRegistry (which includes bootstrap entries)
-   * or bootstrapRegistry if not yet reloaded.
+   * or falls back to staticRegistry (merged mode) or bootstrapRegistry.
    */
   private getCombinedRegistry(): GraphRegistry | undefined {
     if (!this.dynamicConfig) return this.staticRegistry;
-    return this.dynamicRegistry ?? this.bootstrapRegistry;
+    return this.dynamicRegistry ?? this.staticRegistry ?? this.bootstrapRegistry;
   }
 
   // ---------------------------------------------------------------------------
@@ -449,6 +450,13 @@ class GraphClientImpl implements DynamicGraphClient {
       );
     }
 
+    // Merged mode: reject if static registry already defines this node type
+    if (this.staticRegistry?.lookup(name, NODE_RELATION, name)) {
+      throw new DynamicRegistryError(
+        `Cannot define node type "${name}": already defined in the static registry.`,
+      );
+    }
+
     const uid = generateDeterministicUid(META_NODE_TYPE, name);
     const data: Record<string, unknown> = { name, jsonSchema };
     if (description !== undefined) data.description = description;
@@ -481,6 +489,21 @@ class GraphClientImpl implements DynamicGraphClient {
       );
     }
 
+    // Merged mode: reject if static registry already defines any triple for this edge
+    if (this.staticRegistry) {
+      const fromTypes = Array.isArray(topology.from) ? topology.from : [topology.from];
+      const toTypes = Array.isArray(topology.to) ? topology.to : [topology.to];
+      for (const aType of fromTypes) {
+        for (const bType of toTypes) {
+          if (this.staticRegistry.lookup(aType, name, bType)) {
+            throw new DynamicRegistryError(
+              `Cannot define edge type "${name}" for (${aType}) -> (${bType}): already defined in the static registry.`,
+            );
+          }
+        }
+      }
+    }
+
     const uid = generateDeterministicUid(META_EDGE_TYPE, name);
     const data: Record<string, unknown> = {
       name,
@@ -509,7 +532,14 @@ class GraphClientImpl implements DynamicGraphClient {
     }
 
     const reader = this.createMetaReader();
-    this.dynamicRegistry = await createRegistryFromGraph(reader);
+    const dynamicOnly = await createRegistryFromGraph(reader);
+
+    if (this.staticRegistry) {
+      // Merged mode: static entries take priority over dynamic ones
+      this.dynamicRegistry = createMergedRegistry(this.staticRegistry, dynamicOnly);
+    } else {
+      this.dynamicRegistry = dynamicOnly;
+    }
   }
 
   /**
@@ -577,5 +607,5 @@ export function createGraphClient(
   collectionPath: string,
   options?: GraphClientOptions,
 ): GraphClient | DynamicGraphClient {
-  return new GraphClientImpl(db, collectionPath, options);
+  return new GraphClientImpl(db, collectionPath, options) as GraphClient | DynamicGraphClient;
 }

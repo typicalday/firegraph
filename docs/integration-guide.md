@@ -218,8 +218,6 @@ const g = createGraphClient(db, 'my-collection', {
 
 This returns a `DynamicGraphClient` which extends `GraphClient` with three additional methods: `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`.
 
-`registryMode` and `registry` are mutually exclusive — providing both throws `DynamicRegistryError`.
-
 ### Workflow: define → reload → write
 
 ```typescript
@@ -314,10 +312,44 @@ await batch.commit();
 
 ### Key behaviors
 
-- **Before `reloadRegistry()`**: Domain writes are rejected. Only meta-type writes (`defineNodeType`, `defineEdgeType`) succeed, validated by the bootstrap registry.
+- **Before `reloadRegistry()`**: Domain writes are rejected (unless in merged mode — see below). Only meta-type writes (`defineNodeType`, `defineEdgeType`) succeed, validated by the bootstrap registry.
 - **After `reloadRegistry()`**: Domain writes are validated against the compiled registry. Unknown types are always rejected.
 - **Reserved names**: `defineNodeType('nodeType')` and `defineNodeType('edgeType')` throw `DynamicRegistryError` — these names are reserved for the meta-registry itself.
 - **Edge topology**: `from` and `to` accept `string | string[]`. Arrays create a cross-product of registry entries (e.g., `from: ['task', 'project'], to: ['step']` registers both `task→hasStep→step` and `project→hasStep→step`).
+
+### Merged registry (static + dynamic)
+
+When both `registry` and `registryMode` are provided, firegraph operates in **merged mode**. The static registry defines the core schema (from your filesystem entities), and the dynamic registry extends it with runtime-defined types. Static entries always take priority.
+
+```typescript
+import { createGraphClient, createRegistry, discoverEntities } from 'firegraph';
+
+const { result } = discoverEntities('./entities');
+const staticRegistry = createRegistry(result);
+
+const g = createGraphClient(db, 'my-collection', {
+  registry: staticRegistry,                  // core types (immutable at runtime)
+  registryMode: { mode: 'dynamic' },         // runtime extensions
+});
+
+// Static types work immediately — no reload needed
+await g.putNode('task', taskId, { title: 'Build feature', status: 'created' });
+
+// Agents can add new types at runtime
+await g.defineNodeType('milestone', milestoneSchema, 'A project milestone');
+await g.reloadRegistry();
+
+// Both static and dynamic types are now available
+await g.putNode('milestone', milestoneId, { title: 'v1.0' }); // OK
+```
+
+Key behaviors in merged mode:
+
+- **Static types are available immediately** — no `reloadRegistry()` needed for types defined in the static registry.
+- **Dynamic types extend the schema** — `defineNodeType` and `defineEdgeType` add new types. After `reloadRegistry()`, both static and dynamic types are available.
+- **Static entries cannot be overridden** — `defineNodeType('task', ...)` throws `DynamicRegistryError` if `task` is already in the static registry. Same for `defineEdgeType` — all `from`/`to` combinations are checked against the static registry.
+- **Static wins on collision** — if a type exists in both registries (e.g., through direct meta-node writes), the static schema is used for validation.
+- **Transactions, batches, and subgraphs** all use the merged registry for validation.
 
 ## Core API
 

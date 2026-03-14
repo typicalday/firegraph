@@ -443,17 +443,18 @@ describe('dynamic registry — batches', () => {
 describe('dynamic registry — mutual exclusivity', () => {
   const db = getTestFirestore();
 
-  it('throws DynamicRegistryError when both registry and registryMode are provided', () => {
+  it('accepts both registry and registryMode for merged mode', () => {
     const registry = createRegistry([
       { aType: 'tour', axbType: 'is', bType: 'tour' },
     ]);
 
+    // Merged mode: static + dynamic — should NOT throw
     expect(() =>
       createGraphClient(db, uniqueCollectionPath(), {
         registry,
         registryMode: { mode: 'dynamic' },
       }),
-    ).toThrow(DynamicRegistryError);
+    ).not.toThrow();
   });
 
   it('static registry mode works unchanged', async () => {

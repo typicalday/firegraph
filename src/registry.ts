@@ -8,6 +8,10 @@ function tripleKey(aType: string, axbType: string, bType: string): string {
   return `${aType}:${axbType}:${bType}`;
 }
 
+function tripleKeyFor(e: RegistryEntry): string {
+  return tripleKey(e.aType, e.axbType, e.bType);
+}
+
 /**
  * Build a registry from either explicit entries or a DiscoveryResult.
  *
@@ -105,6 +109,68 @@ export function createRegistry(
 
     entries(): ReadonlyArray<RegistryEntry> {
       return entryList;
+    },
+  };
+}
+
+/**
+ * Create a merged registry where `base` entries take priority and `extension`
+ * entries fill in gaps. Lookups and validation check `base` first; only if the
+ * triple is not found there does the merged registry fall through to
+ * `extension`.
+ *
+ * The `entries()` method returns a deduplicated list (base wins on collision).
+ * The `lookupByAxbType()` method merges results from both registries,
+ * deduplicating by triple key with base entries winning.
+ */
+export function createMergedRegistry(
+  base: GraphRegistry,
+  extension: GraphRegistry,
+): GraphRegistry {
+  // Build a set of triple keys from the base registry for fast collision checks.
+  const baseKeys = new Set(base.entries().map(tripleKeyFor));
+
+  return {
+    lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined {
+      return base.lookup(aType, axbType, bType) ?? extension.lookup(aType, axbType, bType);
+    },
+
+    lookupByAxbType(axbType: string): ReadonlyArray<RegistryEntry> {
+      const baseResults = base.lookupByAxbType(axbType);
+      const extResults = extension.lookupByAxbType(axbType);
+      if (extResults.length === 0) return baseResults;
+      if (baseResults.length === 0) return extResults;
+
+      // Merge, base wins on triple-key collision
+      const seen = new Set(baseResults.map(tripleKeyFor));
+      const merged = [...baseResults];
+      for (const entry of extResults) {
+        if (!seen.has(tripleKeyFor(entry))) {
+          merged.push(entry);
+        }
+      }
+      return Object.freeze(merged);
+    },
+
+    validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void {
+      if (baseKeys.has(tripleKey(aType, axbType, bType))) {
+        return base.validate(aType, axbType, bType, data, scopePath);
+      }
+      // Falls through to extension (which throws RegistryViolationError if not found)
+      return extension.validate(aType, axbType, bType, data, scopePath);
+    },
+
+    entries(): ReadonlyArray<RegistryEntry> {
+      const extEntries = extension.entries();
+      if (extEntries.length === 0) return base.entries();
+
+      const merged = [...base.entries()];
+      for (const entry of extEntries) {
+        if (!baseKeys.has(tripleKeyFor(entry))) {
+          merged.push(entry);
+        }
+      }
+      return Object.freeze(merged);
     },
   };
 }

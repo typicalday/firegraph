@@ -1,5 +1,5 @@
 export { createGraphClient } from './client.js';
-export { createRegistry } from './registry.js';
+export { createRegistry, createMergedRegistry } from './registry.js';
 export {
   createRegistryFromGraph,
   createBootstrapRegistry,

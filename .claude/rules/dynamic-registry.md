@@ -90,7 +90,7 @@ When `collection` is set, meta-type writes go to the meta-collection, domain wri
 
 **Reserved names:** `defineNodeType('nodeType')` and `defineNodeType('edgeType')` throw `DynamicRegistryError`.
 
-**Mutual exclusivity:** Providing both `registry` (static) and `registryMode` (dynamic) throws `DynamicRegistryError`.
+**Merged mode:** Providing both `registry` (static) and `registryMode` (dynamic) activates merged mode. Static entries take priority; dynamic definitions can only add new types. `defineNodeType`/`defineEdgeType` throw `DynamicRegistryError` if the type already exists in the static registry. Before `reloadRegistry()`, static types are usable immediately. After reload, a merged registry wraps both (via `createMergedRegistry()`). See `src/registry.ts`.
 
 ## Standalone Compilation
 
@@ -107,8 +107,11 @@ const client = createGraphClient(db, 'graph', { registry });
 | File | Purpose |
 |------|---------|
 | `src/dynamic-registry.ts` | Bootstrap schemas, `createRegistryFromGraph()`, `generateDeterministicUid()`, meta-type constants |
-| `src/client.ts` | `DynamicGraphClient` implementation: validation routing, convenience methods, meta-reader |
+| `src/registry.ts` | `createMergedRegistry()` -- wraps base + extension with base-wins semantics |
+| `src/client.ts` | `DynamicGraphClient` implementation: validation routing, convenience methods, meta-reader, merged mode |
 | `src/types.ts` | `DynamicGraphClient`, `DynamicRegistryConfig`, `NodeTypeData`, `EdgeTypeData` interfaces |
 | `src/errors.ts` | `DynamicRegistryError` |
-| `tests/unit/dynamic-registry.test.ts` | Unit tests |
-| `tests/integration/dynamic-registry.test.ts` | Integration tests |
+| `tests/unit/dynamic-registry.test.ts` | Unit tests (pure dynamic) |
+| `tests/unit/merged-registry.test.ts` | Unit tests for `createMergedRegistry` |
+| `tests/integration/dynamic-registry.test.ts` | Integration tests (pure dynamic) |
+| `tests/integration/merged-registry.test.ts` | Integration tests (merged mode) |

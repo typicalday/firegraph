@@ -220,7 +220,16 @@ export interface EdgeTypeData {
 export type ScanProtection = 'error' | 'warn' | 'off';
 
 export interface GraphClientOptions {
-  /** Static registry built from code/discovery. Ignored if registryMode is set. */
+  /**
+   * Static registry built from code/discovery.
+   *
+   * When provided alone, all writes are validated against this registry.
+   *
+   * When provided together with `registryMode`, operates in **merged mode**:
+   * static entries take priority and cannot be overridden by dynamic
+   * definitions. Dynamic definitions can only add new types. The merged
+   * client is returned as a `DynamicGraphClient`.
+   */
   registry?: GraphRegistry;
   /** Dynamic registry mode — type definitions stored as graph data. */
   registryMode?: DynamicRegistryConfig;

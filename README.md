@@ -340,7 +340,7 @@ Key behaviors:
 - **After `reloadRegistry()`**: Domain writes are validated against the compiled registry. Unknown types are always rejected.
 - **Upsert semantics**: Calling `defineNodeType('tour', ...)` twice overwrites the previous definition. After reloading, the latest schema is used.
 - **Separate collection**: Meta-nodes can be stored in a different collection via `registryMode: { mode: 'dynamic', collection: 'meta' }`.
-- **Mutual exclusivity**: `registry` (static) and `registryMode` (dynamic) cannot be used together.
+- **Merged mode**: Provide both `registry` (static) and `registryMode` (dynamic) to get a merged registry where static entries take priority and dynamic definitions can only add new types — not override existing ones.
 
 Dynamic registry returns a `DynamicGraphClient` which extends `GraphClient` with `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`. Transactions and batches also validate against the compiled dynamic registry.
 
