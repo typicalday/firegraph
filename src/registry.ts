@@ -1,5 +1,6 @@
 import { RegistryViolationError, RegistryScopeError, ValidationError } from './errors.js';
 import { compileSchema } from './json-schema.js';
+import { validateMigrationChain } from './migration.js';
 import { matchScopeAny } from './scope.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type { GraphRegistry, RegistryEntry, DiscoveryResult } from './types.js';
@@ -48,6 +49,15 @@ export function createRegistry(
       throw new ValidationError(
         `Entry (${entry.aType}) -[${entry.axbType}]-> (${entry.bType}) has invalid targetGraph "${entry.targetGraph}" — must be a single segment (no "/")`,
       );
+    }
+    if (entry.migrations?.length) {
+      const label = `Entry (${entry.aType}) -[${entry.axbType}]-> (${entry.bType})`;
+      validateMigrationChain(entry.migrations, label);
+      // Derive schemaVersion from migrations — single source of truth
+      entry.schemaVersion = Math.max(...entry.migrations.map((m) => m.toVersion));
+    } else {
+      // No migrations → no versioning (ignore any user-supplied schemaVersion)
+      entry.schemaVersion = undefined;
     }
     const key = tripleKey(entry.aType, entry.axbType, entry.bType);
     const validator = entry.jsonSchema
@@ -194,6 +204,8 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
       titleField: entity.titleField,
       subtitleField: entity.subtitleField,
       allowedIn: entity.allowedIn,
+      migrations: entity.migrations,
+      migrationWriteBack: entity.migrationWriteBack,
     });
   }
 
@@ -225,6 +237,8 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
           subtitleField: entity.subtitleField,
           allowedIn: entity.allowedIn,
           targetGraph: resolvedTargetGraph,
+          migrations: entity.migrations,
+          migrationWriteBack: entity.migrationWriteBack,
         });
       }
     }

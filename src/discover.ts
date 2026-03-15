@@ -32,7 +32,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
-import type { DiscoveredEntity, DiscoveryResult, EdgeTopology } from './types.js';
+import type { DiscoveredEntity, DiscoveryResult, EdgeTopology, MigrationStep, MigrationWriteBack } from './types.js';
 import type { ViewResolverConfig } from './config.js';
 import { FiregraphError } from './errors.js';
 
@@ -144,18 +144,58 @@ function findViewsFile(dir: string): string | undefined {
 }
 
 // ---------------------------------------------------------------------------
+// Migration file detection & loading
+// ---------------------------------------------------------------------------
+
+const MIGRATION_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs'];
+
+function findMigrationsFile(dir: string): string | undefined {
+  for (const ext of MIGRATION_EXTENSIONS) {
+    const candidate = join(dir, `migrations${ext}`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function loadMigrations(filePath: string, entityLabel: string): MigrationStep[] {
+  try {
+    const jiti = getJiti();
+    const mod = jiti(filePath) as { default?: unknown } | unknown;
+    const migrations = (mod && typeof mod === 'object' && 'default' in mod)
+      ? (mod as { default: unknown }).default
+      : mod;
+
+    if (!Array.isArray(migrations)) {
+      throw new DiscoveryError(
+        `Migrations file ${filePath} for ${entityLabel} must default-export an array of MigrationStep.`,
+      );
+    }
+    return migrations as MigrationStep[];
+  } catch (err: unknown) {
+    if (err instanceof DiscoveryError) throw err;
+    throw new DiscoveryError(
+      `Failed to load migrations ${filePath} for ${entityLabel}: ${(err as Error).message}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Entity loaders
 // ---------------------------------------------------------------------------
 
 function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
   const schema = loadSchema(dir, `node type "${name}"`);
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[] }
+    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; migrationWriteBack?: MigrationWriteBack }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
     | undefined;
   const viewsPath = findViewsFile(dir);
+  const migrationsPath = findMigrationsFile(dir);
+  const migrations = migrationsPath
+    ? loadMigrations(migrationsPath, `node type "${name}"`)
+    : undefined;
 
   return {
     kind: 'node',
@@ -168,6 +208,8 @@ function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
     viewsPath,
     sampleData,
     allowedIn: meta?.allowedIn,
+    migrations,
+    migrationWriteBack: meta?.migrationWriteBack,
   };
 }
 
@@ -196,12 +238,16 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
   }
 
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; targetGraph?: string }
+    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; targetGraph?: string; migrationWriteBack?: MigrationWriteBack }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
     | undefined;
   const viewsPath = findViewsFile(dir);
+  const migrationsPath = findMigrationsFile(dir);
+  const migrations = migrationsPath
+    ? loadMigrations(migrationsPath, `edge type "${name}"`)
+    : undefined;
 
   return {
     kind: 'edge',
@@ -216,6 +262,8 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
     sampleData,
     allowedIn: meta?.allowedIn,
     targetGraph: topology.targetGraph ?? (meta as { targetGraph?: string } | undefined)?.targetGraph,
+    migrations,
+    migrationWriteBack: meta?.migrationWriteBack,
   };
 }
 

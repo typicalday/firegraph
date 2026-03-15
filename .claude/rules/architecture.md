@@ -25,6 +25,9 @@ All records in a graph live in one Firestore collection (subgraphs use nested su
 | `src/cross-graph.ts` | Path-scanning resolution for cross-graph edge references (`resolveAncestorCollection`, `isAncestorUid`) |
 | `src/registry.ts` | Optional schema registry for type-safe edge validation (JSON Schema via ajv) |
 | `src/dynamic-registry.ts` | Dynamic registry: bootstrap schemas, `createRegistryFromGraph()`, deterministic UIDs |
+| `src/migration.ts` | `applyMigrationChain`, `migrateRecord`, `migrateRecords` -- read-path migration pipeline |
+| `src/sandbox.ts` | `defaultExecutor`, `compileMigrationFn`, `compileMigrations` -- dynamic migration compilation |
+| `src/serialization.ts` | Tagged serialization for Firestore types through JSON boundary (Timestamp, GeoPoint, VectorValue, DocumentReference) |
 | `src/json-schema.ts` | JSON Schema validation (ajv) and introspection (JSON Schema -> `FieldMeta[]`) |
 | `src/discover.ts` | Convention-based entity auto-discovery from per-entity folders |
 | `src/codegen/index.ts` | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`) |

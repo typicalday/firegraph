@@ -68,7 +68,7 @@ Firegraph stores everything as **triples** in a Firestore collection (with optio
 - **Edges** are directed relationships between nodes:
   `(tour, Kj7vNq2mP9xR4wL1tY8s3) -[hasDeparture]-> (departure, Xp4nTk8qW2vR7mL9jY5a1)`
 
-Every record carries a `data` payload (arbitrary JSON), plus `createdAt` and `updatedAt` server timestamps.
+Every record carries a `data` payload (arbitrary JSON), plus `createdAt` and `updatedAt` server timestamps. Records managed by a schema registry with migrations also carry a `v` field (schema version number, derived from `max(toVersion)` of the migrations array) on the record envelope.
 
 ### Document IDs
 
@@ -344,6 +344,110 @@ Key behaviors:
 
 Dynamic registry returns a `DynamicGraphClient` which extends `GraphClient` with `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`. Transactions and batches also validate against the compiled dynamic registry.
 
+### Schema Versioning & Auto-Migration
+
+Firegraph supports schema versioning with automatic migration of records on read. The schema version is derived automatically as `max(toVersion)` from the `migrations` array -- there is no separate `schemaVersion` property to set. When a record's stored version (`v`) is behind the derived version, migration functions run automatically to bring data up to the current version.
+
+```typescript
+import { createRegistry, createGraphClient } from 'firegraph';
+import type { MigrationStep } from 'firegraph';
+
+const migrations: MigrationStep[] = [
+  { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, status: d.status ?? 'draft' }) },
+  { fromVersion: 1, toVersion: 2, up: async (d) => ({ ...d, active: true }) },
+];
+
+const registry = createRegistry([
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchemaV2,
+    migrations,                    // version derived as max(toVersion) = 2
+    migrationWriteBack: 'eager',
+  },
+]);
+
+const g = createGraphClient(db, 'graph', { registry });
+
+// Reading a v0 record automatically migrates it to v2 in memory
+const tour = await g.getNode(tourId);
+// tour.v === 2, tour.data.status === 'draft', tour.data.active === true
+```
+
+#### How It Works
+
+- **Version storage**: The `v` field lives on the record envelope (top-level, alongside `aType`, `data`, etc.), not inside `data`. Records without `v` are treated as version 0 (legacy data).
+- **Read path**: When a record is read and its `v` is behind the derived version (`max(toVersion)` from migrations), migrations run sequentially to bring data up to the current version.
+- **Write path**: When writing via `putNode`/`putEdge`, the record is stamped with `v` equal to the derived version automatically.
+- **`updateNode`**: Does not stamp `v` — it is a raw partial update without schema context. The next read re-triggers migration (which is idempotent).
+
+#### Write-Back
+
+Write-back controls whether migrated data is persisted back to Firestore after a read-triggered migration:
+
+| Mode | Behavior |
+|------|----------|
+| `'off'` | In-memory only; Firestore document unchanged (default) |
+| `'eager'` | Fire-and-forget write after read; inline update in transactions |
+| `'background'` | Same as eager but errors are swallowed with a `console.warn` |
+
+Resolution order: `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
+
+```typescript
+// Global default
+const g = createGraphClient(db, 'graph', {
+  registry,
+  migrationWriteBack: 'background',
+});
+
+// Entry-level override (takes priority)
+createRegistry([{
+  aType: 'tour', axbType: 'is', bType: 'tour',
+  migrations,
+  migrationWriteBack: 'eager',
+}]);
+```
+
+#### Dynamic Registry Migrations
+
+In dynamic mode, migrations are stored as source code strings:
+
+```typescript
+await g.defineNodeType('tour', tourSchema, 'A tour', {
+  migrations: [
+    { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "draft" })' },
+  ],
+  migrationWriteBack: 'eager',
+});
+await g.reloadRegistry();
+```
+
+Stored migration strings must be self-contained — no `import`, `require`, or external references. Firestore special types (`Timestamp`, `GeoPoint`, `VectorValue`, `DocumentReference`) are transparently preserved through the sandbox boundary via tagged serialization. Inside the sandbox, these appear as tagged plain objects (e.g., `{ __firegraph_ser__: 'Timestamp', seconds: N, nanoseconds: N }`) that the migration can read, modify, or create. They are reconstructed into real Firestore types after the migration returns.
+
+For custom sandboxing, pass `migrationSandbox` to `createGraphClient()`:
+
+```typescript
+const g = createGraphClient(db, 'graph', {
+  registryMode: { mode: 'dynamic' },
+  migrationSandbox: (source) => {
+    const compartment = new Compartment({ /* endowments */ });
+    return compartment.evaluate(source);
+  },
+});
+```
+
+#### Entity Discovery
+
+Place a `migrations.ts` file in the entity folder. It must default-export a `MigrationStep[]` array. Optionally set `migrationWriteBack` in `meta.json`. The schema version is derived automatically as `max(toVersion)` from the migrations array.
+
+```
+entities/nodes/tour/
+  schema.json
+  migrations.ts       # export default [{ fromVersion: 0, toVersion: 1, up: ... }]
+  meta.json           # { "migrationWriteBack": "eager" }
+```
+
 ### Subgraphs
 
 Create isolated graph namespaces inside a parent node's Firestore document as subcollections. Each subgraph is a full `GraphClient` scoped to its own collection path.
@@ -599,6 +703,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `ValidationError` | `VALIDATION_ERROR` | Schema validation fails (registry + Zod) |
 | `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
 | `RegistryScopeError` | `REGISTRY_SCOPE` | Type not allowed at this subgraph scope |
+| `MigrationError` | `MIGRATION_ERROR` | Migration function fails or chain is incomplete |
 | `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | `findEdges` called with no filters |
 | `QuerySafetyError` | `QUERY_SAFETY` | Query would cause a full collection scan |
@@ -653,6 +758,13 @@ import type {
   NodeTypeData,
   EdgeTypeData,
 
+  // Migration
+  MigrationFn,
+  MigrationStep,
+  StoredMigrationStep,
+  MigrationExecutor,
+  MigrationWriteBack,
+
   // Traversal
   HopDefinition,       // includes targetGraph
   TraversalOptions,
@@ -680,6 +792,7 @@ All data lives in one Firestore collection. Each document has these fields:
 | `bType` | string | Target node type |
 | `bUid` | string | Target node ID |
 | `data` | object | User payload |
+| `v` | number? | Schema version (derived from `max(toVersion)` of migrations; set when entry has migrations) |
 | `createdAt` | Timestamp | Server-set on create |
 | `updatedAt` | Timestamp | Server-set on create/update |
 

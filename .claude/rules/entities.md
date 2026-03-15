@@ -20,7 +20,8 @@ entities/
       schema.json        # JSON Schema for data payload (required)
       views.ts           # Web Component view classes (optional)
       sample.json        # Sample data for view gallery (optional)
-      meta.json          # Description, view defaults (optional)
+      meta.json          # Description, view defaults, migrationWriteBack (optional)
+      migrations.ts      # MigrationStep[] default export (optional)
     agent/
       schema.json
   edges/
@@ -28,6 +29,7 @@ entities/
       schema.json        # JSON Schema for edge data payload (required)
       edge.json          # Topology: from/to + inverseLabel (required)
       views.ts           # (optional)
+      migrations.ts      # MigrationStep[] default export (optional)
 ```
 
 ## File Formats
@@ -57,15 +59,32 @@ For cross-graph edges, add `targetGraph` to declare which subgraph the edge live
 ```
 `targetGraph` must be a single segment (no `/`). See `subgraphs.md` for details.
 
-`meta.json` -- Optional description, view defaults, and scope constraints:
+`meta.json` -- Optional description, view defaults, scope constraints, and migration write-back:
 ```json
 {
   "description": "A unit of work",
   "allowedIn": ["root", "**/workspace"],
-  "viewDefaults": { "default": "card", "detail": "detail" }
+  "viewDefaults": { "default": "card", "detail": "detail" },
+  "migrationWriteBack": "eager"
 }
 ```
 `allowedIn` constrains where this type can exist in subgraphs. Patterns: `root`, exact names, `*` (one segment), `**` (zero or more). Omit to allow everywhere.
+
+`migrationWriteBack` enables write-back of migrated data. The schema version is derived automatically as `max(toVersion)` from the `migrations.ts` file. See `migration.md` for details.
+
+`migrations.ts` -- Per-entity migration steps. **Must `export default` a `MigrationStep[]` array:**
+```typescript
+import type { MigrationStep } from 'firegraph';
+
+const migrations: MigrationStep[] = [
+  { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, status: d.status ?? 'draft' }) },
+  { fromVersion: 1, toVersion: 2, up: (d) => ({ ...d, active: true }) },
+];
+
+export default migrations;
+```
+
+Discovery picks up `migrations.ts` (or `.js`/`.mts`/`.mjs`) automatically. The schema version is derived as `max(toVersion)` from the migrations array.
 
 `views.ts` -- Per-entity Web Component view classes. **Must `export default` an array of view classes:**
 ```typescript

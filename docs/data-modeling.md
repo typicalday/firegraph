@@ -428,6 +428,21 @@ But:
 
 Subgraphs naturally bound collection size. Instead of 10M documents in one collection, you might have 10K parents with 1K documents each. Migrations can proceed parent-by-parent with progress tracking.
 
+### Schema Evolution
+
+Schemas change over time — new fields, renamed properties, restructured data. Firegraph supports automatic migration on read via schema versioning.
+
+Each registry entry can declare a chain of `MigrationStep` functions. The schema version is derived automatically as `max(toVersion)` from the migrations array. When a record is read with a stored version (`v`) behind the derived version, migration functions run sequentially to bring the data up to date. The `v` field lives on the record envelope -- not inside `data` -- so schemas with `additionalProperties: false` work without special handling.
+
+This is a **lazy migration** strategy. Records are migrated when accessed, not all at once. This has implications:
+
+- **No downtime**: Deploy a new schema version and migrations immediately. Old records upgrade transparently on next read.
+- **Gradual rollout**: Only actively-accessed records incur migration cost. Cold data stays untouched until needed.
+- **Write-back**: Optionally persist migrated data back to Firestore (`migrationWriteBack: 'eager'` or `'background'`). Without write-back, migration runs on every read until the record is rewritten via `putNode`/`putEdge`.
+- **Idempotent by design**: Migration functions should be idempotent. If a record is read multiple times before write-back completes, each read produces the same result.
+
+For large-scale one-time migrations (restructuring millions of records), lazy migration avoids the need for batch scripts. But if you need every record upgraded immediately (for example, before a query that depends on the new field), run a batch script that reads and rewrites each record via `putNode` — this stamps the current version and persists the migrated data.
+
 ### Index Management
 
 Each collection (root and each distinct subcollection name) needs its own composite indexes. Subgraphs that share a name (e.g., all `workflow` subcollections) share index definitions.

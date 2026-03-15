@@ -202,6 +202,43 @@ The registry validates:
 - Unregistered triples throw `RegistryViolationError`
 - Invalid data throws `ValidationError`
 
+### Schema versioning & migrations
+
+Registry entries support `migrations` for automatic data migration on read. The schema version is derived automatically as `max(toVersion)` from the migrations array -- there is no separate `schemaVersion` property to set:
+
+```typescript
+import type { MigrationStep } from 'firegraph';
+
+const tourMigrations: MigrationStep[] = [
+  { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, status: d.status ?? 'draft' }) },
+  { fromVersion: 1, toVersion: 2, up: (d) => ({ ...d, active: true }) },
+];
+
+const registry = createRegistry([
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchemaV2,
+    migrations: tourMigrations,          // version derived as max(toVersion) = 2
+    migrationWriteBack: 'eager',         // persist migrated data back to Firestore
+  },
+]);
+```
+
+When a record is read with `v` behind the derived version, migrations run sequentially in memory. The `v` field lives on the record envelope (not inside `data`), so schemas with `additionalProperties: false` work without special handling.
+
+Write-back modes: `'off'` (default, in-memory only), `'eager'` (fire-and-forget write), `'background'` (errors swallowed). Set globally via `createGraphClient(db, path, { registry, migrationWriteBack: 'background' })` or per entry.
+
+With entity discovery, place `migrations.ts` in the entity folder. Optionally set `migrationWriteBack` in `meta.json`. The schema version is derived from the migrations array automatically:
+
+```
+entities/nodes/tour/
+  schema.json
+  migrations.ts       # export default MigrationStep[]
+  meta.json           # { "migrationWriteBack": "eager" }
+```
+
 ## Dynamic Registry
 
 For agent-driven or runtime-extensible schemas, use **dynamic registry mode**. Instead of defining types in code, agents define node and edge types as graph data itself (meta-nodes). The client compiles these definitions into a live registry on demand.
@@ -248,6 +285,15 @@ await g.defineEdgeType(
   { type: 'object', properties: { order: { type: 'integer' } } },
   'Task contains a step',
 );
+
+// Optional: define types with schema versioning (version derived from migrations)
+await g.defineNodeType('doc', docSchemaV2, 'A document', {
+  migrations: [
+    { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, archived: false })' },
+    { fromVersion: 1, toVersion: 2, up: '(d) => ({ ...d, tags: [] })' },
+  ],
+  migrationWriteBack: 'eager',
+});
 
 // 3. Compile the registry from stored definitions
 await g.reloadRegistry();
@@ -500,6 +546,7 @@ All errors extend `FiregraphError` with a `code` property:
 |---|---|---|
 | `ValidationError` | `VALIDATION_ERROR` | Data fails JSON Schema |
 | `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
+| `MigrationError` | `MIGRATION_ERROR` | Migration function fails or chain is incomplete |
 | `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
 | `InvalidQueryError` | `INVALID_QUERY` | findEdges with no filters |
 | `TraversalError` | `TRAVERSAL_ERROR` | run() with zero hops |
@@ -646,5 +693,6 @@ export default [
 7. Create client: `createGraphClient(db, collection, { registry })`
 8. Add editor script: `"editor": "firegraph editor"`
 9. Optional: add `views.ts` per entity, `sample.json` for gallery
-10. Optional: `npx firegraph codegen --entities ./entities --out src/types.ts`
-11. Optional: Install `claude` CLI for AI chat in the editor (auto-detected)
+10. Optional: add `migrations.ts` for schema evolution (version is derived from migrations automatically)
+11. Optional: `npx firegraph codegen --entities ./entities --out src/types.ts`
+12. Optional: Install `claude` CLI for AI chat in the editor (auto-detected)

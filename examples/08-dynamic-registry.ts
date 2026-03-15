@@ -151,7 +151,39 @@ async function main() {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 9. Upsert — redefining a type updates its schema
+  // 9. Schema versioning — migrations stored as source code strings
+  // ═══════════════════════════════════════════════════════════════
+
+  // Dynamic migrations are stored as source code strings (no imports allowed).
+  // They are compiled at reloadRegistry() time via a configurable sandbox.
+  // Version is derived automatically as max(toVersion) from the migrations array.
+  await g.defineNodeType('waypoint', {
+    type: 'object',
+    required: ['name'],
+    properties: {
+      name: { type: 'string', minLength: 1 },
+      altitude: { type: 'number' },
+    },
+    additionalProperties: false,
+  }, 'A waypoint on a tour route', {
+    migrations: [
+      { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, altitude: d.altitude ?? 0 })' },
+    ],
+    migrationWriteBack: 'eager',
+  });
+
+  await g.reloadRegistry();
+  console.log('Defined waypoint type with schema versioning');
+
+  // New writes are automatically stamped with v=1
+  const wpId = generateId();
+  await g.putNode('waypoint', wpId, { name: 'Passo Giau', altitude: 2236 });
+  const wp = await g.getNode(wpId);
+  console.log('Waypoint v:', wp!.v); // 1
+  console.log();
+
+  // ═══════════════════════════════════════════════════════════════
+  // 11. Upsert — redefining a type updates its schema
   // ═══════════════════════════════════════════════════════════════
 
   await g.defineNodeType('tour', {
@@ -188,7 +220,7 @@ async function main() {
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
-  // 10. Reserved names — can't shadow meta-types
+  // 12. Reserved names — can't shadow meta-types
   // ═══════════════════════════════════════════════════════════════
 
   try {
@@ -202,7 +234,7 @@ async function main() {
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 11. Transactions work with the dynamic registry
+  // 13. Transactions work with the dynamic registry
   // ═══════════════════════════════════════════════════════════════
 
   await g.runTransaction(async (tx) => {
@@ -216,7 +248,7 @@ async function main() {
   });
 
   // ═══════════════════════════════════════════════════════════════
-  // 12. Separate meta-collection (optional)
+  // 14. Separate meta-collection (optional)
   // ═══════════════════════════════════════════════════════════════
 
   const gSeparate = createGraphClient(db, 'examples/dynamic-registry/domain', {

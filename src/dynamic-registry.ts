@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createRegistry } from './registry.js';
+import { compileMigrations, precompileSource } from './sandbox.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type {
   GraphReader,
   GraphRegistry,
+  MigrationExecutor,
   RegistryEntry,
   NodeTypeData,
   EdgeTypeData,
@@ -23,6 +25,18 @@ export const META_EDGE_TYPE = 'edgeType';
 // JSON Schemas for meta-type data payloads
 // ---------------------------------------------------------------------------
 
+/** JSON Schema for a single stored migration step. */
+const STORED_MIGRATION_STEP_SCHEMA = {
+  type: 'object',
+  required: ['fromVersion', 'toVersion', 'up'],
+  properties: {
+    fromVersion: { type: 'integer', minimum: 0 },
+    toVersion: { type: 'integer', minimum: 1 },
+    up: { type: 'string', minLength: 1 },
+  },
+  additionalProperties: false,
+};
+
 /** JSON Schema for the `data` payload of a `nodeType` meta-node. */
 export const NODE_TYPE_SCHEMA: object = {
   type: 'object',
@@ -36,6 +50,9 @@ export const NODE_TYPE_SCHEMA: object = {
     viewTemplate: { type: 'string' },
     viewCss: { type: 'string' },
     allowedIn: { type: 'array', items: { type: 'string', minLength: 1 } },
+    schemaVersion: { type: 'integer', minimum: 0 },
+    migrations: { type: 'array', items: STORED_MIGRATION_STEP_SCHEMA },
+    migrationWriteBack: { type: 'string', enum: ['off', 'eager', 'background'] },
   },
   additionalProperties: false,
 };
@@ -67,6 +84,9 @@ export const EDGE_TYPE_SCHEMA: object = {
     viewCss: { type: 'string' },
     allowedIn: { type: 'array', items: { type: 'string', minLength: 1 } },
     targetGraph: { type: 'string', minLength: 1, pattern: '^[^/]+$' },
+    schemaVersion: { type: 'integer', minimum: 0 },
+    migrations: { type: 'array', items: STORED_MIGRATION_STEP_SCHEMA },
+    migrationWriteBack: { type: 'string', enum: ['off', 'eager', 'background'] },
   },
   additionalProperties: false,
 };
@@ -130,9 +150,11 @@ export function generateDeterministicUid(metaType: string, name: string): string
  * meta-type entries, so meta-type writes remain validateable after a reload.
  *
  * @param reader - A GraphReader pointed at the collection containing meta-nodes.
+ * @param executor - Optional custom executor for compiling stored migration source strings.
  */
 export async function createRegistryFromGraph(
   reader: GraphReader,
+  executor?: MigrationExecutor,
 ): Promise<GraphRegistry> {
   const [nodeTypes, edgeTypes] = await Promise.all([
     reader.findNodes({ aType: META_NODE_TYPE }),
@@ -140,6 +162,27 @@ export async function createRegistryFromGraph(
   ]);
 
   const entries: RegistryEntry[] = [...BOOTSTRAP_ENTRIES];
+
+  // Eagerly pre-validate all migration sources in the sandbox before building
+  // the registry. This ensures reloadRegistry() fails fast on invalid sources.
+  const prevalidations: Promise<void>[] = [];
+  for (const record of nodeTypes) {
+    const data = record.data as unknown as NodeTypeData;
+    if (data.migrations) {
+      for (const m of data.migrations) {
+        prevalidations.push(precompileSource(m.up, executor));
+      }
+    }
+  }
+  for (const record of edgeTypes) {
+    const data = record.data as unknown as EdgeTypeData;
+    if (data.migrations) {
+      for (const m of data.migrations) {
+        prevalidations.push(precompileSource(m.up, executor));
+      }
+    }
+  }
+  await Promise.all(prevalidations);
 
   // Convert nodeType records → self-loop RegistryEntries
   for (const record of nodeTypes) {
@@ -153,6 +196,8 @@ export async function createRegistryFromGraph(
       titleField: data.titleField,
       subtitleField: data.subtitleField,
       allowedIn: data.allowedIn,
+      migrations: data.migrations ? compileMigrations(data.migrations, executor) : undefined,
+      migrationWriteBack: data.migrationWriteBack,
     });
   }
 
@@ -161,6 +206,10 @@ export async function createRegistryFromGraph(
     const data = record.data as unknown as EdgeTypeData;
     const fromTypes = Array.isArray(data.from) ? data.from : [data.from];
     const toTypes = Array.isArray(data.to) ? data.to : [data.to];
+
+    const compiledMigrations = data.migrations
+      ? compileMigrations(data.migrations, executor)
+      : undefined;
 
     for (const aType of fromTypes) {
       for (const bType of toTypes) {
@@ -175,6 +224,8 @@ export async function createRegistryFromGraph(
           subtitleField: data.subtitleField,
           allowedIn: data.allowedIn,
           targetGraph: data.targetGraph,
+          migrations: compiledMigrations,
+          migrationWriteBack: data.migrationWriteBack,
         });
       }
     }

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRegistry } from '../../src/registry.js';
-import { RegistryViolationError, RegistryScopeError, ValidationError } from '../../src/errors.js';
+import { RegistryViolationError, RegistryScopeError, ValidationError, MigrationError } from '../../src/errors.js';
 
 const tourSchema = {
   type: 'object',
@@ -379,5 +379,81 @@ describe('createRegistry', () => {
     expect(registry.lookup('a', 'connects', 'c')).toBeDefined();
     expect(registry.lookup('b', 'connects', 'c')).toBeDefined();
     expect(registry.lookup('a', 'connects', 'b')).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // Migration validation
+  // ---------------------------------------------------------------------------
+
+  it('accepts entry with migrations', () => {
+    const registry = createRegistry([
+      {
+        aType: 'tour',
+        axbType: 'is',
+        bType: 'tour',
+        migrations: [{ fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, migrated: true }) }],
+      },
+    ]);
+    expect(registry.lookup('tour', 'is', 'tour')?.schemaVersion).toBe(1);
+  });
+
+  it('throws MigrationError when migration chain has a gap', () => {
+    expect(() =>
+      createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          migrations: [
+            { fromVersion: 0, toVersion: 1, up: (d) => d },
+            // gap: missing v1 -> v2
+            { fromVersion: 2, toVersion: 3, up: (d) => d },
+          ],
+        },
+      ]),
+    ).toThrow(MigrationError);
+  });
+
+  it('accepts complete migration chain at registry construction', () => {
+    expect(() =>
+      createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          migrations: [
+            { fromVersion: 0, toVersion: 1, up: (d) => d },
+            { fromVersion: 1, toVersion: 2, up: (d) => d },
+            { fromVersion: 2, toVersion: 3, up: (d) => d },
+          ],
+        },
+      ]),
+    ).not.toThrow();
+  });
+
+  it('does not require v in data for schemas with additionalProperties: false', () => {
+    const registry = createRegistry([
+      {
+        aType: 'tour',
+        axbType: 'is',
+        bType: 'tour',
+        jsonSchema: {
+          type: 'object',
+          properties: { title: { type: 'string' } },
+          additionalProperties: false,
+        },
+        migrations: [{ fromVersion: 0, toVersion: 1, up: (d) => d }],
+      },
+    ]);
+
+    // v is now top-level metadata, not part of data — validation should pass without it
+    expect(() =>
+      registry.validate('tour', 'is', 'tour', { title: 'test' }),
+    ).not.toThrow();
+
+    // v in data should be REJECTED by additionalProperties: false
+    expect(() =>
+      registry.validate('tour', 'is', 'tour', { title: 'test', v: 1 }),
+    ).toThrow();
   });
 });

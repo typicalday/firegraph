@@ -33,7 +33,13 @@ export {
   DynamicRegistryError,
   QuerySafetyError,
   RegistryScopeError,
+  MigrationError,
 } from './errors.js';
+
+export { compileMigrations, compileMigrationFn, defaultExecutor, precompileSource, destroySandboxWorker } from './sandbox.js';
+export { serializeFirestoreTypes, deserializeFirestoreTypes, isTaggedValue, SERIALIZATION_TAG } from './serialization.js';
+export { applyMigrationChain, validateMigrationChain, migrateRecord, migrateRecords } from './migration.js';
+export type { MigrationResult } from './migration.js';
 
 export { DiscoveryError } from './discover.js';
 
@@ -74,6 +80,11 @@ export type {
   CascadeResult,
   QueryMode,
   ScanProtection,
+  MigrationFn,
+  MigrationStep,
+  StoredMigrationStep,
+  MigrationExecutor,
+  MigrationWriteBack,
 } from './types.js';
 
 export type {

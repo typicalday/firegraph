@@ -63,6 +63,39 @@ await client.defineEdgeType(
 await client.reloadRegistry();
 ```
 
+## Schema Versioning (Dynamic)
+
+Dynamic type definitions support `migrations` and `migrationWriteBack`. The schema version is derived automatically as `max(toVersion)` from the migrations array:
+
+```typescript
+await client.defineNodeType('milestone', milestoneSchemaV2, 'A milestone', {
+  migrations: [
+    { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "planned" })' },
+    { fromVersion: 1, toVersion: 2, up: '(d) => ({ ...d, tags: [] })' },
+  ],
+  migrationWriteBack: 'eager',
+});
+// Version is derived as max(toVersion) = 2
+
+await client.reloadRegistry();
+```
+
+**Self-contained constraint:** Stored migration strings cannot use `import`, `require`, or reference external modules. They must be pure data transformations.
+
+**Custom sandbox:** Pass `migrationSandbox` to `createGraphClient()` for a custom executor (e.g., SES `Compartment`):
+
+```typescript
+const client = createGraphClient(db, 'graph', {
+  registryMode: { mode: 'dynamic' },
+  migrationSandbox: (source) => {
+    const compartment = new Compartment({ /* endowments */ });
+    return compartment.evaluate(source);
+  },
+});
+```
+
+Migration strings are compiled at `reloadRegistry()` time. Functions passed as actual function objects are serialized via `.toString()` before storage.
+
 ## Separate Meta-Collection
 
 ```typescript

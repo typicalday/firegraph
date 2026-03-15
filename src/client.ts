@@ -28,6 +28,10 @@ import {
   META_EDGE_TYPE,
 } from './dynamic-registry.js';
 import { createMergedRegistry } from './registry.js';
+import { precompileSource } from './sandbox.js';
+import { deserializeFirestoreTypes } from './serialization.js';
+import { migrateRecord, migrateRecords } from './migration.js';
+import type { MigrationResult } from './migration.js';
 import type {
   DefineTypeOptions,
   DynamicGraphClient,
@@ -42,6 +46,9 @@ import type {
   FindEdgesParams,
   FindNodesParams,
   EdgeTopology,
+  MigrationExecutor,
+  MigrationFn,
+  MigrationWriteBack,
   QueryFilter,
   QueryOptions,
   QueryMode,
@@ -74,6 +81,10 @@ class GraphClientImpl implements DynamicGraphClient {
   // Subgraph scope tracking
   private readonly scopePath: string;
 
+  // Migration settings
+  private readonly globalWriteBack: MigrationWriteBack;
+  private readonly migrationSandbox?: MigrationExecutor;
+
   constructor(
     private readonly db: Firestore,
     collectionPath: string,
@@ -83,6 +94,8 @@ class GraphClientImpl implements DynamicGraphClient {
   ) {
     this.scopePath = scopePath;
     this.adapter = createFirestoreAdapter(db, collectionPath);
+    this.globalWriteBack = options?.migrationWriteBack ?? 'off';
+    this.migrationSandbox = options?.migrationSandbox;
 
     if (options?.registryMode) {
       this.dynamicConfig = options.registryMode;
@@ -232,42 +245,135 @@ class GraphClientImpl implements DynamicGraphClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Migration helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Apply migration to a single record. Returns the (possibly migrated)
+   * record and triggers write-back if applicable.
+   */
+  private async applyMigration(
+    record: StoredGraphRecord,
+    docId: string,
+  ): Promise<StoredGraphRecord> {
+    const registry = this.getCombinedRegistry();
+    if (!registry) return record;
+
+    const result = await migrateRecord(record, registry, this.globalWriteBack);
+    if (result.migrated) {
+      this.handleWriteBack(result, docId);
+    }
+    return result.record;
+  }
+
+  /**
+   * Apply migrations to an array of records. Returns all records
+   * (migrated where applicable) and triggers write-backs.
+   */
+  private async applyMigrations(
+    records: StoredGraphRecord[],
+  ): Promise<StoredGraphRecord[]> {
+    const registry = this.getCombinedRegistry();
+    if (!registry || records.length === 0) return records;
+
+    const results = await migrateRecords(records, registry, this.globalWriteBack);
+    for (const result of results) {
+      if (result.migrated) {
+        const docId = result.record.axbType === NODE_RELATION
+          ? computeNodeDocId(result.record.aUid)
+          : computeEdgeDocId(result.record.aUid, result.record.axbType, result.record.bUid);
+        this.handleWriteBack(result, docId);
+      }
+    }
+    return results.map((r) => r.record);
+  }
+
+  /**
+   * Handle write-back for a migrated record based on the resolved mode.
+   *
+   * Both `'eager'` and `'background'` are fire-and-forget (not awaited by
+   * the caller). The difference is logging level on failure:
+   * - `eager`: logs an error via `console.error`
+   * - `background`: logs a warning via `console.warn`
+   *
+   * For truly synchronous write-back guarantees, use transactions — the
+   * `GraphTransactionImpl` performs write-back inline within the transaction.
+   */
+  private handleWriteBack(result: MigrationResult, docId: string): void {
+    if (result.writeBack === 'off') return;
+
+    const doWriteBack = async () => {
+      try {
+        const update: Record<string, unknown> = {
+          data: deserializeFirestoreTypes(result.record.data as Record<string, unknown>, this.db),
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+        if (result.record.v !== undefined) {
+          update.v = result.record.v;
+        }
+        await this.adapter.updateDoc(docId, update);
+      } catch (err: unknown) {
+        const msg = `[firegraph] Migration write-back failed for ${docId}: ${(err as Error).message}`;
+        if (result.writeBack === 'eager') {
+          console.error(msg);
+        } else {
+          console.warn(msg);
+        }
+      }
+    };
+
+    void doWriteBack();
+  }
+
+  // ---------------------------------------------------------------------------
   // GraphReader
   // ---------------------------------------------------------------------------
 
   async getNode(uid: string): Promise<StoredGraphRecord | null> {
     const docId = computeNodeDocId(uid);
-    return this.adapter.getDoc(docId);
+    const record = await this.adapter.getDoc(docId);
+    if (!record) return null;
+    return this.applyMigration(record, docId);
   }
 
   async getEdge(aUid: string, axbType: string, bUid: string): Promise<StoredGraphRecord | null> {
     const docId = computeEdgeDocId(aUid, axbType, bUid);
-    return this.adapter.getDoc(docId);
+    const record = await this.adapter.getDoc(docId);
+    if (!record) return null;
+    return this.applyMigration(record, docId);
   }
 
   async edgeExists(aUid: string, axbType: string, bUid: string): Promise<boolean> {
-    const record = await this.getEdge(aUid, axbType, bUid);
+    // Use raw getDoc to avoid migration overhead for existence checks
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
+    const record = await this.adapter.getDoc(docId);
     return record !== null;
   }
 
   async findEdges(params: FindEdgesParams): Promise<StoredGraphRecord[]> {
     const plan = buildEdgeQueryPlan(params);
+    let records: StoredGraphRecord[];
     if (plan.strategy === 'get') {
       const record = await this.adapter.getDoc(plan.docId);
-      return record ? [record] : [];
+      records = record ? [record] : [];
+    } else {
+      this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+      records = await this.executeQuery(plan.filters, plan.options);
     }
-    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
-    return this.executeQuery(plan.filters, plan.options);
+    return this.applyMigrations(records);
   }
 
   async findNodes(params: FindNodesParams): Promise<StoredGraphRecord[]> {
     const plan = buildNodeQueryPlan(params);
+    let records: StoredGraphRecord[];
     if (plan.strategy === 'get') {
       const record = await this.adapter.getDoc(plan.docId);
-      return record ? [record] : [];
+      records = record ? [record] : [];
+    } else {
+      this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+      records = await this.executeQuery(plan.filters, plan.options);
     }
-    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
-    return this.executeQuery(plan.filters, plan.options);
+    return this.applyMigrations(records);
   }
 
   // ---------------------------------------------------------------------------
@@ -282,6 +388,12 @@ class GraphClientImpl implements DynamicGraphClient {
     const adapter = this.getAdapterForType(aType);
     const docId = computeNodeDocId(uid);
     const record = buildNodeRecord(aType, uid, data);
+    if (registry) {
+      const entry = registry.lookup(aType, NODE_RELATION, aType);
+      if (entry?.schemaVersion && entry.schemaVersion > 0) {
+        (record as unknown as Record<string, unknown>).v = entry.schemaVersion;
+      }
+    }
     await adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
@@ -300,6 +412,12 @@ class GraphClientImpl implements DynamicGraphClient {
     const adapter = this.getAdapterForType(aType);
     const docId = computeEdgeDocId(aUid, axbType, bUid);
     const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);
+    if (registry) {
+      const entry = registry.lookup(aType, axbType, bType);
+      if (entry?.schemaVersion && entry.schemaVersion > 0) {
+        (record as unknown as Record<string, unknown>).v = entry.schemaVersion;
+      }
+    }
     await adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
@@ -333,7 +451,7 @@ class GraphClientImpl implements DynamicGraphClient {
         firestoreTx,
       );
       // Transactions always use standard queries — Pipeline is not transactionally bound
-      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry(), this.scanProtection, this.scopePath);
+      const graphTx = new GraphTransactionImpl(adapter, this.getCombinedRegistry(), this.scanProtection, this.scopePath, this.globalWriteBack, this.db);
       return fn(graphTx);
     });
   }
@@ -372,6 +490,8 @@ class GraphClientImpl implements DynamicGraphClient {
         registry: this.getCombinedRegistry(),
         queryMode: this.queryMode === 'pipeline' ? 'pipeline' : 'standard',
         scanProtection: this.scanProtection,
+        migrationWriteBack: this.globalWriteBack,
+        migrationSandbox: this.migrationSandbox,
       },
       newScopePath,
     );
@@ -412,7 +532,8 @@ class GraphClientImpl implements DynamicGraphClient {
     }
 
     const snap = await q.get();
-    return snap.docs.map((doc) => doc.data() as StoredGraphRecord);
+    const records = snap.docs.map((doc) => doc.data() as StoredGraphRecord);
+    return this.applyMigrations(records);
   }
 
   // ---------------------------------------------------------------------------
@@ -465,6 +586,10 @@ class GraphClientImpl implements DynamicGraphClient {
     if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
     if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
     if (options?.allowedIn !== undefined) data.allowedIn = options.allowedIn;
+    if (options?.migrationWriteBack !== undefined) data.migrationWriteBack = options.migrationWriteBack;
+    if (options?.migrations !== undefined) {
+      data.migrations = await this.serializeMigrations(options.migrations);
+    }
 
     await this.putNode(META_NODE_TYPE, uid, data);
   }
@@ -519,6 +644,10 @@ class GraphClientImpl implements DynamicGraphClient {
     if (options?.viewTemplate !== undefined) data.viewTemplate = options.viewTemplate;
     if (options?.viewCss !== undefined) data.viewCss = options.viewCss;
     if (options?.allowedIn !== undefined) data.allowedIn = options.allowedIn;
+    if (options?.migrationWriteBack !== undefined) data.migrationWriteBack = options.migrationWriteBack;
+    if (options?.migrations !== undefined) {
+      data.migrations = await this.serializeMigrations(options.migrations);
+    }
 
     await this.putNode(META_EDGE_TYPE, uid, data);
   }
@@ -532,7 +661,7 @@ class GraphClientImpl implements DynamicGraphClient {
     }
 
     const reader = this.createMetaReader();
-    const dynamicOnly = await createRegistryFromGraph(reader);
+    const dynamicOnly = await createRegistryFromGraph(reader, this.migrationSandbox);
 
     if (this.staticRegistry) {
       // Merged mode: static entries take priority over dynamic ones
@@ -540,6 +669,25 @@ class GraphClientImpl implements DynamicGraphClient {
     } else {
       this.dynamicRegistry = dynamicOnly;
     }
+  }
+
+  /**
+   * Serialize migration steps for storage in Firestore.
+   * Function objects are converted via `.toString()`; strings are stored as-is.
+   * Each migration is validated at define-time by pre-compiling in the sandbox.
+   */
+  private async serializeMigrations(
+    migrations: Array<{ fromVersion: number; toVersion: number; up: MigrationFn | string }>,
+  ): Promise<Array<{ fromVersion: number; toVersion: number; up: string }>> {
+    const result = migrations.map((m) => {
+      const source = typeof m.up === 'function' ? m.up.toString() : m.up;
+      return { fromVersion: m.fromVersion, toVersion: m.toVersion, up: source };
+    });
+    // Validate at define-time by pre-compiling all sources in the sandbox
+    await Promise.all(
+      result.map((m) => precompileSource(m.up, this.migrationSandbox)),
+    );
+    return result;
   }
 
   /**

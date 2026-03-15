@@ -9,6 +9,8 @@ export interface GraphRecord {
   data: Record<string, unknown>;
   createdAt: Timestamp | FieldValue;
   updatedAt: Timestamp | FieldValue;
+  /** Schema version — set automatically when the registry entry has migrations. */
+  v?: number;
 }
 
 export interface StoredGraphRecord {
@@ -20,6 +22,8 @@ export interface StoredGraphRecord {
   data: Record<string, unknown>;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+  /** Schema version — set automatically when the registry entry has migrations. */
+  v?: number;
 }
 
 export interface WhereClause {
@@ -64,6 +68,56 @@ export interface QueryFilter {
   op: WhereFilterOp;
   value: unknown;
 }
+
+// ---------------------------------------------------------------------------
+// Migration Types
+// ---------------------------------------------------------------------------
+
+/**
+ * An executable migration function that transforms data from one schema
+ * version to the next. Can be synchronous or asynchronous.
+ */
+export type MigrationFn = (
+  data: Record<string, unknown>,
+) => Record<string, unknown> | Promise<Record<string, unknown>>;
+
+/**
+ * A single migration step in a registry entry.
+ * Transforms data from `fromVersion` to `toVersion`.
+ */
+export interface MigrationStep {
+  fromVersion: number;
+  toVersion: number;
+  up: MigrationFn;
+}
+
+/**
+ * A stored migration step for dynamic registry types.
+ * The `up` field is a source code string that will be compiled at runtime.
+ *
+ * @example
+ * ```ts
+ * { fromVersion: 0, toVersion: 1, up: "(data) => ({ ...data, status: 'draft' })" }
+ * ```
+ */
+export interface StoredMigrationStep {
+  fromVersion: number;
+  toVersion: number;
+  up: string;
+}
+
+/**
+ * Pluggable executor interface for compiling migration function source
+ * strings into executable functions. Used for dynamic registry migrations.
+ *
+ * The default executor uses SES (Secure ECMAScript) Compartments with
+ * JSON marshaling for isolation. Users can supply an alternative via
+ * `GraphClientOptions.migrationSandbox`.
+ */
+export type MigrationExecutor = (source: string) => MigrationFn;
+
+/** Write-back mode for auto-migrated records. */
+export type MigrationWriteBack = 'off' | 'eager' | 'background';
 
 export interface RegistryEntry {
   aType: string;
@@ -110,6 +164,27 @@ export interface RegistryEntry {
    * ```
    */
   targetGraph?: string;
+
+  /**
+   * Schema version for this type's data payload.
+   * **Computed automatically** from `migrations` as `max(toVersion)`.
+   * Do not set directly — provide migrations instead.
+   */
+  schemaVersion?: number;
+
+  /**
+   * Ordered list of migrations to transform data from older versions
+   * to the current version. The schema version is derived as the highest
+   * `toVersion` in this array.
+   */
+  migrations?: MigrationStep[];
+
+  /**
+   * Per-entry write-back override for auto-migrated records.
+   * Takes precedence over `GraphClientOptions.migrationWriteBack`.
+   * Omit to inherit the global setting.
+   */
+  migrationWriteBack?: MigrationWriteBack;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +226,10 @@ export interface DiscoveredEntity {
   allowedIn?: string[];
   /** Subgraph name where cross-graph edges of this type live. */
   targetGraph?: string;
+  /** Migration steps loaded from migrations.ts. */
+  migrations?: MigrationStep[];
+  /** Per-entity write-back override from meta.json. */
+  migrationWriteBack?: MigrationWriteBack;
 }
 
 /** Result of scanning an entities directory. */
@@ -187,6 +266,14 @@ export interface DefineTypeOptions {
   viewCss?: string;
   /** Scope patterns constraining where this type can exist in subgraphs. */
   allowedIn?: string[];
+  /**
+   * Migration steps. Accepts function objects (auto-serialized via .toString())
+   * or strings (stored as-is). The schema version is derived as the highest
+   * `toVersion` in this array.
+   */
+  migrations?: Array<{ fromVersion: number; toVersion: number; up: MigrationFn | string }>;
+  /** Per-type write-back override for auto-migrated records. */
+  migrationWriteBack?: MigrationWriteBack;
 }
 
 /** Data shape stored in a `nodeType` meta-node. */
@@ -199,6 +286,8 @@ export interface NodeTypeData {
   viewTemplate?: string;
   viewCss?: string;
   allowedIn?: string[];
+  migrations?: StoredMigrationStep[];
+  migrationWriteBack?: MigrationWriteBack;
 }
 
 /** Data shape stored in an `edgeType` meta-node. */
@@ -215,6 +304,8 @@ export interface EdgeTypeData {
   viewCss?: string;
   allowedIn?: string[];
   targetGraph?: string;
+  migrations?: StoredMigrationStep[];
+  migrationWriteBack?: MigrationWriteBack;
 }
 
 export type ScanProtection = 'error' | 'warn' | 'off';
@@ -256,6 +347,25 @@ export interface GraphClientOptions {
    * - `'off'` — No scan protection.
    */
   scanProtection?: ScanProtection;
+  /**
+   * Global default for write-back of auto-migrated records on read.
+   *
+   * - `'off'` (default) — Migrated data is returned but NOT written back.
+   * - `'eager'` — Migrated data is written back immediately after migration.
+   * - `'background'` — Write-back happens asynchronously; errors are logged.
+   *
+   * Per-entry `migrationWriteBack` on `RegistryEntry` overrides this setting.
+   */
+  migrationWriteBack?: MigrationWriteBack;
+  /**
+   * Custom executor for compiling dynamic registry migration source strings.
+   * Defaults to SES Compartments with JSON marshaling. Supply an
+   * alternative for custom sandboxing.
+   *
+   * Only used for dynamic registry migrations — static registry migrations
+   * are already in-memory functions and never go through this executor.
+   */
+  migrationSandbox?: MigrationExecutor;
 }
 
 export interface GraphRegistry {

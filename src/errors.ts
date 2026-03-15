@@ -80,3 +80,10 @@ export class RegistryScopeError extends FiregraphError {
     this.name = 'RegistryScopeError';
   }
 }
+
+export class MigrationError extends FiregraphError {
+  constructor(message: string) {
+    super(message, 'MIGRATION_ERROR');
+    this.name = 'MigrationError';
+  }
+}

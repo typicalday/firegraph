@@ -54,3 +54,4 @@ Context-specific rules are in `.claude/rules/` and load automatically when worki
 | `dynamic-registry.md` | `**/dynamic-registry*`, `**/dynamic*registry*` | Bootstrap, meta-types, runtime type definition |
 | `editor.md` | `editor/**/*` | Editor architecture, server, frontend, build pipeline |
 | `config.md` | `**/firegraph.config.*`, `**/config*.ts` | defineConfig, discovery, view defaults |
+| `migration.md` | `**/migration*`, `**/sandbox*`, `**/migrations*` | Schema versioning, auto-migration, write-back |

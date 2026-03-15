@@ -18,6 +18,12 @@ export class GraphBatchImpl implements GraphBatch {
     }
     const docId = computeNodeDocId(uid);
     const record = buildNodeRecord(aType, uid, data);
+    if (this.registry) {
+      const entry = this.registry.lookup(aType, NODE_RELATION, aType);
+      if (entry?.schemaVersion && entry.schemaVersion > 0) {
+        (record as unknown as Record<string, unknown>).v = entry.schemaVersion;
+      }
+    }
     this.adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
@@ -34,6 +40,12 @@ export class GraphBatchImpl implements GraphBatch {
     }
     const docId = computeEdgeDocId(aUid, axbType, bUid);
     const record = buildEdgeRecord(aType, aUid, axbType, bType, bUid, data);
+    if (this.registry) {
+      const entry = this.registry.lookup(aType, axbType, bType);
+      if (entry?.schemaVersion && entry.schemaVersion > 0) {
+        (record as unknown as Record<string, unknown>).v = entry.schemaVersion;
+      }
+    }
     this.adapter.setDoc(docId, record as unknown as Record<string, unknown>);
   }
 
