@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import type { Schema, RegistryEntryMeta, ViewRegistryData, AppConfig } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor } from '../utils';
+import { getTypeBadgeColor, scopeInput } from '../utils';
 import SchemaForm from './SchemaForm';
 import NodeListCore from './NodeListCore';
+import { useScope } from './scope-context';
 
 type TargetMode = 'create' | 'existing' | 'manual';
 
@@ -31,6 +32,7 @@ export default function EdgeEditor({
   onSaved,
   onCancel,
 }: Props) {
+  const { scopePath } = useScope();
   const edgeSchemas = schema.edgeSchemas ?? [];
   const nodeSchemas = schema.nodeSchemas ?? [];
 
@@ -76,7 +78,7 @@ export default function EdgeEditor({
 
   // Check if target node exists
   const nodeCheck = trpc.checkNode.useQuery(
-    { uid: committedUid },
+    { uid: committedUid, ...scopeInput(scopePath) },
     { enabled: !!committedUid && (targetMode === 'existing' || targetMode === 'manual') },
   );
 
@@ -90,7 +92,7 @@ export default function EdgeEditor({
   const edgeAxbType = currentSchema?.axbType ?? '';
 
   const edgeCheck = trpc.checkEdge.useQuery(
-    { aUid: edgeAUid, axbType: edgeAxbType, bUid: edgeBUid },
+    { aUid: edgeAUid, axbType: edgeAxbType, bUid: edgeBUid, ...scopeInput(scopePath) },
     { enabled: !!edgeAUid && !!edgeBUid && !!edgeAxbType && (targetMode === 'existing' || targetMode === 'manual') },
   );
 
@@ -156,6 +158,7 @@ export default function EdgeEditor({
         newNodeUid: nodeUidOverride || undefined,
         edgeData: edgeFormValues,
         nodeData: nodeFormValues,
+        ...scopeInput(scopePath),
       });
     } else {
       // 'existing' or 'manual' — just create the edge
@@ -168,6 +171,7 @@ export default function EdgeEditor({
         bType,
         bUid: direction === 'out' ? targetUid : defaultUid,
         data: edgeFormValues,
+        ...scopeInput(scopePath),
       });
     }
   };

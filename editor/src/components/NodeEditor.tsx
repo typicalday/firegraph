@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import type { Schema, RegistryEntryMeta, GraphRecord } from '../types';
 import { trpc } from '../trpc';
+import { scopeInput } from '../utils';
+import { useScope } from './scope-context';
 import SchemaForm from './SchemaForm';
 
 interface Props {
@@ -14,6 +16,7 @@ interface Props {
 }
 
 export default function NodeEditor({ schema, existingNode, defaultType, onSaved, onCancel }: Props) {
+  const { scopePath } = useScope();
   const isEdit = !!existingNode;
   const nodeSchemas = schema.nodeSchemas ?? [];
 
@@ -48,9 +51,9 @@ export default function NodeEditor({ schema, existingNode, defaultType, onSaved,
   const handleSubmit = () => {
     setError(null);
     if (isEdit) {
-      updateMutation.mutate({ uid: existingNode!.aUid, data: formValues });
+      updateMutation.mutate({ uid: existingNode!.aUid, data: formValues, ...scopeInput(scopePath) });
     } else {
-      createMutation.mutate({ aType: selectedType, uid: uid || undefined, data: formValues });
+      createMutation.mutate({ aType: selectedType, uid: uid || undefined, data: formValues, ...scopeInput(scopePath) });
     }
   };
 

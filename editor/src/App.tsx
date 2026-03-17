@@ -1,7 +1,6 @@
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useParams, Navigate } from 'react-router-dom';
 import { useCallback, useEffect, useRef } from 'react';
 import Layout from './components/Layout';
-import Dashboard from './components/Dashboard';
 import NodeBrowser from './components/NodeBrowser';
 import NodeDetail from './components/NodeDetail';
 import TraversalBuilder from './components/TraversalBuilder';
@@ -10,7 +9,8 @@ import { FocusProvider } from './components/focus-context';
 import { ChatProvider } from './components/chat-context';
 import { ArtifactProvider } from './components/artifact-context';
 import { ChatBarProvider } from './components/chat-bar-context';
-import type { ViewRegistryData } from './types';
+import { ScopeProvider, parseScopeSplat } from './components/scope-context';
+import type { Schema, ViewRegistryData, AppConfig } from './types';
 import { trpc } from './trpc';
 
 export default function App() {
@@ -100,18 +100,77 @@ export default function App() {
       <ChatProvider chatEnabled={config?.chatEnabled ?? false}>
         <ArtifactProvider>
           <ChatBarProvider>
-            <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
-              <Routes>
-                <Route path="/" element={<Dashboard schema={schema!} config={config!} />} />
-                <Route path="/browse/:type" element={<NodeBrowser schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
-                <Route path="/node/:uid" element={<NodeDetail schema={schema!} viewRegistry={viewRegistry} config={config!} />} />
-                <Route path="/traverse" element={<TraversalBuilder schema={schema!} />} />
-                <Route path="/views" element={<ViewGallery viewRegistry={viewRegistry} schema={schema!} />} />
-              </Routes>
-            </Layout>
+            <ScopeProvider>
+              <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/g" replace />} />
+                  <Route
+                    path="/g/*"
+                    element={
+                      <ScopedShell
+                        schema={schema!}
+                        viewRegistry={viewRegistry}
+                        config={config!}
+                      />
+                    }
+                  />
+                </Routes>
+              </Layout>
+            </ScopeProvider>
           </ChatBarProvider>
         </ArtifactProvider>
       </ChatProvider>
     </FocusProvider>
+  );
+}
+
+interface ShellProps {
+  schema: Schema;
+  viewRegistry: ViewRegistryData;
+  config: AppConfig;
+}
+
+function ScopedShell({ schema, viewRegistry, config }: ShellProps) {
+  const { '*': splat = '' } = useParams();
+  const { pageRoute } = parseScopeSplat(splat);
+
+  // Match page route: /browse/type, /node/uid, /traverse, /views, or / (browse all)
+  const browseMatch = pageRoute.match(/^\/browse\/(.+)$/);
+  const nodeMatch = pageRoute.match(/^\/node\/(.+)$/);
+
+  if (browseMatch) {
+    return (
+      <NodeBrowser
+        schema={schema}
+        viewRegistry={viewRegistry}
+        config={config}
+        typeParam={decodeURIComponent(browseMatch[1])}
+      />
+    );
+  }
+  if (nodeMatch) {
+    return (
+      <NodeDetail
+        schema={schema}
+        viewRegistry={viewRegistry}
+        config={config}
+        uidParam={decodeURIComponent(nodeMatch[1])}
+      />
+    );
+  }
+  if (pageRoute === '/traverse') {
+    return <TraversalBuilder schema={schema} />;
+  }
+  if (pageRoute === '/views') {
+    return <ViewGallery viewRegistry={viewRegistry} schema={schema} />;
+  }
+  // Default: browse all nodes in current scope (root /g or scoped /g/uid:name)
+  return (
+    <NodeBrowser
+      schema={schema}
+      viewRegistry={viewRegistry}
+      config={config}
+      typeParam=""
+    />
   );
 }

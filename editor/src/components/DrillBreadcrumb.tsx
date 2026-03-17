@@ -1,6 +1,7 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDrill, type DrillFrame, type Lane } from './drill-context';
+import { useScope } from './scope-context';
 import { getTypeBadgeColor } from '../utils';
 import type { PeekPosition } from './DrillStack';
 import type { Schema } from '../types';
@@ -60,6 +61,7 @@ function buildTrie(lanes: Lane[]): TrieNode | null {
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const navigate = useNavigate();
   const { lanes, activeLaneId, activeIndex, previewLaneId, popTo, closeLane, switchLane } = useDrill();
+  const { scopedPath } = useScope();
 
   const inverseLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -130,7 +132,7 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
         onClick={() => {
           if (isActive) {
             // "Go to" — navigate fresh, resetting the drill context
-            navigate(`/node/${encodeURIComponent(node.frame.uid)}`);
+            navigate(scopedPath(`/node/${encodeURIComponent(node.frame.uid)}`));
           } else {
             switchLane(laneId);
             popTo(laneId, node.depth);

@@ -15,6 +15,7 @@ export interface EdgeType {
   titleField?: string;
   subtitleField?: string;
   isDynamic?: boolean;
+  targetGraph?: string;
 }
 
 export interface FieldMeta {
@@ -45,6 +46,8 @@ export interface RegistryEntryMeta {
   fields: FieldMeta[];
   isNodeEntry: boolean;
   isDynamic?: boolean;
+  targetGraph?: string;
+  allowedIn?: string[];
 }
 
 export interface Schema {

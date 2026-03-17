@@ -1,7 +1,8 @@
-import { useParams, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { Schema, ViewRegistryData, AppConfig } from '../types';
 import { getTypeBadgeColor } from '../utils';
+import { useScope } from './scope-context';
 import NodeEditor from './NodeEditor';
 import NodeListCore from './NodeListCore';
 
@@ -10,14 +11,44 @@ interface Props {
   viewRegistry?: ViewRegistryData | null;
   config?: AppConfig;
   onDataChanged?: () => void;
+  /** When provided by ScopedShell, used instead of route params. */
+  typeParam?: string;
 }
 
-export default function NodeBrowser({ schema, viewRegistry, config, onDataChanged }: Props) {
-  const { type } = useParams<{ type: string }>();
+export default function NodeBrowser({ schema, viewRegistry, config, onDataChanged, typeParam }: Props) {
+  const { scopedPath } = useScope();
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
 
+  const type = typeParam ?? '';
   const canWrite = !schema.readonly;
+
+  // No type selected — show landing
+  if (!type) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="mb-4">
+          <h1 className="text-xl font-bold text-slate-300">Graph</h1>
+          <p className="text-sm text-slate-400 mt-1">Select a node type from the sidebar to browse.</p>
+        </div>
+        {schema.nodeTypes.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {schema.nodeTypes.map((nt) => (
+              <button
+                key={nt.type}
+                onClick={() => navigate(scopedPath(`/browse/${encodeURIComponent(nt.type)}`))}
+                className="block w-full text-left px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl hover:border-indigo-500/40 transition-colors"
+              >
+                <span className={`inline-block px-2 py-0.5 rounded text-xs font-mono mb-1 ${getTypeBadgeColor(nt.type)}`}>
+                  {nt.type}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -25,7 +56,7 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
       <div className="mb-4">
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-xl font-bold">{type}</h1>
-          <span className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(type!)}`}>
+          <span className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(type)}`}>
             node
           </span>
           {canWrite && !showCreate && (
@@ -54,7 +85,7 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
             onSaved={(uid) => {
               setShowCreate(false);
               onDataChanged?.();
-              navigate(`/node/${encodeURIComponent(uid)}`);
+              navigate(scopedPath(`/node/${encodeURIComponent(uid)}`));
             }}
             onCancel={() => setShowCreate(false)}
           />
@@ -62,14 +93,12 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
       )}
 
       {/* Node list */}
-      {type && (
-        <NodeListCore
-          type={type}
-          schema={schema}
-          viewRegistry={viewRegistry}
-          config={config}
-        />
-      )}
+      <NodeListCore
+        type={type}
+        schema={schema}
+        viewRegistry={viewRegistry}
+        config={config}
+      />
     </div>
   );
 }

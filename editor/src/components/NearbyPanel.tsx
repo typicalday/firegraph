@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Schema, GraphRecord } from '../types';
 import { getTypeBadgeColor } from '../utils';
 import { useFocus } from './focus-context';
+import { useScope } from './scope-context';
 import type { DrillFrame } from './drill-context';
 
 interface Props {
@@ -230,6 +231,7 @@ function NearbyItem({
   onClearPeek: () => void;
   navigate: ReturnType<typeof useNavigate>;
 }) {
+  const { scopedPath } = useScope();
   const peekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const frame: DrillFrame = useMemo(
@@ -260,7 +262,7 @@ function NearbyItem({
       peekTimerRef.current = null;
     }
     onClearPeek();
-    navigate(`/node/${encodeURIComponent(targetUid)}`);
+    navigate(scopedPath(`/node/${encodeURIComponent(targetUid)}`));
   }, [targetUid, onClearPeek, navigate]);
 
   // Clean up timer on unmount

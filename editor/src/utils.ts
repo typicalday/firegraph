@@ -95,6 +95,14 @@ export function truncateData(data: Record<string, unknown>, maxLength = 80): str
  *
  * Priority: context-specific default > global default > 'json'.
  */
+/**
+ * Build the `scope` input field for tRPC calls.
+ * Returns `{ scope }` when scoped, or `{}` for root so the param is omitted.
+ */
+export function scopeInput(scopePath: string): { scope?: string } {
+  return scopePath ? { scope: scopePath } : {};
+}
+
 export function resolveViewForEntity(
   resolverConfig: { default?: string; listing?: string; detail?: string; inline?: string } | undefined,
   availableViews: Array<{ viewName: string; tagName: string }>,

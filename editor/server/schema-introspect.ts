@@ -17,6 +17,10 @@ export interface RegistryEntryMeta {
   isNodeEntry: boolean;
   /** True if this type was loaded from the dynamic registry (Firestore meta-nodes). */
   isDynamic?: boolean;
+  /** For edges: subgraph name where target nodes live. */
+  targetGraph?: string;
+  /** Scope patterns constraining where this type can exist. */
+  allowedIn?: string[];
 }
 
 export interface SchemaMetadata {
@@ -61,6 +65,8 @@ export function introspectRegistry(
       fields,
       isNodeEntry: isNode,
       isDynamic,
+      targetGraph: entry.targetGraph,
+      allowedIn: entry.allowedIn,
     };
 
     if (meta.isNodeEntry) {

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import Sidebar from './Sidebar';
+import ScopeBreadcrumb from './ScopeBreadcrumb';
 import WarningBanner from './WarningBanner';
 import ChatBar from './ChatBar';
 import type { Schema, AppConfig, ViewRegistryData, SchemaViewWarning } from '../types';
@@ -19,6 +20,7 @@ export default function Layout({ schema, config, viewRegistry, warnings = [], ch
       <div className="flex h-screen overflow-hidden">
         <Sidebar schema={schema} config={config} viewRegistry={viewRegistry} />
         <main className="flex-1 overflow-auto relative">
+          <ScopeBreadcrumb />
           <WarningBanner warnings={warnings} />
           {children}
         </main>

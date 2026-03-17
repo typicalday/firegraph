@@ -134,6 +134,47 @@ function stripTypePrefix(raw: string): string {
   return raw;
 }
 
+// --- Scope helpers ---
+
+/**
+ * Resolve a Firestore collection path for a given scope.
+ * scope format: "parentUid/subgraphName" or "uid1/name1/uid2/name2/..."
+ * Returns the root collection when scope is absent/empty.
+ */
+function resolveCollectionPath(rootCollection: string, scope?: string): string {
+  if (!scope) return rootCollection;
+  const segments = scope.split('/');
+  if (segments.length % 2 !== 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Invalid scope path: "${scope}". Must be pairs of parentUid/subgraphName.`,
+    });
+  }
+  return `${rootCollection}/${scope}`;
+}
+
+/**
+ * Create a scoped GraphClient by chaining subgraph() calls.
+ * Scope segments must come in pairs: parentUid/subgraphName.
+ */
+function getScopedClient(rootClient: GraphClient, scope?: string): GraphClient {
+  if (!scope) return rootClient;
+  const segments = scope.split('/');
+  if (segments.length % 2 !== 0) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `Invalid scope path: "${scope}". Must be pairs of parentUid/subgraphName.`,
+    });
+  }
+  let client: GraphClient = rootClient;
+  for (let i = 0; i < segments.length; i += 2) {
+    client = client.subgraph(segments[i], segments[i + 1]);
+  }
+  return client;
+}
+
+const scopeSchema = z.string().optional();
+
 // --- Router ---
 
 export const appRouter = t.router({
@@ -165,6 +206,7 @@ export const appRouter = t.router({
       titleField: e.titleField,
       subtitleField: e.subtitleField,
       isDynamic: e.isDynamic,
+      targetGraph: e.targetGraph,
     }));
     return {
       nodeTypes,
@@ -232,6 +274,7 @@ export const appRouter = t.router({
   // --- Browse Nodes ---
   getNodes: publicProcedure
     .input(z.object({
+      scope: scopeSchema,
       type: z.string().optional(),
       limit: z.number().min(1).max(200).default(25),
       startAfter: z.string().optional(),
@@ -249,7 +292,7 @@ export const appRouter = t.router({
       })).optional(),
     }))
     .query(async ({ ctx, input }) => {
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       const builtinSortFields = ['aUid', 'createdAt', 'updatedAt'];
 
       // Allow sorting by data fields (prefix with data. if needed)
@@ -315,9 +358,9 @@ export const appRouter = t.router({
 
   // --- Get Single Node ---
   getNodeDetail: publicProcedure
-    .input(z.object({ uid: z.string() }))
+    .input(z.object({ scope: scopeSchema, uid: z.string() }))
     .query(async ({ ctx, input }) => {
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       const edgeLimit = 50;
 
       // Strip optional "type:" prefix (e.g. "job:abc123" → "abc123").
@@ -343,9 +386,9 @@ export const appRouter = t.router({
 
   // --- Batch Get Nodes ---
   getNodesBatch: publicProcedure
-    .input(z.object({ uids: z.array(z.string()).min(1).max(100) }))
+    .input(z.object({ scope: scopeSchema, uids: z.array(z.string()).min(1).max(100) }))
     .query(async ({ ctx, input }) => {
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       const cleanUids = input.uids.map(stripTypePrefix);
       const refs = cleanUids.map((uid) => col.doc(uid));
       const snapshots = await ctx.db.getAll(...refs);
@@ -361,6 +404,7 @@ export const appRouter = t.router({
   // --- Query Edges ---
   getEdges: publicProcedure
     .input(z.object({
+      scope: scopeSchema,
       aType: z.string().optional(),
       aUid: z.string().optional(),
       axbType: z.string().optional(),
@@ -377,7 +421,7 @@ export const appRouter = t.router({
       })).optional(),
     }))
     .query(async ({ ctx, input }) => {
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       let query: Query = col;
 
       if (input.aType) query = query.where('aType', '==', input.aType);
@@ -440,6 +484,7 @@ export const appRouter = t.router({
   // --- Traversal ---
   traverse: publicProcedure
     .input(z.object({
+      scope: scopeSchema,
       startUid: z.string().min(1),
       hops: z.array(z.object({
         axbType: z.string(),
@@ -461,7 +506,7 @@ export const appRouter = t.router({
       concurrency: z.number().default(5),
     }))
     .mutation(async ({ ctx, input }) => {
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       let totalReads = 0;
       let truncated = false;
       let sourceUids = [input.startUid];
@@ -569,6 +614,7 @@ export const appRouter = t.router({
   // --- Search ---
   search: publicProcedure
     .input(z.object({
+      scope: scopeSchema,
       q: z.string(),
       limit: z.number().min(1).max(50).default(20),
     }))
@@ -576,7 +622,7 @@ export const appRouter = t.router({
       const q = input.q.trim();
       if (!q) return { results: [] as Record<string, unknown>[] };
 
-      const col = ctx.db.collection(ctx.collection);
+      const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       const strippedQ = stripTypePrefix(q);
       const nodeDoc = await col.doc(strippedQ).get();
       const results: Record<string, unknown>[] = [];
@@ -606,9 +652,9 @@ export const appRouter = t.router({
 
   // --- Check Node Exists ---
   checkNode: publicProcedure
-    .input(z.object({ uid: z.string().min(1) }))
+    .input(z.object({ scope: scopeSchema, uid: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      const doc = await ctx.db.collection(ctx.collection).doc(stripTypePrefix(input.uid)).get();
+      const doc = await ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope)).doc(stripTypePrefix(input.uid)).get();
       if (!doc.exists) return { exists: false as const, node: null };
       const data = serializeRecord(doc.data()!);
       return {
@@ -620,27 +666,30 @@ export const appRouter = t.router({
   // --- Check Edge Exists ---
   checkEdge: publicProcedure
     .input(z.object({
+      scope: scopeSchema,
       aUid: z.string().min(1),
       axbType: z.string().min(1),
       bUid: z.string().min(1),
     }))
     .query(async ({ ctx, input }) => {
       const docId = computeEdgeDocId(input.aUid, input.axbType, input.bUid);
-      const doc = await ctx.db.collection(ctx.collection).doc(docId).get();
+      const doc = await ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope)).doc(docId).get();
       return { exists: doc.exists };
     }),
 
   // --- Write: Create Node ---
   createNode: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       aType: z.string(),
       uid: z.string().optional(),
       data: z.record(z.string(), z.unknown()),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
+        const client = getScopedClient(ctx.graphClient, input.scope);
         const nodeUid = input.uid || generateId();
-        await ctx.graphClient.putNode(input.aType, nodeUid, input.data);
+        await client.putNode(input.aType, nodeUid, input.data);
         return { success: true as const, uid: nodeUid };
       } catch (err) {
         if (err instanceof ValidationError || err instanceof RegistryViolationError) {
@@ -653,16 +702,18 @@ export const appRouter = t.router({
   // --- Write: Update Node ---
   updateNode: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       uid: z.string(),
       data: z.record(z.string(), z.unknown()),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        const existing = await ctx.graphClient.getNode(input.uid);
+        const client = getScopedClient(ctx.graphClient, input.scope);
+        const existing = await client.getNode(input.uid);
         if (!existing) {
           throw new TRPCError({ code: 'NOT_FOUND', message: 'Node not found' });
         }
-        await ctx.graphClient.putNode(existing.aType, input.uid, input.data);
+        await client.putNode(existing.aType, input.uid, input.data);
         return { success: true as const };
       } catch (err) {
         if (err instanceof TRPCError) throw err;
@@ -675,17 +726,19 @@ export const appRouter = t.router({
 
   // --- Write: Delete Node ---
   deleteNode: writeProcedure
-    .input(z.object({ uid: z.string() }))
+    .input(z.object({ scope: scopeSchema, uid: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      await ctx.graphClient.removeNode(input.uid);
+      const client = getScopedClient(ctx.graphClient, input.scope);
+      await client.removeNode(input.uid);
       return { success: true as const };
     }),
 
   // --- Write: Delete Node + Cascade (all edges) ---
   deleteNodeCascade: writeProcedure
-    .input(z.object({ uid: z.string() }))
+    .input(z.object({ scope: scopeSchema, uid: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const result = await ctx.graphClient.removeNodeCascade(input.uid);
+      const client = getScopedClient(ctx.graphClient, input.scope);
+      const result = await client.removeNodeCascade(input.uid);
       return {
         success: result.nodeDeleted,
         edgesDeleted: result.edgesDeleted,
@@ -701,6 +754,7 @@ export const appRouter = t.router({
   // --- Write: Create Edge ---
   createEdge: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       aType: z.string(),
       aUid: z.string(),
       axbType: z.string(),
@@ -710,7 +764,8 @@ export const appRouter = t.router({
     }))
     .mutation(async ({ ctx, input }) => {
       try {
-        await ctx.graphClient.putEdge(
+        const client = getScopedClient(ctx.graphClient, input.scope);
+        await client.putEdge(
           input.aType, input.aUid, input.axbType,
           input.bType, input.bUid, input.data || {},
         );
@@ -726,6 +781,7 @@ export const appRouter = t.router({
   // --- Write: Create Edge + Target Node atomically ---
   createEdgeWithNode: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       aType: z.string(),
       axbType: z.string(),
       bType: z.string(),
@@ -740,6 +796,7 @@ export const appRouter = t.router({
     }))
     .mutation(async ({ ctx, input }) => {
       try {
+        const client = getScopedClient(ctx.graphClient, input.scope);
         const newUid = input.newNodeUid || generateId();
         const newNodeType = input.newNodeSide === 'b' ? input.bType : input.aType;
         const aUid = input.newNodeSide === 'a' ? newUid : input.existingUid;
@@ -747,8 +804,8 @@ export const appRouter = t.router({
 
         // Pre-check: does the node and/or edge already exist?
         const [existingNode, existingEdge] = await Promise.all([
-          ctx.graphClient.getNode(newUid),
-          ctx.graphClient.getEdge(aUid, input.axbType, bUid),
+          client.getNode(newUid),
+          client.getEdge(aUid, input.axbType, bUid),
         ]);
 
         if (existingNode && existingEdge) {
@@ -758,7 +815,7 @@ export const appRouter = t.router({
           });
         }
 
-        await ctx.graphClient.runTransaction(async (tx) => {
+        await client.runTransaction(async (tx) => {
           if (!existingNode) {
             await tx.putNode(newNodeType, newUid, input.nodeData);
           }
@@ -781,18 +838,21 @@ export const appRouter = t.router({
   // --- Write: Delete Edge ---
   deleteEdge: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       aUid: z.string(),
       axbType: z.string(),
       bUid: z.string(),
     }))
     .mutation(async ({ ctx, input }) => {
-      await ctx.graphClient.removeEdge(input.aUid, input.axbType, input.bUid);
+      const client = getScopedClient(ctx.graphClient, input.scope);
+      await client.removeEdge(input.aUid, input.axbType, input.bUid);
       return { success: true as const };
     }),
 
   // --- Write: Bulk Delete Edges (by query) ---
   bulkDeleteEdges: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       aUid: z.string().optional(),
       axbType: z.string().optional(),
       bUid: z.string().optional(),
@@ -805,12 +865,13 @@ export const appRouter = t.router({
       })).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { where: whereClauses, ...params } = input;
+      const client = getScopedClient(ctx.graphClient, input.scope);
+      const { where: whereClauses, scope: _scope, ...params } = input;
       const findParams: Record<string, unknown> = { ...params };
       if (whereClauses && whereClauses.length > 0) {
         findParams.where = whereClauses;
       }
-      const result = await ctx.graphClient.bulkRemoveEdges(findParams as any);
+      const result = await client.bulkRemoveEdges(findParams as any);
       return {
         success: true as const,
         deleted: result.deleted,
@@ -826,6 +887,7 @@ export const appRouter = t.router({
   // --- Write: Delete specific edges by ID ---
   deleteEdgesBatch: writeProcedure
     .input(z.object({
+      scope: scopeSchema,
       edges: z.array(z.object({
         aUid: z.string(),
         axbType: z.string(),
@@ -833,7 +895,8 @@ export const appRouter = t.router({
       })).min(1).max(500),
     }))
     .mutation(async ({ ctx, input }) => {
-      const batch = ctx.graphClient.batch();
+      const client = getScopedClient(ctx.graphClient, input.scope);
+      const batch = client.batch();
       for (const e of input.edges) {
         await batch.removeEdge(e.aUid, e.axbType, e.bUid);
       }

@@ -2,8 +2,9 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClause, FieldMeta, EdgeType, ViewRegistryData, AppConfig, ViewMeta } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, resolveViewForEntity } from '../utils';
+import { getTypeBadgeColor, resolveViewForEntity, scopeInput } from '../utils';
 import { useDrillMaybe, type DrillFrame } from './drill-context';
+import { useScope } from './scope-context';
 import GraphModal from './GraphModal';
 import JsonView from './JsonView';
 import ViewSwitcher from './ViewSwitcher';
@@ -138,6 +139,7 @@ interface TraversalPanelProps {
 
 /** Reusable traversal panel — used standalone and embedded in NodeDetail */
 export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, config }: TraversalPanelProps) {
+  const { scopePath, scopedPath } = useScope();
   // Initialize first hop with a sensible default based on startNodeType
   const initialAxbType = useMemo(() => {
     if (startNodeType) {
@@ -227,6 +229,7 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
       hops,
       maxReads,
       concurrency,
+      ...scopeInput(scopePath),
     });
   };
 
@@ -683,6 +686,7 @@ function TraversalResults({
 }) {
   const drill = useDrillMaybe();
   const navigate = useNavigate();
+  const { scopedPath } = useScope();
   const [showGraph, setShowGraph] = useState(false);
 
   // Flatten all hop edges into a single array for the graph modal
@@ -703,7 +707,7 @@ function TraversalResults({
       }
     } else {
       // Standalone /traverse page — navigate to node detail with paths
-      navigate(`/node/${encodeURIComponent(startUid)}`, {
+      navigate(scopedPath(`/node/${encodeURIComponent(startUid)}`), {
         state: { initialPaths: paths },
       });
     }
@@ -800,7 +804,7 @@ function TraversalResults({
             if (drill) {
               drill.drillIn({ uid: clickedUid, nodeType, edgeType: '', direction: 'out' });
             } else {
-              navigate(`/node/${encodeURIComponent(clickedUid)}`);
+              navigate(scopedPath(`/node/${encodeURIComponent(clickedUid)}`));
             }
           }}
         />
@@ -826,6 +830,7 @@ function HopEdgeRow({
   nodeViews?: ViewMeta[];
   config?: AppConfig;
 }) {
+  const { scopePath, scopedPath } = useScope();
   const drill = useDrillMaybe();
   const utils = trpc.useUtils();
   const [edgeExpanded, setEdgeExpanded] = useState(false);
@@ -881,7 +886,7 @@ function HopEdgeRow({
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
-      const res = await utils.getNodesBatch.fetch({ uids: [targetUid] });
+      const res = await utils.getNodesBatch.fetch({ uids: [targetUid], ...scopeInput(scopePath) });
       const resolved = (res.nodes[targetUid] as GraphRecord | null) ?? null;
       setNodeData(resolved);
       setNodeExpanded(true);
@@ -931,14 +936,14 @@ function HopEdgeRow({
           </button>
         ) : (
           <Link
-            to={`/node/${encodeURIComponent(targetUid)}`}
+            to={scopedPath(`/node/${encodeURIComponent(targetUid)}`)}
             className="text-sm font-mono text-indigo-400 hover:text-indigo-300 transition-colors"
           >
             {targetUid}
           </Link>
         )}
         <Link
-          to={`/node/${encodeURIComponent(targetUid)}`}
+          to={scopedPath(`/node/${encodeURIComponent(targetUid)}`)}
           className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
           title="Navigate to this node's page"
         >

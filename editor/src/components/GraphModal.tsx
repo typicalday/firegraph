@@ -2,9 +2,10 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import cytoscape, { type Core, type ElementDefinition, type LayoutOptions } from 'cytoscape';
 import type { GraphRecord, ViewRegistryData, AppConfig, Schema } from '../types';
-import { getTypeHexColor, resolveViewForEntity } from '../utils';
+import { getTypeHexColor, resolveViewForEntity, scopeInput } from '../utils';
 import { trpc } from '../trpc';
 import { useFocusMaybe } from './focus-context';
+import { useScope } from './scope-context';
 import CustomView from './CustomView';
 import JsonView from './JsonView';
 
@@ -413,6 +414,7 @@ export default function GraphModal({
   const [hovered, setHovered] = useState<HoveredElement>(null);
 
   const config = configProp ?? EMPTY_CONFIG;
+  const { scopePath } = useScope();
 
   // Determine the focus UID — from `node` prop or explicit `focusUid`
   const effectiveFocusUid = node?.aUid ?? focusUidProp ?? '';
@@ -447,7 +449,7 @@ export default function GraphModal({
 
   // Batch-fetch node data for labels and tooltips
   const { data: batchData } = trpc.getNodesBatch.useQuery(
-    { uids: neighborUids },
+    { uids: neighborUids, ...scopeInput(scopePath) },
     { enabled: neighborUids.length > 0 },
   );
   const resolvedNodes = useMemo(() => {

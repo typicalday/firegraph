@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import type { Schema, GraphRecord, ViewRegistryData, AppConfig, FieldMeta, WhereClause } from '../types';
 import { trpc } from '../trpc';
-import { formatTimestamp, truncateData, resolveViewForEntity } from '../utils';
+import { formatTimestamp, truncateData, resolveViewForEntity, scopeInput } from '../utils';
+import { useScope } from './scope-context';
 import CustomView from './CustomView';
 
 export interface NodeListCoreProps {
@@ -44,6 +45,7 @@ export default function NodeListCore({
   onPick,
   compact = false,
 }: NodeListCoreProps) {
+  const { scopePath, scopedPath } = useScope();
   const defaultLimit = compact ? 10 : 25;
 
   // Toolbar state
@@ -69,6 +71,7 @@ export default function NodeListCore({
     sortDir: sortDir as 'asc' | 'desc',
     startAfter,
     ...(activeFilters.length > 0 ? { where: activeFilters } : {}),
+    ...scopeInput(scopePath),
   };
 
   const { data, isLoading: loading, error: queryError, refetch } = trpc.getNodes.useQuery(queryInput, {
@@ -85,7 +88,7 @@ export default function NodeListCore({
     setPage(1);
     setCursorStack([]);
     setStartAfter(undefined);
-  }, [type, limit, sortBy, sortDir, filters]);
+  }, [type, limit, sortBy, sortDir, filters, scopePath]);
 
   // Reset filters when type changes
   useEffect(() => {
@@ -327,7 +330,7 @@ export default function NodeListCore({
                         </span>
                       ) : (
                         <Link
-                          to={`/node/${encodeURIComponent(node.aUid)}`}
+                          to={scopedPath(`/node/${encodeURIComponent(node.aUid)}`)}
                           className="text-sm font-mono text-indigo-400 hover:text-indigo-300 transition-colors"
                         >
                           {node.aUid}

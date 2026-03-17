@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity } from '../utils';
+import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput } from '../utils';
 import JsonView from './JsonView';
 import CustomView from './CustomView';
 import ViewSwitcher from './ViewSwitcher';
@@ -15,12 +15,15 @@ import GraphModal from './GraphModal';
 import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
 import { useFocusMaybe } from './focus-context';
+import { useScope } from './scope-context';
 
 interface Props {
   schema: Schema;
   viewRegistry?: ViewRegistryData | null;
   config: AppConfig;
   onDataChanged?: () => void;
+  /** When provided by ScopedShell, used instead of route params. */
+  uidParam?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +94,10 @@ function edgeTypeLabel(axbType: string, inverseLabel?: string): string {
 /**
  * Exported route component — thin shell that wraps DrillProvider + DrillStack.
  */
-export default function NodeDetail({ schema, viewRegistry, config, onDataChanged }: Props) {
-  const { uid } = useParams<{ uid: string }>();
+export default function NodeDetail({ schema, viewRegistry, config, onDataChanged, uidParam }: Props) {
+  const { uid: uidFromParams } = useParams<{ uid: string }>();
   const location = useLocation();
+  const uid = uidParam ?? uidFromParams;
   if (!uid) return null;
 
   const initialPaths = (location.state as { initialPaths?: DrillFrame[][] } | null)?.initialPaths;
@@ -135,6 +139,7 @@ export function NodeDetailContent({
 }: NodeDetailContentProps) {
   const navigate = useNavigate();
   const { drillIn, popTo, setRootType } = useDrill();
+  const { scopePath, scopeUrlPrefix, scopedPath, enterSubgraph } = useScope();
   const focus = useFocusMaybe();
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
@@ -150,7 +155,7 @@ export function NodeDetailContent({
   const canWrite = !schema.readonly;
 
   const { data: nodeDetailData, isLoading: loading, error: queryError, refetch: loadNode } = trpc.getNodeDetail.useQuery(
-    { uid },
+    { uid, ...scopeInput(scopePath) },
     { enabled: !!uid },
   );
 
@@ -164,7 +169,7 @@ export function NodeDetailContent({
 
   /** Invalidate cached queries so the UI refreshes after mutations. */
   const invalidateQueries = () => {
-    utils.getNodeDetail.invalidate({ uid });
+    utils.getNodeDetail.invalidate({ uid, ...scopeInput(scopePath) });
     utils.getEdges.invalidate();
   };
 
@@ -201,7 +206,7 @@ export function NodeDetailContent({
       if (isDrilled && laneId) {
         popTo(laneId, drillIndex - 1);
       } else {
-        navigate('/');
+        navigate(scopeUrlPrefix);
       }
     },
     onError: (err) => setMutationError(err.message),
@@ -221,7 +226,7 @@ export function NodeDetailContent({
         if (isDrilled && laneId) {
           popTo(laneId, drillIndex - 1);
         } else {
-          navigate('/');
+          navigate(scopeUrlPrefix);
         }
       }
     },
@@ -270,12 +275,12 @@ export function NodeDetailContent({
 
   const handleDelete = () => {
     if (!uid) return;
-    deleteNodeMutation.mutate({ uid });
+    deleteNodeMutation.mutate({ uid, ...scopeInput(scopePath) });
   };
 
   const handleDeleteCascade = () => {
     if (!uid) return;
-    deleteNodeCascadeMutation.mutate({ uid });
+    deleteNodeCascadeMutation.mutate({ uid, ...scopeInput(scopePath) });
   };
 
   const handleDeleteEdge = () => {
@@ -284,6 +289,7 @@ export function NodeDetailContent({
       aUid: deletingEdge.aUid,
       axbType: deletingEdge.axbType,
       bUid: deletingEdge.bUid,
+      ...scopeInput(scopePath),
     });
   };
 
@@ -291,11 +297,12 @@ export function NodeDetailContent({
     if (!bulkDeleteRequest) return;
     const req = bulkDeleteRequest;
     if (req.mode === 'visible') {
-      deleteEdgesBatchMutation.mutate({ edges: req.edges });
+      deleteEdgesBatchMutation.mutate({ edges: req.edges, ...scopeInput(scopePath) });
     } else if (req.mode === 'filtered') {
       const params: Record<string, unknown> = {
         axbType: req.axbType,
         ...(req.direction === 'out' ? { aUid: req.uid } : { bUid: req.uid }),
+        ...scopeInput(scopePath),
       };
       if (req.where.length > 0) {
         params.where = req.where;
@@ -305,11 +312,24 @@ export function NodeDetailContent({
       // mode === 'all'
       bulkDeleteEdgesMutation.mutate(
         req.direction === 'out'
-          ? { aUid: req.uid, axbType: req.axbType }
-          : { bUid: req.uid, axbType: req.axbType },
+          ? { aUid: req.uid, axbType: req.axbType, ...scopeInput(scopePath) }
+          : { bUid: req.uid, axbType: req.axbType, ...scopeInput(scopePath) },
       );
     }
   };
+
+  const availableSubgraphs = useMemo(() => {
+    if (!node) return [];
+    const subs: Array<{ name: string; edgeType: string; targetType: string }> = [];
+    const seen = new Set<string>();
+    for (const et of schema.edgeTypes) {
+      if (et.aType === node.aType && et.targetGraph && !seen.has(et.targetGraph)) {
+        seen.add(et.targetGraph);
+        subs.push({ name: et.targetGraph, edgeType: et.axbType, targetType: et.bType });
+      }
+    }
+    return subs;
+  }, [schema.edgeTypes, node]);
 
   if (loading) {
     return (
@@ -381,7 +401,7 @@ export function NodeDetailContent({
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
           <Link
-            to={`/browse/${encodeURIComponent(node.aType)}`}
+            to={scopedPath(`/browse/${encodeURIComponent(node.aType)}`)}
             className={`px-2 py-0.5 rounded text-xs font-mono hover:opacity-80 transition-opacity ${getTypeBadgeColor(node.aType)}`}
           >
             {node.aType}
@@ -428,6 +448,35 @@ export function NodeDetailContent({
           config={config}
         />
       </div>
+
+      {/* Subgraphs */}
+      {availableSubgraphs.length > 0 && (
+        <div className="mb-6">
+          <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+              </svg>
+              Subgraphs
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {availableSubgraphs.map((sg) => (
+                <button
+                  key={sg.name}
+                  onClick={() => enterSubgraph(node.aUid, sg.name)}
+                  className="flex items-center gap-2 px-3 py-2 bg-slate-800 rounded-lg hover:bg-slate-700 transition-colors text-left group"
+                >
+                  <span className="text-indigo-400 text-sm font-mono">{sg.name}</span>
+                  <span className="text-slate-500 text-xs">via {sg.edgeType}</span>
+                  <svg className="w-3 h-3 text-slate-600 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* Outgoing Edges */}
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
@@ -731,6 +780,8 @@ function PaginatedEdgeSection({
   schema: Schema;
   publishToNearby?: boolean;
 }) {
+  const { scopePath } = useScope();
+
   // Toolbar state
   const [limit, setLimit] = useState(25);
   const [filterAxbType, setFilterAxbType] = useState('');
@@ -774,6 +825,7 @@ function PaginatedEdgeSection({
     startAfter,
     ...(sortBy ? { sortBy, sortDir } : {}),
     ...(activeWhere.length > 0 ? { where: activeWhere } : {}),
+    ...scopeInput(scopePath),
   };
 
   const { data: edgeData, isLoading: loading, error: queryError, refetch: refetchEdges } = trpc.getEdges.useQuery(
@@ -799,7 +851,7 @@ function PaginatedEdgeSection({
     : [];
 
   const { data: batchData, isFetching: resolving } = trpc.getNodesBatch.useQuery(
-    { uids: toResolveUids },
+    { uids: toResolveUids, ...scopeInput(scopePath) },
     { enabled: toResolveUids.length > 0 },
   );
 
@@ -819,7 +871,7 @@ function PaginatedEdgeSection({
     setCursorStack([]);
     setStartAfter(undefined);
     setResolvedNodes({});
-  }, [uid, direction, limit, filterAxbType, sortBy, sortDir, activeWhere, reloadKey]);
+  }, [uid, direction, limit, filterAxbType, sortBy, sortDir, activeWhere, reloadKey, scopePath]);
 
   const goNextPage = () => {
     if (!nextCursor) return;
@@ -1218,6 +1270,7 @@ function EdgeGroup({
   viewRegistry?: ViewRegistryData | null;
   config: AppConfig;
 }) {
+  const { scopePath } = useScope();
   const [showBulkMenu, setShowBulkMenu] = useState(false);
   const [groupEdgeView, setGroupEdgeView] = useState('');
   const [groupNodeView, setGroupNodeView] = useState('');
@@ -1251,7 +1304,7 @@ function EdgeGroup({
     : [];
 
   const { data: batchData, isFetching: groupResolving } = trpc.getNodesBatch.useQuery(
-    { uids: toResolveUids },
+    { uids: toResolveUids, ...scopeInput(scopePath) },
     { enabled: toResolveUids.length > 0 },
   );
 
@@ -1499,6 +1552,7 @@ function EdgeRow({
   groupNodeVisible?: boolean;
 }) {
   const { drillIn } = useDrill();
+  const { scopePath, scopedPath } = useScope();
   const utils = trpc.useUtils();
   const [expandedLocal, setExpandedLocal] = useState(false);
   const expanded = expandedLocal || !!expandAllActive;
@@ -1571,7 +1625,7 @@ function EdgeRow({
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
-      const result = await utils.getNodesBatch.fetch({ uids: [targetUid] });
+      const result = await utils.getNodesBatch.fetch({ uids: [targetUid], ...scopeInput(scopePath) });
       const resolved = (result.nodes[targetUid] as GraphRecord | null) ?? null;
       setNodeData(resolved);
       setNodeExpanded(true);
@@ -1615,7 +1669,7 @@ function EdgeRow({
           {targetUid}
         </button>
         <Link
-          to={`/node/${encodeURIComponent(targetUid)}`}
+          to={scopedPath(`/node/${encodeURIComponent(targetUid)}`)}
           className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
           title="Navigate to this node's page"
         >
