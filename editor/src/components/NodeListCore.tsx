@@ -295,8 +295,8 @@ export default function NodeListCore({
       ) : (
         <>
           {/* Table */}
-          <div className={`bg-slate-900 rounded-xl border border-slate-800 overflow-hidden ${compact ? 'max-h-64 overflow-y-auto' : ''}`}>
-            <table className="w-full">
+          <div className={`bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto ${compact ? 'max-h-64 overflow-y-auto' : ''}`}>
+            <table className="w-full min-w-[480px]">
               <thead>
                 <tr className="border-b border-slate-800">
                   <th className="text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold px-4 py-3">

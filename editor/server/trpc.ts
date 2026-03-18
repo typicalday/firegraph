@@ -961,15 +961,30 @@ export const appRouter = t.router({
       params: z.record(z.string(), z.string()).optional(),
       cursor: z.string().optional(),
       limit: z.number().int().min(1).max(100).default(50),
+      where: z.array(z.object({
+        field: z.string(),
+        op: z.string(),
+        value: z.union([z.string(), z.number(), z.boolean()]),
+      })).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
       const col = ctx.db.collection(colPath);
 
+      const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
+      type AllowedOp = (typeof allowedOps)[number];
+
       let query: Query = col;
       if (def.typeField && def.typeValue !== undefined) {
         query = query.where(def.typeField, '==', def.typeValue);
+      }
+      // Apply caller-supplied where clauses before orderBy.
+      if (input.where?.length) {
+        for (const clause of input.where) {
+          if (!allowedOps.includes(clause.op as AllowedOp)) continue;
+          query = query.where(clause.field, clause.op as AllowedOp, clause.value);
+        }
       }
       // Always orderBy so startAfter has a defined sort key.
       // When no defaultOrderBy, fall back to document ID ordering.
