@@ -346,9 +346,11 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 <p className="text-xs text-slate-600 px-3">No edges registered</p>
               ) : (
                 schema.edgeTypes.map((et) => (
-                  <div
+                  <Link
                     key={`${et.aType}:${et.axbType}:${et.bType}`}
-                    className="flex items-center justify-between px-3 py-1.5 text-[11px] text-slate-500"
+                    to={scopedPath(`/browse/${encodeURIComponent(et.aType)}`)}
+                    title={`Browse ${et.aType} nodes`}
+                    className="flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
                   >
                     <span>
                       <span className="text-slate-400">{et.aType}</span>
@@ -362,7 +364,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                         D
                       </span>
                     )}
-                  </div>
+                  </Link>
                 ))
               )}
             </div>
