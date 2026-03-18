@@ -209,6 +209,61 @@ If validation fails (Zod rejects the data or the triple isn't registered), the e
 2. Click the delete button on the edge row
 3. Confirm — calls `graphClient.removeEdge(aUid, axbType, bUid)`
 
+## Plain Firestore Collections
+
+In addition to graph nodes and edges, the editor supports browsing and editing **plain Firestore collections** — regular documents that live outside the graph model. This is useful for auxiliary data like audit logs, configuration documents, or any Firestore collection you want to manage alongside your graph.
+
+### Setup
+
+Add a `collections/` directory under your entities folder. Each subdirectory defines one collection:
+
+```
+entities/
+  collections/
+    tourLogs/
+      collection.json    # Path template, type discriminator, orderBy (required)
+      schema.json        # JSON Schema for document data (optional)
+      sample.json        # Sample data for view gallery (optional)
+      views.ts           # Web Component view classes (optional)
+```
+
+The `collection.json` file is required and defines how the editor accesses the collection:
+
+```json
+{
+  "path": "graph/{tourUid}/logs",
+  "description": "Activity log entries for a tour node",
+  "typeField": "kind",
+  "typeValue": "activity",
+  "parentNodeType": "tour",
+  "orderBy": { "field": "createdAt", "direction": "desc" }
+}
+```
+
+### Path Parameters
+
+The `path` field supports `{paramName}` template tokens for nested or parameterized collections. When a user navigates to a collection with unfilled parameters, the editor shows a form to enter them.
+
+For example, `graph/{tourUid}/logs` prompts for `tourUid` before showing documents. When `parentNodeType` is set to `"tour"`, the editor also shows a link to this collection on each tour node's detail page, automatically filling `tourUid` with the node's UID.
+
+### Type Discrimination
+
+Use `typeField` and `typeValue` to share a single Firestore collection across multiple logical types. The editor:
+
+- Filters reads to only show documents where `typeField == typeValue`
+- Automatically sets `typeField` to `typeValue` on creates and updates
+- Verifies the type field before allowing edits or deletes
+
+### Browsing and CRUD
+
+Collections appear in the sidebar under a "Collections" section. The browse view shows a paginated table with columns derived from the JSON Schema (or raw JSON preview when no schema is defined). Users can create, edit, and delete documents when the editor is not in read-only mode.
+
+Pagination uses Firestore document snapshots as cursors, which is type-safe across all field types including Timestamps.
+
+### Views
+
+Collection views work the same as node/edge views. Tag names use the `fg-col-{name}-{viewName}` prefix. Views appear in the collection document detail page via ViewSwitcher and in the View Gallery.
+
 ## Using with the Firestore Emulator
 
 For local development, point the editor at your emulator:

@@ -110,6 +110,51 @@ View files can import shared helpers from a sibling or parent `shared.ts`. The e
 
 Discovery is handled by `discoverEntities(entitiesDir)` from `src/discover.ts`. It returns a `DiscoveryResult` with `nodes` and `edges` maps, plus warnings for dangling topology references.
 
+## Collections (Plain Firestore)
+
+Collections are plain Firestore collections (outside the graph model) that can be browsed and edited in the editor. They live under `entities/collections/{name}/`:
+
+```
+entities/
+  collections/
+    tourLogs/
+      collection.json    # Path template, type discriminator, orderBy (required)
+      schema.json        # JSON Schema for document data (optional)
+      sample.json        # Sample document data for view gallery (optional)
+      views.ts           # Web Component view classes (optional)
+```
+
+`collection.json` -- Collection definition (required):
+```json
+{
+  "path": "graph/{tourUid}/logs",
+  "description": "Activity log entries for a tour node",
+  "typeField": "kind",
+  "typeValue": "activity",
+  "parentNodeType": "tour",
+  "orderBy": { "field": "createdAt", "direction": "desc" }
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `path` | Yes | Firestore collection path. Use `{paramName}` for path parameters. |
+| `description` | No | Shown in the sidebar and browse header. |
+| `typeField` | No | Field name for type discrimination (e.g. `"kind"`). |
+| `typeValue` | No | Value that `typeField` must match. Filters reads, auto-set on writes. |
+| `parentNodeType` | No | When set, shows this collection on NodeDetail for matching node type. |
+| `orderBy` | No | Default sort: `{ field, direction? }`. Direction defaults to `"asc"`. |
+
+Path parameters are extracted automatically from `{paramName}` tokens. When a user navigates to a parameterized collection, the editor prompts for missing values. Parameter values are validated against `/` injection.
+
+`schema.json` -- Same format as node/edge schemas. When present, the editor generates a typed form for creating/editing documents. When absent, a raw JSON editor is shown.
+
+`views.ts` -- Same format as node/edge views (default export of HTMLElement subclass array). Tag names use `fg-col-{name}-{viewName}` prefix.
+
+`sample.json` -- Sample document data for the View Gallery preview.
+
+Discovery is handled by `discoverCollections(entitiesDir)` from `editor/server/collections-loader.ts`.
+
 ## Codegen CLI
 
 Generate TypeScript types from entity JSON Schemas:

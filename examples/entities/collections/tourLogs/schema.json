@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "required": ["action", "createdAt"],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["created", "updated", "departed", "completed", "cancelled"]
+    },
+    "createdAt": { "type": "string" },
+    "userId": { "type": "string" },
+    "details": { "type": "string" }
+  },
+  "additionalProperties": false
+}

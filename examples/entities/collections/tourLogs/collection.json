@@ -1,0 +1,8 @@
+{
+  "path": "graph/{tourUid}/logs",
+  "description": "Activity log entries for a tour node",
+  "typeField": "kind",
+  "typeValue": "activity",
+  "parentNodeType": "tour",
+  "orderBy": { "field": "createdAt", "direction": "desc" }
+}
