@@ -974,6 +974,10 @@ export const appRouter = t.router({
 
       const allowedOps = ['==', '!=', '<', '<=', '>', '>='] as const;
       type AllowedOp = (typeof allowedOps)[number];
+      // If the collection has a schema, restrict filters to known field names.
+      // For schemaless collections, allow any field matching the safe pattern.
+      const schemaFieldNames = def.fields.length > 0 ? new Set(def.fields.map((f) => f.name)) : null;
+      const safeFieldNameRe = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 
       let query: Query = col;
       if (def.typeField && def.typeValue !== undefined) {
@@ -983,6 +987,7 @@ export const appRouter = t.router({
       if (input.where?.length) {
         for (const clause of input.where) {
           if (!allowedOps.includes(clause.op as AllowedOp)) continue;
+          if (schemaFieldNames ? !schemaFieldNames.has(clause.field) : !safeFieldNameRe.test(clause.field)) continue;
           query = query.where(clause.field, clause.op as AllowedOp, clause.value);
         }
       }

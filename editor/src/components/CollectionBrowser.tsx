@@ -198,28 +198,31 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
             </svg>
             Filters
-            {filters.length > 0 && (
+            {activeFilters.length > 0 && (
               <span className="bg-indigo-500 text-white text-[10px] w-4 h-4 rounded-full inline-flex items-center justify-center font-bold">
-                {filters.length}
+                {activeFilters.length}
               </span>
             )}
           </button>
 
-          {/* Active filter chips (shown when builder is collapsed) */}
-          {filters.length > 0 && !showFilterBuilder && (
+          {/* Active filter chips (shown when builder is collapsed; only complete filters) */}
+          {activeFilters.length > 0 && !showFilterBuilder && (
             <>
-              {filters.map((f, i) => (
-                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
-                  {f.field} {f.op}{' '}
-                  <span className="text-indigo-200">{String(f.value)}</span>
-                  <button
-                    onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
-                    className="ml-0.5 text-indigo-400 hover:text-indigo-200"
-                  >
-                    &times;
-                  </button>
-                </span>
-              ))}
+              {filters.map((f, i) => {
+                if (!f.field || f.value === '') return null;
+                return (
+                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
+                    {f.field} {f.op}{' '}
+                    <span className="text-indigo-200">{String(f.value)}</span>
+                    <button
+                      onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
+                      className="ml-0.5 text-indigo-400 hover:text-indigo-200"
+                    >
+                      &times;
+                    </button>
+                  </span>
+                );
+              })}
               <button
                 onClick={() => setFilters([])}
                 className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
@@ -255,7 +258,10 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
         {data && data.documents.length === 0 && (
           <div className="px-6 py-8 text-center text-xs text-slate-500">
             No documents found
-            {collectionDef.typeField && (
+            {activeFilters.length > 0 && (
+              <span className="block mt-1">(try adjusting or clearing filters)</span>
+            )}
+            {collectionDef.typeField && activeFilters.length === 0 && (
               <span className="block mt-1">
                 (filtered by {collectionDef.typeField} = {String(collectionDef.typeValue)})
               </span>
@@ -342,6 +348,7 @@ function CollectionFilterBuilder({
   fieldMetas: FieldMeta[];
 }) {
   const fieldNames = fieldMetas.map((f) => f.name);
+  const activeCount = filters.filter((f) => f.field && f.value !== '').length;
 
   const addFilter = () => {
     const defaultField = fieldNames[0] ?? '';
@@ -369,7 +376,9 @@ function CollectionFilterBuilder({
         <span className="text-[10px] text-slate-600">
           {filters.length === 0
             ? 'No filters — click "Add filter" to start'
-            : `${filters.length} active filter${filters.length > 1 ? 's' : ''}`}
+            : activeCount > 0
+              ? `${activeCount} active filter${activeCount > 1 ? 's' : ''}${filters.length > activeCount ? ` (${filters.length - activeCount} incomplete)` : ''}`
+              : `${filters.length} filter${filters.length > 1 ? 's' : ''} (none active yet)`}
         </span>
         {filters.length > 0 && (
           <button
