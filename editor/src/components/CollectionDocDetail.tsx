@@ -82,10 +82,15 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
           <CollectionBreadcrumb collectionDef={collectionDef} params={params} docId={docId} />
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-sm font-semibold text-slate-200 font-mono">{docId}</h1>
-            <p className="text-[10px] text-slate-600 font-mono mt-0.5">
+            <div className="flex items-center gap-3 mb-1">
+              <span className="px-2 py-0.5 rounded text-xs font-mono bg-amber-500/20 text-amber-400 shrink-0">
+                {collectionDef.name}
+              </span>
+              <h1 className="text-xl font-bold font-mono text-slate-200">{docId}</h1>
+            </div>
+            <p className="text-xs text-slate-500 font-mono">
               {collectionDef.path.replace(/\{([^}]+)\}/g, (_, k) => params[k] ?? `{${k}}`)}
             </p>
           </div>
@@ -147,16 +152,19 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
             onCancel={() => setIsEditing(false)}
           />
         ) : (
-          <>
-            {views.length > 0 && (
-              <ViewSwitcher views={views} activeView={activeView} onSwitch={setActiveView} />
-            )}
+          <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-200">Data</h2>
+              {views.length > 0 && (
+                <ViewSwitcher views={views} activeView={activeView} onSwitch={setActiveView} />
+              )}
+            </div>
             {activeView !== 'json' ? (
               <CustomView tagName={activeView} data={data.data} onError={() => setActiveView('json')} />
             ) : (
-              <div className="space-y-4">
+              <>
                 {collectionDef.fields.length > 0 ? (
-                  <div className="space-y-2">
+                  <div>
                     {collectionDef.fields.map((f) => (
                       <div key={f.name} className="flex gap-3 py-2 border-b border-slate-800/50">
                         <span className="text-xs text-slate-500 w-36 shrink-0 font-mono">{f.name}</span>
@@ -187,9 +195,9 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
                 ) : (
                   <JsonView data={data.data} />
                 )}
-              </div>
+              </>
             )}
-          </>
+          </section>
         )}
       </div>
     </div>
