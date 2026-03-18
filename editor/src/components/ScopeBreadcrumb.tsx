@@ -12,7 +12,7 @@ export default function ScopeBreadcrumb() {
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
       </svg>
       <Link
-        to="/g"
+        to="/f"
         className="text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
       >
         graph

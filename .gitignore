@@ -9,3 +9,4 @@ ui-debug.log
 coverage/
 .env
 .env.local
+EDITOR_ISSUES.md

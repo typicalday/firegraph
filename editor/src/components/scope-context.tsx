@@ -13,15 +13,15 @@ export interface ScopeContextValue {
   segments: ScopeSegment[];
   /** True when inside a subgraph. */
   isScoped: boolean;
-  /** URL prefix for this scope: "/g/uid1:name1/uid2:name2" or "/g" at root. */
+  /** URL prefix for this scope: "/f/uid1:name1/uid2:name2" or "/f" at root. */
   scopeUrlPrefix: string;
   /** Prepend the scope URL prefix to a page path (must start with /). */
   scopedPath: (path: string) => string;
   /** Enter a subgraph under the given parent node. */
   enterSubgraph: (parentUid: string, subgraphName: string) => void;
-  /** Pop scope to a specific depth (0 = root graph at /g). */
+  /** Pop scope to a specific depth (0 = root at /f). */
   popToDepth: (depth: number) => void;
-  /** Return to root graph (/g). */
+  /** Return to root (/f). */
   exitToRoot: () => void;
 }
 
@@ -35,7 +35,7 @@ const ScopeContext = createContext<ScopeContextValue | null>(null);
 const SCOPE_SEGMENT_RE = /^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
 
 /**
- * Parse the splat portion of a /g/* path into scope segments + page route.
+ * Parse the splat portion of a /f/* path into scope segments + page route.
  *
  * Scope segments are path parts matching uid:name (both sides [A-Za-z0-9_-]+).
  * The first part not matching that pattern starts the page route.
@@ -70,22 +70,22 @@ export function parseScopeSplat(splat: string): { segments: ScopeSegment[]; page
 
 /**
  * Build the URL prefix for a given set of scope segments.
- * Always starts with /g. Returns "/g" for empty (root).
+ * Always starts with /f. Returns "/f" for empty (root).
  */
 export function buildScopeUrlPrefix(segments: ScopeSegment[]): string {
-  if (segments.length === 0) return '/g';
-  return '/g/' + segments.map((s) => `${s.parentUid}:${s.subgraphName}`).join('/');
+  if (segments.length === 0) return '/f';
+  return '/f/' + segments.map((s) => `${s.parentUid}:${s.subgraphName}`).join('/');
 }
 
 export function ScopeProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Derive scope from pathname. All graph paths live under /g.
+  // Derive scope from pathname. All paths live under /f.
   const segments = useMemo((): ScopeSegment[] => {
-    if (!location.pathname.startsWith('/g')) return [];
-    // Extract splat: everything after "/g" (skip the leading slash too)
-    const splat = location.pathname.slice('/g'.length).replace(/^\//, '');
+    if (!location.pathname.startsWith('/f')) return [];
+    // Extract splat: everything after "/f" (skip the leading slash too)
+    const splat = location.pathname.slice('/f'.length).replace(/^\//, '');
     return parseScopeSplat(splat).segments;
   }, [location.pathname]);
 
@@ -116,7 +116,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   );
 
   const exitToRoot = useCallback(() => {
-    navigate('/g');
+    navigate('/f');
   }, [navigate]);
 
   const value = useMemo<ScopeContextValue>(

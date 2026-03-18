@@ -105,9 +105,9 @@ export default function App() {
             <ScopeProvider>
               <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/g" replace />} />
+                  <Route path="/" element={<Navigate to="/f" replace />} />
                   <Route
-                    path="/g/*"
+                    path="/f/*"
                     element={
                       <ScopedShell
                         schema={schema!}
@@ -216,7 +216,7 @@ function ScopedShell({ schema, viewRegistry, config }: ShellProps) {
     }
   }
 
-  // Default: browse all nodes in current scope (root /g or scoped /g/uid:name)
+  // Default: browse all nodes in current scope (root /f or scoped /f/uid:name)
   return (
     <NodeBrowser
       schema={schema}

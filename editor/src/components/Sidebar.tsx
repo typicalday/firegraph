@@ -177,7 +177,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
           <nav className="flex-1 overflow-auto p-3">
             <div className="mb-4">
               <Link
-                to="/g"
+                to="/f"
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
                   location.pathname === scopeUrlPrefix
                     ? 'bg-indigo-600/20 text-indigo-400'

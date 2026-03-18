@@ -107,10 +107,10 @@ export function scopeInput(scopePath: string): { scope?: string } {
  * Build a URL for browsing a registered plain Firestore collection.
  * Parameterized collections include param values as additional path segments.
  * Pass `pathParams` (from collectionDef.pathParams) to guarantee correct ordering.
- * e.g. collectionBrowseUrl('taskLogs', { nodeUid: 'abc123' }, ['nodeUid']) → '/g/col/taskLogs/abc123'
+ * e.g. collectionBrowseUrl('taskLogs', { nodeUid: 'abc123' }, ['nodeUid']) → '/f/col/taskLogs/abc123'
  */
 export function collectionBrowseUrl(name: string, params?: Record<string, string>, pathParams?: string[]): string {
-  const base = `/g/col/${encodeURIComponent(name)}`;
+  const base = `/f/col/${encodeURIComponent(name)}`;
   if (!params || Object.keys(params).length === 0) return base;
   const orderedKeys = pathParams?.length ? pathParams : Object.keys(params);
   const paramPath = orderedKeys
