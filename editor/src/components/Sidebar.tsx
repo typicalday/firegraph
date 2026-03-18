@@ -350,14 +350,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                     key={`${et.aType}:${et.axbType}:${et.bType}`}
                     to={scopedPath(`/browse/${encodeURIComponent(et.aType)}`)}
                     title={`Browse ${et.aType} nodes`}
-                    className="flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors text-slate-500 hover:text-slate-300 hover:bg-slate-800/50"
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors ${
+                      location.pathname === scopedPath(`/browse/${encodeURIComponent(et.aType)}`)
+                        ? 'bg-slate-800 text-slate-100'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
                   >
                     <span>
-                      <span className="text-slate-400">{et.aType}</span>
+                      <span>{et.aType}</span>
                       <span className="text-indigo-400 mx-1">&rarr;</span>
                       <span className="text-indigo-400">{et.axbType}</span>
                       <span className="text-indigo-400 mx-1">&rarr;</span>
-                      <span className="text-slate-400">{et.bType}</span>
+                      <span>{et.bType}</span>
                     </span>
                     {et.isDynamic && (
                       <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400 shrink-0 ml-1" title="Dynamic type (from Firestore)">
