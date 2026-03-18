@@ -12,6 +12,7 @@ import { ChatProvider } from './components/chat-context';
 import { ArtifactProvider } from './components/artifact-context';
 import { ChatBarProvider } from './components/chat-bar-context';
 import { ScopeProvider, parseScopeSplat } from './components/scope-context';
+import { RecentsProvider } from './components/recents-context';
 import type { Schema, ViewRegistryData, AppConfig } from './types';
 import { trpc } from './trpc';
 
@@ -102,6 +103,7 @@ export default function App() {
       <ChatProvider chatEnabled={config?.chatEnabled ?? false}>
         <ArtifactProvider>
           <ChatBarProvider>
+            <RecentsProvider>
             <ScopeProvider>
               <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
                 <Routes>
@@ -119,6 +121,7 @@ export default function App() {
                 </Routes>
               </Layout>
             </ScopeProvider>
+            </RecentsProvider>
           </ChatBarProvider>
         </ArtifactProvider>
       </ChatProvider>

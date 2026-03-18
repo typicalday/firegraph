@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { CollectionDef } from '../types';
 import { trpc } from '../trpc';
 import { collectionBrowseUrl, collectionDocUrl, formatTimestamp, truncateData } from '../utils';
+import { useRecents } from './recents-context';
 import CollectionDocEditor from './CollectionDocEditor';
 
 interface Props {
@@ -16,6 +17,7 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const { addRecent } = useRecents();
 
   // Reset cursor when the collection or its param values change (prevents stale pagination)
   const paramsKey = JSON.stringify(params);
@@ -52,6 +54,18 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
     },
     { enabled: allParamsProvided },
   );
+
+  // Record this collection browse in recents once params are resolved
+  useEffect(() => {
+    if (!allParamsProvided) return;
+    addRecent({
+      type: 'collection',
+      label: collectionDef.name,
+      sublabel: collectionDef.path.replace(/\{([^}]+)\}/g, (_, k) => resolvedParams[k] ?? `{${k}}`),
+      url: collectionBrowseUrl(collectionDef.name, resolvedParams, collectionDef.pathParams),
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionDef.name, paramsKey]);
 
   // If path params are needed but not provided, show param input form
   if (missingParams.length > 0) {

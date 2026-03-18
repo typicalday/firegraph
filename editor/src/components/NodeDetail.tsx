@@ -16,6 +16,7 @@ import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
 import { useFocusMaybe } from './focus-context';
 import { useScope } from './scope-context';
+import { useRecents } from './recents-context';
 
 interface Props {
   schema: Schema;
@@ -153,6 +154,7 @@ export function NodeDetailContent({
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
+  const { addRecent } = useRecents();
 
   const { data: nodeDetailData, isLoading: loading, error: queryError, refetch: loadNode } = trpc.getNodeDetail.useQuery(
     { uid, ...scopeInput(scopePath) },
@@ -187,6 +189,19 @@ export function NodeDetailContent({
       setRootType(node.aType);
     }
   }, [node, drillIndex, setRootType]);
+
+  // Record this node in recents when it loads (root frame only)
+  useEffect(() => {
+    if (node && drillIndex === 0) {
+      addRecent({
+        type: 'node',
+        label: node.aUid,
+        sublabel: node.aType,
+        url: scopedPath(`/node/${encodeURIComponent(node.aUid)}`),
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node?.aUid]);
 
   // Publish focus to FocusContext only from the root frame (drillIndex === 0).
   // The Nearby panel and breadcrumb always anchor to the same root node.

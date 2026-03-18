@@ -1,11 +1,61 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import type { Schema, AppConfig, ViewRegistryData } from '../types';
 import { getTypeColor, collectionBrowseUrl } from '../utils';
 import { useFocusMaybe } from './focus-context';
 import { useScope } from './scope-context';
+import { useRecents, type RecentEntry } from './recents-context';
 import NearbyPanel from './NearbyPanel';
 import { trpc } from '../trpc';
+
+function relativeTime(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+const recentIcons: Record<string, ReactNode> = {
+  node: (
+    <svg className="w-3 h-3 shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+    </svg>
+  ),
+  collection: (
+    <svg className="w-3 h-3 shrink-0 text-amber-500/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+    </svg>
+  ),
+  'collection-doc': (
+    <svg className="w-3 h-3 shrink-0 text-amber-400/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  ),
+};
+
+function RecentItem({ entry }: { entry: RecentEntry }) {
+  return (
+    <Link
+      to={entry.url}
+      className="flex items-center gap-2 px-4 py-1.5 hover:bg-slate-800/50 transition-colors group"
+      title={entry.label}
+    >
+      {recentIcons[entry.type]}
+      <span className="flex-1 min-w-0">
+        <span className="block text-[11px] text-slate-300 truncate font-mono">
+          {entry.label.length > 14 ? `${entry.label.slice(0, 12)}…` : entry.label}
+        </span>
+        {entry.sublabel && (
+          <span className="block text-[9px] text-slate-500 truncate">{entry.sublabel}</span>
+        )}
+      </span>
+      <span className="text-[9px] text-slate-600 shrink-0 group-hover:text-slate-500">
+        {relativeTime(entry.timestamp)}
+      </span>
+    </Link>
+  );
+}
 
 interface Props {
   schema: Schema;
@@ -20,6 +70,8 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('navigate');
+  const [recentsOpen, setRecentsOpen] = useState(true);
+  const { displayRecents, clearRecents } = useRecents();
   const focus = useFocusMaybe();
   const { scopePath, scopedPath, scopeUrlPrefix, isScoped, exitToRoot } = useScope();
 
@@ -172,6 +224,40 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               />
             </form>
           </div>
+
+          {/* Recents */}
+          {displayRecents.length > 0 && (
+            <div className="border-b border-slate-800">
+              <button
+                onClick={() => setRecentsOpen((o) => !o)}
+                className="flex items-center justify-between w-full px-4 py-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold hover:text-slate-400 transition-colors"
+              >
+                <span>Recent</span>
+                <span className="flex items-center gap-1.5">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); clearRecents(); }}
+                    className="text-slate-600 hover:text-slate-400 transition-colors"
+                    title="Clear recents"
+                  >
+                    ×
+                  </button>
+                  <svg
+                    className={`w-3 h-3 transition-transform ${recentsOpen ? '' : '-rotate-90'}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
+              </button>
+              {recentsOpen && (
+                <div className="pb-2">
+                  {displayRecents.map((entry) => (
+                    <RecentItem key={entry.url + entry.timestamp} entry={entry} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Navigation */}
           <nav className="flex-1 overflow-auto p-3">

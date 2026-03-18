@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { CollectionDef, ViewRegistryData } from '../types';
 import { trpc } from '../trpc';
-import { collectionBrowseUrl } from '../utils';
+import { collectionBrowseUrl, collectionDocUrl } from '../utils';
+import { useRecents } from './recents-context';
 import JsonView from './JsonView';
 import CollectionDocEditor from './CollectionDocEditor';
 import ViewSwitcher from './ViewSwitcher';
@@ -21,6 +22,7 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
   const [isEditing, setIsEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeView, setActiveView] = useState('json');
+  const { addRecent } = useRecents();
 
   // Reset view to JSON whenever the displayed document or collection changes.
   useEffect(() => {
@@ -34,6 +36,18 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
     params,
     docId,
   });
+
+  // Record this document in recents when it loads successfully
+  useEffect(() => {
+    if (!data) return;
+    addRecent({
+      type: 'collection-doc',
+      label: docId,
+      sublabel: collectionDef.name,
+      url: collectionDocUrl(collectionDef.name, docId, params, collectionDef.pathParams),
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, collectionDef.name]);
 
   const deleteMutation = trpc.deleteCollectionDoc.useMutation({
     onSuccess: () => {
