@@ -346,6 +346,11 @@ export function NodeDetailContent({
     return subs;
   }, [schema.edgeTypes, node]);
 
+  const attachedCollections = useMemo(
+    () => (schema.collections ?? []).filter((c) => c.parentNodeType === node?.aType),
+    [schema.collections, node?.aType],
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -451,6 +456,44 @@ export function NodeDetailContent({
           <span>Created: {formatTimestamp(node.createdAt)}</span>
           <span>Updated: {formatTimestamp(node.updatedAt)}</span>
         </div>
+
+        {/* Quick-nav chips: subgraphs + attached collections */}
+        {(availableSubgraphs.length > 0 || attachedCollections.length > 0) && (
+          <div className="flex flex-wrap gap-2 mt-3">
+            {availableSubgraphs.map((sg) => (
+              <button
+                key={sg.name}
+                onClick={() => enterSubgraph(node.aUid, sg.name)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/50 border border-indigo-500/30 rounded-lg text-xs text-indigo-300 hover:bg-indigo-900/50 hover:border-indigo-400/50 transition-colors"
+              >
+                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                </svg>
+                {sg.name}
+              </button>
+            ))}
+            {attachedCollections.map((col) => {
+              const rawUrl = collectionBrowseUrl(
+                col.name,
+                col.pathParams.length > 0 ? { [col.pathParams[0]]: node.aUid } : {},
+                col.pathParams,
+              );
+              const colPath = rawUrl.replace(/^\/f/, '');
+              return (
+                <Link
+                  key={col.name}
+                  to={scopedPath(colPath)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/30 border border-amber-500/20 rounded-lg text-xs text-amber-300 hover:bg-amber-900/40 hover:border-amber-400/40 transition-colors"
+                >
+                  <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                  {col.name}
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Data */}
@@ -463,35 +506,6 @@ export function NodeDetailContent({
           config={config}
         />
       </div>
-
-      {/* Subgraphs */}
-      {availableSubgraphs.length > 0 && (
-        <div className="mb-6">
-          <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
-              <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-              </svg>
-              Subgraphs
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {availableSubgraphs.map((sg) => (
-                <button
-                  key={sg.name}
-                  onClick={() => enterSubgraph(node.aUid, sg.name)}
-                  className="flex items-center gap-2 px-3 py-2 bg-slate-800 rounded-lg hover:bg-slate-700 transition-colors text-left group"
-                >
-                  <span className="text-indigo-400 text-sm font-mono">{sg.name}</span>
-                  <span className="text-slate-500 text-xs">via {sg.edgeType}</span>
-                  <svg className="w-3 h-3 text-slate-600 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
-      )}
 
       {/* Outgoing Edges */}
       <section className="bg-slate-900 rounded-xl border border-slate-800 p-5 mb-6">
@@ -608,41 +622,6 @@ export function NodeDetailContent({
             Traverse from this node
           </h2>
           <TraversalPanel schema={schema} startUid={node.aUid} startNodeType={node.aType} viewRegistry={viewRegistry} config={config} />
-        </section>
-      )}
-
-      {/* Attached Collections */}
-      {(schema.collections ?? []).filter((c) => c.parentNodeType === node.aType).length > 0 && (
-        <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-            </svg>
-            Attached Collections
-          </h2>
-          <div className="space-y-1.5">
-            {(schema.collections ?? [])
-              .filter((c) => c.parentNodeType === node.aType)
-              .map((col) => (
-                <Link
-                  key={col.name}
-                  to={collectionBrowseUrl(
-                    col.name,
-                    col.pathParams.length > 0 ? { [col.pathParams[0]]: node.aUid } : {},
-                    col.pathParams,
-                  )}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-                >
-                  <svg className="w-3.5 h-3.5 text-amber-400/70 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                  </svg>
-                  <span className="font-medium text-slate-300">{col.name}</span>
-                  {col.description && (
-                    <span className="text-slate-600 truncate">{col.description}</span>
-                  )}
-                </Link>
-              ))}
-          </div>
         </section>
       )}
 
