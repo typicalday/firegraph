@@ -71,6 +71,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('navigate');
   const [recentsOpen, setRecentsOpen] = useState(true);
+  const [schemaTab, setSchemaTab] = useState<'nodes' | 'edges'>('nodes');
   const { displayRecents, clearRecents } = useRecents();
   const focus = useFocusMaybe();
   const { scopePath, scopedPath, scopeUrlPrefix, isScoped, exitToRoot } = useScope();
@@ -305,71 +306,87 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               )}
             </div>
 
-            {/* Node Types */}
+            {/* Schema tabs: Nodes / Edges */}
             <div className="mb-4">
-              <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3">
-                Node Types
-              </h3>
-              {schema.nodeTypes.length === 0 ? (
-                <p className="text-xs text-slate-600 px-3">No nodes registered</p>
-              ) : (
-                schema.nodeTypes.map((nt) => (
-                  <Link
-                    key={nt.type}
-                    to={scopedPath(`/browse/${encodeURIComponent(nt.type)}`)}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                      location.pathname === scopedPath(`/browse/${encodeURIComponent(nt.type)}`)
-                        ? 'bg-slate-800 text-slate-100'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${getTypeColor(nt.type)}`} />
-                      {nt.type}
-                    </span>
-                    {nt.isDynamic && (
-                      <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400" title="Dynamic type (from Firestore)">
-                        D
-                      </span>
-                    )}
-                  </Link>
-                ))
-              )}
-            </div>
+              <div className="flex items-center gap-1 px-3 mb-2">
+                <button
+                  onClick={() => setSchemaTab('nodes')}
+                  className={`flex-1 py-1 text-[10px] uppercase tracking-wider font-semibold rounded transition-colors ${
+                    schemaTab === 'nodes'
+                      ? 'bg-slate-800 text-slate-200'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Nodes
+                </button>
+                <button
+                  onClick={() => setSchemaTab('edges')}
+                  className={`flex-1 py-1 text-[10px] uppercase tracking-wider font-semibold rounded transition-colors ${
+                    schemaTab === 'edges'
+                      ? 'bg-slate-800 text-slate-200'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  Edges
+                </button>
+              </div>
 
-            {/* Edge Types */}
-            <div className="mb-4">
-              <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3">
-                Edge Types
-              </h3>
-              {schema.edgeTypes.length === 0 ? (
-                <p className="text-xs text-slate-600 px-3">No edges registered</p>
-              ) : (
-                schema.edgeTypes.map((et) => (
-                  <Link
-                    key={`${et.aType}:${et.axbType}:${et.bType}`}
-                    to={scopedPath(`/browse/${encodeURIComponent(et.aType)}`)}
-                    title={`Browse ${et.aType} nodes`}
-                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors ${
-                      location.pathname === scopedPath(`/browse/${encodeURIComponent(et.aType)}`)
-                        ? 'bg-slate-800 text-slate-100'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                    }`}
-                  >
-                    <span>
-                      <span>{et.aType}</span>
-                      <span className="text-indigo-400 mx-1">&rarr;</span>
-                      <span className="text-indigo-400">{et.axbType}</span>
-                      <span className="text-indigo-400 mx-1">&rarr;</span>
-                      <span>{et.bType}</span>
-                    </span>
-                    {et.isDynamic && (
-                      <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400 shrink-0 ml-1" title="Dynamic type (from Firestore)">
-                        D
+              {schemaTab === 'nodes' ? (
+                schema.nodeTypes.length === 0 ? (
+                  <p className="text-xs text-slate-600 px-3">No nodes registered</p>
+                ) : (
+                  schema.nodeTypes.map((nt) => (
+                    <Link
+                      key={nt.type}
+                      to={scopedPath(`/browse/${encodeURIComponent(nt.type)}`)}
+                      className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                        location.pathname === scopedPath(`/browse/${encodeURIComponent(nt.type)}`)
+                          ? 'bg-slate-800 text-slate-100'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${getTypeColor(nt.type)}`} />
+                        {nt.type}
                       </span>
-                    )}
-                  </Link>
-                ))
+                      {nt.isDynamic && (
+                        <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400" title="Dynamic type (from Firestore)">
+                          D
+                        </span>
+                      )}
+                    </Link>
+                  ))
+                )
+              ) : (
+                schema.edgeTypes.length === 0 ? (
+                  <p className="text-xs text-slate-600 px-3">No edges registered</p>
+                ) : (
+                  schema.edgeTypes.map((et) => (
+                    <Link
+                      key={`${et.aType}:${et.axbType}:${et.bType}`}
+                      to={scopedPath(`/browse/${encodeURIComponent(et.aType)}`)}
+                      title={`Browse ${et.aType} nodes`}
+                      className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors ${
+                        location.pathname === scopedPath(`/browse/${encodeURIComponent(et.aType)}`)
+                          ? 'bg-slate-800 text-slate-100'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <span>
+                        <span>{et.aType}</span>
+                        <span className="text-indigo-400 mx-1">&rarr;</span>
+                        <span className="text-indigo-400">{et.axbType}</span>
+                        <span className="text-indigo-400 mx-1">&rarr;</span>
+                        <span>{et.bType}</span>
+                      </span>
+                      {et.isDynamic && (
+                        <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400 shrink-0 ml-1" title="Dynamic type (from Firestore)">
+                          D
+                        </span>
+                      )}
+                    </Link>
+                  ))
+                )
               )}
             </div>
 
