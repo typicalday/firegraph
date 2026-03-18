@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { CollectionDef, ViewRegistryData } from '../types';
 import { trpc } from '../trpc';
 import { collectionBrowseUrl, collectionDocUrl } from '../utils';
 import { useRecents } from './recents-context';
+import CollectionBreadcrumb from './CollectionBreadcrumb';
 import JsonView from './JsonView';
 import CollectionDocEditor from './CollectionDocEditor';
 import ViewSwitcher from './ViewSwitcher';
@@ -77,18 +78,8 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-800 shrink-0">
         {/* Breadcrumb */}
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-3">
-          <svg className="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-          </svg>
-          <Link
-            to={collectionBrowseUrl(collectionDef.name, params, collectionDef.pathParams)}
-            className="text-amber-400 hover:text-amber-300 transition-colors"
-          >
-            {collectionDef.name}
-          </Link>
-          <span>/</span>
-          <span className="font-mono text-slate-400">{docId}</span>
+        <div className="mb-3">
+          <CollectionBreadcrumb collectionDef={collectionDef} params={params} docId={docId} />
         </div>
 
         <div className="flex items-center justify-between">

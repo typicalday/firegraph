@@ -4,6 +4,7 @@ import type { CollectionDef } from '../types';
 import { trpc } from '../trpc';
 import { collectionBrowseUrl, collectionDocUrl, formatTimestamp, truncateData } from '../utils';
 import { useRecents } from './recents-context';
+import CollectionBreadcrumb from './CollectionBreadcrumb';
 import CollectionDocEditor from './CollectionDocEditor';
 
 interface Props {
@@ -118,18 +119,13 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between shrink-0">
         <div>
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-            </svg>
-            <h1 className="text-sm font-semibold text-slate-200">{collectionDef.name}</h1>
+          <div className="mb-1.5">
+            <CollectionBreadcrumb collectionDef={collectionDef} params={resolvedParams} />
           </div>
+          <h1 className="text-sm font-semibold text-slate-200">{collectionDef.name}</h1>
           {collectionDef.description && (
             <p className="text-xs text-slate-500 mt-0.5">{collectionDef.description}</p>
           )}
-          <p className="text-[10px] text-slate-600 font-mono mt-0.5">
-            {collectionDef.path.replace(/\{([^}]+)\}/g, (_, k) => resolvedParams[k] ?? `{${k}}`)}
-          </p>
         </div>
         {!readonly && (
           <button
