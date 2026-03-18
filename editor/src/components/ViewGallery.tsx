@@ -25,6 +25,9 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
   const edgeEntries = Object.entries(viewRegistry.edges).filter(
     ([, meta]) => meta.views.length > 0,
   );
+  const collectionEntries = Object.entries(viewRegistry.collections ?? {}).filter(
+    ([, meta]) => meta.views.length > 0,
+  );
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -56,7 +59,7 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
 
       {/* Edge Views */}
       {edgeEntries.length > 0 && (
-        <section>
+        <section className="mb-8">
           <h2 className="text-sm font-semibold mb-4 uppercase tracking-wider text-slate-500">
             Edge Views
           </h2>
@@ -67,6 +70,25 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
                 entityType={axbType}
                 meta={meta}
                 kind="edge"
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Collection Views */}
+      {collectionEntries.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold mb-4 uppercase tracking-wider text-slate-500">
+            Collection Views
+          </h2>
+          <div className="space-y-6">
+            {collectionEntries.map(([name, meta]) => (
+              <EntityViewSection
+                key={name}
+                entityType={name}
+                meta={meta}
+                kind="collection"
               />
             ))}
           </div>
@@ -83,7 +105,7 @@ function EntityViewSection({
 }: {
   entityType: string;
   meta: EntityViewMeta;
-  kind: 'node' | 'edge';
+  kind: 'node' | 'edge' | 'collection';
 }) {
   const defaultSample = (meta.sampleData ?? {}) as Record<string, unknown>;
   const [sampleJson, setSampleJson] = useState(JSON.stringify(defaultSample, null, 2));

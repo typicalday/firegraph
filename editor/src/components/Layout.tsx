@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function Layout({ schema, config, viewRegistry, warnings = [], children }: Props) {
-  const vr = viewRegistry ?? { nodes: {}, edges: {}, hasViews: false };
+  const vr = viewRegistry ?? { nodes: {}, edges: {}, collections: {}, hasViews: false };
   return (
     <>
       <div className="flex h-screen overflow-hidden">

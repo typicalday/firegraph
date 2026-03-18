@@ -50,6 +50,20 @@ export interface RegistryEntryMeta {
   allowedIn?: string[];
 }
 
+export interface CollectionDef {
+  name: string;
+  /** Raw path template, e.g. "graph/{nodeUid}/logs" */
+  path: string;
+  description?: string;
+  typeField?: string;
+  typeValue?: string | number | boolean;
+  parentNodeType?: string;
+  fields: FieldMeta[];
+  hasSchema: boolean;
+  pathParams: string[];
+  defaultOrderBy?: { field: string; direction: 'asc' | 'desc' };
+}
+
 export interface Schema {
   nodeTypes: NodeType[];
   edgeTypes: EdgeType[];
@@ -57,6 +71,7 @@ export interface Schema {
   nodeSchemas?: RegistryEntryMeta[];
   edgeSchemas?: RegistryEntryMeta[];
   dynamicMode?: boolean;
+  collections?: CollectionDef[];
 }
 
 export interface GraphRecord {
@@ -151,6 +166,7 @@ export interface EntityViewMeta {
 export interface ViewRegistryData {
   nodes: Record<string, EntityViewMeta>;
   edges: Record<string, EntityViewMeta>;
+  collections: Record<string, EntityViewMeta>;
   hasViews: boolean;
 }
 

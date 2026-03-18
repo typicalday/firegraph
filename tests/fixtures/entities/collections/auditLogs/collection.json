@@ -1,0 +1,8 @@
+{
+  "path": "graph/{nodeUid}/auditLogs",
+  "description": "Audit log entries for a node",
+  "typeField": "kind",
+  "typeValue": "audit",
+  "parentNodeType": "tour",
+  "orderBy": { "field": "createdAt", "direction": "desc" }
+}

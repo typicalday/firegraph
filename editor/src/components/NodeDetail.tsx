@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput } from '../utils';
+import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput, collectionBrowseUrl } from '../utils';
 import JsonView from './JsonView';
 import CustomView from './CustomView';
 import ViewSwitcher from './ViewSwitcher';
@@ -593,6 +593,41 @@ export function NodeDetailContent({
             Traverse from this node
           </h2>
           <TraversalPanel schema={schema} startUid={node.aUid} startNodeType={node.aType} viewRegistry={viewRegistry} config={config} />
+        </section>
+      )}
+
+      {/* Attached Collections */}
+      {(schema.collections ?? []).filter((c) => c.parentNodeType === node.aType).length > 0 && (
+        <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <h2 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
+            Attached Collections
+          </h2>
+          <div className="space-y-1.5">
+            {(schema.collections ?? [])
+              .filter((c) => c.parentNodeType === node.aType)
+              .map((col) => (
+                <Link
+                  key={col.name}
+                  to={collectionBrowseUrl(
+                    col.name,
+                    col.pathParams.length > 0 ? { [col.pathParams[0]]: node.aUid } : {},
+                    col.pathParams,
+                  )}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5 text-amber-400/70 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  </svg>
+                  <span className="font-medium text-slate-300">{col.name}</span>
+                  {col.description && (
+                    <span className="text-slate-600 truncate">{col.description}</span>
+                  )}
+                </Link>
+              ))}
+          </div>
         </section>
       )}
 

@@ -9,7 +9,7 @@ import { createRegistry } from '../../src/registry.js';
 import { introspectRegistry } from './schema-introspect.js';
 import type { SchemaMetadata } from './schema-introspect.js';
 import { bundleEntityViews } from './views-bundler.js';
-import type { ViewRegistry } from '../../src/views.js';
+import type { ViewRegistry, EntityViewMeta } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import { loadConfig } from './config-loader.js';
 import type { LoadedConfig } from './config-loader.js';
@@ -17,6 +17,8 @@ import { validateSchemaViews } from './schema-views-validator.js';
 import type { SchemaViewWarning } from './schema-views-validator.js';
 import { buildViewRegistryFromDiscovery, mergeViewDefaults } from './entities-loader.js';
 import { discoverEntities } from '../../src/discover.js';
+import { discoverCollections, buildCollectionViewRegistry } from './collections-loader.js';
+import type { DiscoveredCollection } from './collections-loader.js';
 import * as trpcExpress from '@trpc/server/adapters/express';
 import { appRouter, createContext } from './trpc.js';
 import { detectClaude, registerChatRoutes } from './chat.js';
@@ -110,6 +112,8 @@ let resolvedChatEnabled = false;
 let resolvedChatModel = 'sonnet';
 let resolvedChatMaxConcurrency = 2;
 let viewDefaultsData: LoadedConfig['viewDefaults'] | null = null;
+let resolvedCollectionDefs: DiscoveredCollection[] = [];
+let collectionViewRegistry: Record<string, EntityViewMeta> = {};
 let resolvedRegistryMode: { mode: 'dynamic'; collection?: string } | undefined;
 
 // --- State (mutable — updated on reload for dynamic registry) ---
@@ -329,6 +333,15 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
   console.log(`  Discovering entities from ${resolvedEntitiesPath}...`);
   const { result: discovery, warnings } = discoverEntities(resolvedEntitiesPath!);
 
+  // Discover plain Firestore collections
+  resolvedCollectionDefs = discoverCollections(resolvedEntitiesPath!);
+  if (resolvedCollectionDefs.length > 0) {
+    console.log(`  Collections loaded: ${resolvedCollectionDefs.length} collection(s)`);
+  }
+
+  // Build collection view registry
+  collectionViewRegistry = await buildCollectionViewRegistry(resolvedCollectionDefs);
+
   if (warnings.length > 0) {
     for (const w of warnings) {
       console.log(`    [warn] ${w.message}`);
@@ -357,10 +370,15 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
     const nodeViewCount = Object.values(state.viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
     const edgeViewCount = Object.values(state.viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
     console.log(`  Views loaded: ${nodeViewCount} node views, ${edgeViewCount} edge views`);
+  }
 
-    // Bundle views for browser
+  // Bundle all views (node/edge + collection) for browser
+  const colViewPaths = resolvedCollectionDefs
+    .filter((c) => c.viewsPath)
+    .map((c) => ({ name: c.name, absPath: path.resolve(c.viewsPath!) }));
+  if (state.viewRegistry || colViewPaths.length > 0) {
     console.log(`  Bundling views for browser...`);
-    state.viewBundle = await bundleEntityViews(discovery);
+    state.viewBundle = await bundleEntityViews(discovery, colViewPaths);
     if (state.viewBundle) {
       console.log(`  Views bundled (${(state.viewBundle.code.length / 1024).toFixed(1)} KB)`);
     }
@@ -441,6 +459,8 @@ async function start() {
           viewDefaults: viewDefaultsData,
           chatEnabled: resolvedChatEnabled,
           chatModel: resolvedChatModel,
+          collectionDefs: resolvedCollectionDefs,
+          collectionViewRegistry,
         },
         state,
         resolvedRegistryMode ? reloadDynamicSchema : undefined,

@@ -1,16 +1,17 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateExpressContextOptions } from '@trpc/server/adapters/express';
-import { Timestamp } from '@google-cloud/firestore';
+import { Timestamp, FieldPath } from '@google-cloud/firestore';
 import type { Firestore, DocumentData, Query, WhereFilterOp } from '@google-cloud/firestore';
 import type { GraphClient, GraphRegistry } from '../../src/types.js';
 import { generateId, ValidationError, RegistryViolationError, computeEdgeDocId } from '../../src/index.js';
 import type { SchemaMetadata } from './schema-introspect.js';
-import type { ViewRegistry } from '../../src/views.js';
+import type { ViewRegistry, EntityViewMeta } from '../../src/views.js';
 import type { ViewBundle } from './views-bundler.js';
 import type { LoadedConfig } from './config-loader.js';
 import type { SchemaViewWarning } from './schema-views-validator.js';
 import type { DynamicTypeMetadata } from './dynamic-loader.js';
 import type { ReloadResult } from './index.js';
+import type { DiscoveredCollection } from './collections-loader.js';
 import { z } from 'zod';
 
 // --- Context ---
@@ -24,6 +25,8 @@ export interface StaticDeps {
   viewDefaults: LoadedConfig['viewDefaults'] | null;
   chatEnabled: boolean;
   chatModel: string;
+  collectionDefs: DiscoveredCollection[];
+  collectionViewRegistry: Record<string, EntityViewMeta>;
 }
 
 /** Mutable state that changes on dynamic schema reload. */
@@ -54,6 +57,8 @@ export interface TRPCContext {
   chatModel: string;
   dynamicTypeMeta: DynamicTypeMetadata | null;
   reloadFn: (() => Promise<ReloadResult>) | null;
+  collectionDefs: DiscoveredCollection[];
+  collectionViewRegistry: Record<string, EntityViewMeta>;
 }
 
 /**
@@ -98,16 +103,17 @@ const writeProcedure = t.procedure.use(async ({ ctx, next }) => {
 
 const NODE_RELATION = 'is';
 
+function serializeValue(value: unknown): unknown {
+  if (value instanceof Timestamp) return value.toDate().toISOString();
+  if (Array.isArray(value)) return value.map(serializeValue);
+  if (value && typeof value === 'object') return serializeRecord(value as DocumentData);
+  return value;
+}
+
 function serializeRecord(doc: DocumentData): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(doc)) {
-    if (value instanceof Timestamp) {
-      result[key] = value.toDate().toISOString();
-    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-      result[key] = serializeRecord(value as DocumentData);
-    } else {
-      result[key] = value;
-    }
+    result[key] = serializeValue(value);
   }
   return result;
 }
@@ -175,6 +181,37 @@ function getScopedClient(rootClient: GraphClient, scope?: string): GraphClient {
 
 const scopeSchema = z.string().optional();
 
+// --- Plain collection helpers ---
+
+/**
+ * Substitute {paramName} tokens in a collection path template.
+ * e.g. "graph/{nodeUid}/logs" + {nodeUid: "abc"} → "graph/abc/logs"
+ * Exported for unit testing.
+ */
+export function substitutePathTemplate(template: string, params: Record<string, string> = {}): string {
+  return template.replace(/\{([^}]+)\}/g, (_, key) => {
+    if (!(key in params)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `Missing required path parameter: "${key}"` });
+    }
+    const val = params[key];
+    if (!val) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `Path parameter "${key}" must not be empty` });
+    }
+    if (val.includes('/')) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `Path parameter "${key}" must not contain "/"` });
+    }
+    return val;
+  });
+}
+
+function getCollectionDef(ctx: TRPCContext, name: string): DiscoveredCollection {
+  const def = ctx.collectionDefs.find((c) => c.name === name);
+  if (!def) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: `Collection "${name}" not found.` });
+  }
+  return def;
+}
+
 // --- Router ---
 
 export const appRouter = t.router({
@@ -215,6 +252,18 @@ export const appRouter = t.router({
       nodeSchemas: ctx.schemaMetadata.nodeTypes,
       edgeSchemas: ctx.schemaMetadata.edgeTypes,
       dynamicMode: ctx.reloadFn !== null,
+      collections: ctx.collectionDefs.map((c) => ({
+        name: c.name,
+        path: c.path,
+        description: c.description,
+        typeField: c.typeField,
+        typeValue: c.typeValue,
+        parentNodeType: c.parentNodeType,
+        fields: c.fields,
+        hasSchema: c.hasSchema,
+        pathParams: c.pathParams,
+        defaultOrderBy: c.defaultOrderBy,
+      })),
     };
   }),
 
@@ -223,6 +272,7 @@ export const appRouter = t.router({
     // Start from filesystem view registry (or empty)
     const nodes: Record<string, unknown> = ctx.viewRegistry?.nodes ? { ...ctx.viewRegistry.nodes } : {};
     const edges: Record<string, unknown> = ctx.viewRegistry?.edges ? { ...ctx.viewRegistry.edges } : {};
+    const collections: Record<string, unknown> = { ...ctx.collectionViewRegistry };
 
     // Merge dynamic template views (for types that have viewTemplate)
     if (ctx.dynamicTypeMeta) {
@@ -250,8 +300,8 @@ export const appRouter = t.router({
       }
     }
 
-    const hasViews = Object.keys(nodes).length > 0 || Object.keys(edges).length > 0;
-    return { nodes, edges, hasViews };
+    const hasViews = Object.keys(nodes).length > 0 || Object.keys(edges).length > 0 || Object.keys(collections).length > 0;
+    return { nodes, edges, collections, hasViews };
   }),
 
   // --- Reload Schema (dynamic registry) ---
@@ -902,6 +952,145 @@ export const appRouter = t.router({
       }
       await batch.commit();
       return { success: true as const, deleted: input.edges.length };
+    }),
+  // --- Plain Collection Procedures ---
+
+  getCollectionDocs: publicProcedure
+    .input(z.object({
+      collectionName: z.string(),
+      params: z.record(z.string(), z.string()).optional(),
+      cursor: z.string().optional(),
+      limit: z.number().int().min(1).max(100).default(50),
+    }))
+    .query(async ({ ctx, input }) => {
+      const def = getCollectionDef(ctx, input.collectionName);
+      const colPath = substitutePathTemplate(def.path, input.params ?? {});
+      const col = ctx.db.collection(colPath);
+
+      let query: Query = col;
+      if (def.typeField && def.typeValue !== undefined) {
+        query = query.where(def.typeField, '==', def.typeValue);
+      }
+      // Always orderBy so startAfter has a defined sort key.
+      // When no defaultOrderBy, fall back to document ID ordering.
+      if (def.defaultOrderBy) {
+        query = query.orderBy(def.defaultOrderBy.field, def.defaultOrderBy.direction);
+      } else {
+        query = query.orderBy(FieldPath.documentId());
+      }
+      query = query.limit(input.limit + 1);
+      // cursor is always a document ID. Fetch the snapshot so startAfter works correctly
+      // for any orderBy field type (including Timestamps — avoids ISO-string/Timestamp mismatch).
+      if (input.cursor) {
+        const cursorSnap = await col.doc(input.cursor).get();
+        if (!cursorSnap.exists) {
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `Cursor document "${input.cursor}" no longer exists. Refresh to start from the first page.`,
+          });
+        }
+        query = query.startAfter(cursorSnap);
+      }
+
+      const snapshot = await query.get();
+      const docs = snapshot.docs.slice(0, input.limit);
+      const hasMore = snapshot.docs.length > input.limit;
+
+      const documents = docs.map((doc) => ({
+        id: doc.id,
+        data: serializeRecord(doc.data()),
+      }));
+
+      // Always use the document ID as the cursor so startAfter can be called with a snapshot.
+      const nextCursor = hasMore && docs.length > 0 ? docs[docs.length - 1].id : null;
+
+      return {
+        documents,
+        hasMore,
+        nextCursor,
+      };
+    }),
+
+  getCollectionDoc: publicProcedure
+    .input(z.object({
+      collectionName: z.string(),
+      params: z.record(z.string(), z.string()).optional(),
+      docId: z.string(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const def = getCollectionDef(ctx, input.collectionName);
+      const colPath = substitutePathTemplate(def.path, input.params ?? {});
+      const snap = await ctx.db.collection(colPath).doc(input.docId).get();
+      if (!snap.exists) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+      }
+      const docData = snap.data()!;
+      if (def.typeField && def.typeValue !== undefined && docData[def.typeField] !== def.typeValue) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+      }
+      return { id: snap.id, data: serializeRecord(docData) };
+    }),
+
+  createCollectionDoc: writeProcedure
+    .input(z.object({
+      collectionName: z.string(),
+      params: z.record(z.string(), z.string()).optional(),
+      data: z.record(z.string(), z.unknown()),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const def = getCollectionDef(ctx, input.collectionName);
+      const colPath = substitutePathTemplate(def.path, input.params ?? {});
+      const docData: Record<string, unknown> = { ...input.data };
+      if (def.typeField && def.typeValue !== undefined) {
+        docData[def.typeField] = def.typeValue;
+      }
+      const docRef = await ctx.db.collection(colPath).add(docData);
+      return { success: true as const, id: docRef.id };
+    }),
+
+  updateCollectionDoc: writeProcedure
+    .input(z.object({
+      collectionName: z.string(),
+      params: z.record(z.string(), z.string()).optional(),
+      docId: z.string(),
+      data: z.record(z.string(), z.unknown()),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const def = getCollectionDef(ctx, input.collectionName);
+      const colPath = substitutePathTemplate(def.path, input.params ?? {});
+      // Verify document exists and belongs to this type partition
+      if (def.typeField && def.typeValue !== undefined) {
+        const snap = await ctx.db.collection(colPath).doc(input.docId).get();
+        if (!snap.exists || snap.data()![def.typeField] !== def.typeValue) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+        }
+      }
+      const docData: Record<string, unknown> = { ...input.data };
+      if (def.typeField && def.typeValue !== undefined) {
+        docData[def.typeField] = def.typeValue;
+      }
+      // Use merge: true to preserve server-managed fields not present in the form payload.
+      await ctx.db.collection(colPath).doc(input.docId).set(docData, { merge: true });
+      return { success: true as const };
+    }),
+
+  deleteCollectionDoc: writeProcedure
+    .input(z.object({
+      collectionName: z.string(),
+      params: z.record(z.string(), z.string()).optional(),
+      docId: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const def = getCollectionDef(ctx, input.collectionName);
+      const colPath = substitutePathTemplate(def.path, input.params ?? {});
+      if (def.typeField && def.typeValue !== undefined) {
+        const snap = await ctx.db.collection(colPath).doc(input.docId).get();
+        if (!snap.exists || snap.data()![def.typeField] !== def.typeValue) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+        }
+      }
+      await ctx.db.collection(colPath).doc(input.docId).delete();
+      return { success: true as const };
     }),
 });
 

@@ -103,6 +103,31 @@ export function scopeInput(scopePath: string): { scope?: string } {
   return scopePath ? { scope: scopePath } : {};
 }
 
+/**
+ * Build a URL for browsing a registered plain Firestore collection.
+ * Parameterized collections include param values as additional path segments.
+ * Pass `pathParams` (from collectionDef.pathParams) to guarantee correct ordering.
+ * e.g. collectionBrowseUrl('taskLogs', { nodeUid: 'abc123' }, ['nodeUid']) → '/g/col/taskLogs/abc123'
+ */
+export function collectionBrowseUrl(name: string, params?: Record<string, string>, pathParams?: string[]): string {
+  const base = `/g/col/${encodeURIComponent(name)}`;
+  if (!params || Object.keys(params).length === 0) return base;
+  const orderedKeys = pathParams?.length ? pathParams : Object.keys(params);
+  const paramPath = orderedKeys
+    .filter((k) => params[k] !== undefined)
+    .map((k) => encodeURIComponent(params[k]))
+    .join('/');
+  return paramPath ? `${base}/${paramPath}` : base;
+}
+
+/**
+ * Build a URL for a single document in a registered plain Firestore collection.
+ * Pass `pathParams` (from collectionDef.pathParams) to guarantee correct ordering.
+ */
+export function collectionDocUrl(name: string, docId: string, params?: Record<string, string>, pathParams?: string[]): string {
+  return `${collectionBrowseUrl(name, params, pathParams)}/doc/${encodeURIComponent(docId)}`;
+}
+
 export function resolveViewForEntity(
   resolverConfig: { default?: string; listing?: string; detail?: string; inline?: string } | undefined,
   availableViews: Array<{ viewName: string; tagName: string }>,

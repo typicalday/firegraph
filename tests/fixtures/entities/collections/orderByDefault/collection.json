@@ -1,0 +1,4 @@
+{
+  "path": "metrics",
+  "orderBy": { "field": "ts" }
+}

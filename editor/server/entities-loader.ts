@@ -37,7 +37,7 @@ const jiti = createJiti(import.meta.url, {
 // View class loading
 // ---------------------------------------------------------------------------
 
-function sanitizeTagPart(s: string): string {
+export function sanitizeTagPart(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '-')
@@ -49,7 +49,7 @@ function sanitizeTagPart(s: string): string {
  * Load view classes from a per-entity `views.ts` file.
  * Accepts default export (array) or named `views` export.
  */
-async function loadViewClasses(viewsPath: string): Promise<ViewComponentClass[]> {
+export async function loadViewClasses(viewsPath: string): Promise<ViewComponentClass[]> {
   // Shim HTMLElement for Node.js (views extend it)
   const hadHtmlElement = 'HTMLElement' in globalThis;
   if (!hadHtmlElement) {

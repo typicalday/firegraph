@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import type { Schema, AppConfig, ViewRegistryData } from '../types';
-import { getTypeColor } from '../utils';
+import { getTypeColor, collectionBrowseUrl } from '../utils';
 import { useFocusMaybe } from './focus-context';
 import { useScope } from './scope-context';
 import NearbyPanel from './NearbyPanel';
@@ -252,7 +252,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
             </div>
 
             {/* Edge Types */}
-            <div>
+            <div className="mb-4">
               <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3">
                 Edge Types
               </h3>
@@ -280,6 +280,36 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 ))
               )}
             </div>
+
+            {/* Collections */}
+            {(schema.collections ?? []).length > 0 && (
+              <div>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3">
+                  Collections
+                </h3>
+                {(schema.collections ?? []).map((col) => (
+                  <Link
+                    key={col.name}
+                    to={collectionBrowseUrl(col.name)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                      location.pathname.startsWith(collectionBrowseUrl(col.name))
+                        ? 'bg-slate-800 text-slate-100'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <span className="flex-1 truncate">{col.name}</span>
+                    {col.pathParams.length > 0 && (
+                      <span className="text-[9px] text-slate-600 shrink-0">
+                        {col.pathParams.map((p) => `{${p}}`).join('/')}
+                      </span>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
           </nav>
         </>
       ) : (

@@ -96,6 +96,7 @@ function resilientView(ViewClass, tagName) {
 export function defineViews(input) {
   const nodes = {};
   const edges = {};
+  const collections = {};
   const registry = (typeof customElements !== 'undefined' && typeof customElements.define === 'function')
     ? customElements : null;
 
@@ -119,7 +120,17 @@ export function defineViews(input) {
     edges[axbType] = { views: viewMetas, sampleData: config.sampleData };
   }
 
-  return { nodes, edges };
+  for (const [colName, config] of Object.entries(input.collections ?? {})) {
+    const viewMetas = [];
+    for (const ViewClass of config.views) {
+      const tagName = 'fg-col-' + sanitizeTagPart(colName) + '-' + sanitizeTagPart(ViewClass.viewName);
+      viewMetas.push({ tagName, viewName: ViewClass.viewName, description: ViewClass.description });
+      if (registry && !registry.get(tagName)) registry.define(tagName, resilientView(ViewClass, tagName));
+    }
+    collections[colName] = { views: viewMetas, sampleData: config.sampleData };
+  }
+
+  return { nodes, edges, collections };
 }
 `;
 
@@ -231,10 +242,14 @@ async function loadSveltePlugin(): Promise<Plugin | null> {
  * Bundle multiple per-entity view files into a single browser-compatible ES module.
  * Creates a synthetic entry point that imports all view files and calls defineViews().
  */
-export async function bundleEntityViews(discovery: DiscoveryResult): Promise<ViewBundle | null> {
+export async function bundleEntityViews(
+  discovery: DiscoveryResult,
+  collectionViewPaths?: Array<{ name: string; absPath: string }>,
+): Promise<ViewBundle | null> {
   // Collect all view file paths with their entity info
   const nodeViews: Array<{ name: string; absPath: string }> = [];
   const edgeViews: Array<{ name: string; absPath: string }> = [];
+  const colViews: Array<{ name: string; absPath: string }> = collectionViewPaths ?? [];
 
   for (const [name, entity] of discovery.nodes) {
     if (entity.viewsPath) {
@@ -247,12 +262,13 @@ export async function bundleEntityViews(discovery: DiscoveryResult): Promise<Vie
     }
   }
 
-  if (nodeViews.length === 0 && edgeViews.length === 0) return null;
+  if (nodeViews.length === 0 && edgeViews.length === 0 && colViews.length === 0) return null;
 
   // Generate synthetic entry that imports all views and calls defineViews()
   const imports: string[] = [];
   const nodeEntries: string[] = [];
   const edgeEntries: string[] = [];
+  const colEntries: string[] = [];
 
   nodeViews.forEach(({ name, absPath }, i) => {
     const varName = `nodeViews_${i}`;
@@ -266,6 +282,12 @@ export async function bundleEntityViews(discovery: DiscoveryResult): Promise<Vie
     edgeEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
   });
 
+  colViews.forEach(({ name, absPath }, i) => {
+    const varName = `colViews_${i}`;
+    imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
+    colEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+  });
+
   const syntheticEntry = `
 ${imports.join('\n')}
 import { defineViews } from 'firegraph';
@@ -276,6 +298,9 @@ ${nodeEntries.join(',\n')}
   },
   edges: {
 ${edgeEntries.join(',\n')}
+  },
+  collections: {
+${colEntries.join(',\n')}
   }
 });
 `;
