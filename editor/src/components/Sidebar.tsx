@@ -94,6 +94,16 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
     }
   }, [focus?.focused?.uid]);
 
+  // Auto-switch schema tab to 'nodes' when navigating to a node browse page
+  useEffect(() => {
+    const isNodeBrowsePage = schema.nodeTypes.some(
+      (nt) => location.pathname === scopedPath(`/browse/${encodeURIComponent(nt.type)}`),
+    );
+    if (isNodeBrowsePage) {
+      setSchemaTab('nodes');
+    }
+  }, [location.pathname, schema.nodeTypes, scopedPath]);
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
@@ -308,8 +318,10 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
 
             {/* Schema tabs: Nodes / Edges */}
             <div className="mb-4">
-              <div className="flex items-center gap-1 px-3 mb-2">
+              <div className="flex items-center gap-1 px-3 mb-2" role="tablist">
                 <button
+                  role="tab"
+                  aria-selected={schemaTab === 'nodes'}
                   onClick={() => setSchemaTab('nodes')}
                   className={`flex-1 py-1 text-[10px] uppercase tracking-wider font-semibold rounded transition-colors ${
                     schemaTab === 'nodes'
@@ -320,6 +332,8 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                   Nodes
                 </button>
                 <button
+                  role="tab"
+                  aria-selected={schemaTab === 'edges'}
                   onClick={() => setSchemaTab('edges')}
                   className={`flex-1 py-1 text-[10px] uppercase tracking-wider font-semibold rounded transition-colors ${
                     schemaTab === 'edges'
@@ -363,7 +377,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 ) : (
                   schema.edgeTypes.map((et) => (
                     <Link
-                      key={`${et.aType}:${et.axbType}:${et.bType}`}
+                      key={`edge:${et.aType}:${et.axbType}:${et.bType}`}
                       to={scopedPath(`/browse/${encodeURIComponent(et.aType)}`)}
                       title={`Browse ${et.aType} nodes`}
                       className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-[11px] transition-colors ${
