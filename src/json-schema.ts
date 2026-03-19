@@ -7,6 +7,7 @@
  */
 
 import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { ValidationError } from './errors.js';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ export interface FieldMeta {
 // ---------------------------------------------------------------------------
 
 const ajv = new Ajv({ allErrors: true, strict: false });
+addFormats(ajv);
 
 /**
  * Compile a JSON Schema into a validation function.
