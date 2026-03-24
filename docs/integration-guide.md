@@ -425,8 +425,8 @@ await g.putNode('task', taskId, { title: 'Build feature', status: 'created' });
 // Read
 const task = await g.getNode(taskId); // StoredGraphRecord | null
 
-// Update (merge)
-await g.updateNode(taskId, { 'data.status': 'active' });
+// Update (partial merge into data)
+await g.updateNode(taskId, { status: 'active' });
 
 // Delete
 await g.removeNode(taskId);
@@ -481,7 +481,7 @@ const result = await g.runTransaction(async (tx) => {
   const step = await tx.getNode(stepId);
   if (step?.data.status !== 'created') return { claimed: false };
 
-  await tx.updateNode(stepId, { 'data.status': 'claimed' });
+  await tx.updateNode(stepId, { status: 'claimed' });
   await tx.putEdge('instance', instanceId, 'claimed', 'step', stepId, {
     claimedAt: new Date().toISOString(),
   });

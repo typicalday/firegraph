@@ -85,7 +85,7 @@ describe('pipeline edge cases', () => {
 
     await new Promise((r) => setTimeout(r, 100));
 
-    await g.updateNode('ec-tour4', { 'data.name': 'Updated' });
+    await g.updateNode('ec-tour4', { name: 'Updated' });
     const after = await g.getNode('ec-tour4');
     const createdAfter = after!.createdAt.toMillis();
     const updatedAfter = after!.updatedAt.toMillis();

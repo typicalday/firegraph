@@ -17,7 +17,7 @@ describe('transactions', () => {
     await g.runTransaction(async (tx) => {
       const dep = await tx.getNode('dep1');
       await tx.updateNode('dep1', {
-        'data.registeredRiders': (dep!.data.registeredRiders as number) + 1,
+        registeredRiders: (dep!.data.registeredRiders as number) + 1,
       });
     });
 
@@ -30,7 +30,7 @@ describe('transactions', () => {
 
     await expect(
       g.runTransaction(async (tx) => {
-        await tx.updateNode('tour1', { 'data.name': 'Should Not Persist' });
+        await tx.updateNode('tour1', { name: 'Should Not Persist' });
         throw new Error('Intentional rollback');
       }),
     ).rejects.toThrow('Intentional rollback');
@@ -47,7 +47,7 @@ describe('transactions', () => {
       const registered = dep!.data.registeredRiders as number;
       const max = dep!.data.maxCapacity as number;
       if (registered < max) {
-        await tx.updateNode('dep1', { 'data.registeredRiders': registered + 1 });
+        await tx.updateNode('dep1', { registeredRiders: registered + 1 });
       }
     });
 

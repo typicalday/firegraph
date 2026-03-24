@@ -470,7 +470,7 @@ describe('migration — static registry', () => {
       expect(written!.v).toBe(2);
 
       // updateNode uses Firestore dot-path syntax for partial updates
-      await g.updateNode(uid, { 'data.title': 'Updated' });
+      await g.updateNode(uid, { title: 'Updated' });
 
       // Read raw via bare client to verify v is unchanged
       const bare = createGraphClient(db, collPath);

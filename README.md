@@ -107,8 +107,8 @@ await g.putNode('tour', tourId, { name: 'Dolomites Classic' });
 const node = await g.getNode(tourId);
 // → StoredGraphRecord | null
 
-// Update fields (merge)
-await g.updateNode(tourId, { 'data.difficulty': 'extreme' });
+// Update fields (partial merge into data)
+await g.updateNode(tourId, { difficulty: 'extreme' });
 
 // Delete a node
 await g.removeNode(tourId);
@@ -170,7 +170,7 @@ await g.runTransaction(async (tx) => {
 
   if (count < 30) {
     await tx.putEdge('departure', depId, 'hasRider', 'rider', riderId, {});
-    await tx.updateNode(depId, { 'data.registeredRiders': count + 1 });
+    await tx.updateNode(depId, { registeredRiders: count + 1 });
   }
 });
 ```

@@ -38,7 +38,7 @@ describe('pipeline mixed mode', () => {
       await pipeline.runTransaction(async (tx) => {
         const dep = await tx.getNode('mx-dep1');
         await tx.updateNode('mx-dep1', {
-          'data.registeredRiders': (dep!.data.registeredRiders as number) + 1,
+          registeredRiders: (dep!.data.registeredRiders as number) + 1,
         });
       });
 
@@ -51,7 +51,7 @@ describe('pipeline mixed mode', () => {
 
       await expect(
         pipeline.runTransaction(async (tx) => {
-          await tx.updateNode('mx-tour2', { 'data.name': 'Should Not Persist' });
+          await tx.updateNode('mx-tour2', { name: 'Should Not Persist' });
           throw new Error('Intentional rollback');
         }),
       ).rejects.toThrow('Intentional rollback');
@@ -68,7 +68,7 @@ describe('pipeline mixed mode', () => {
         const registered = dep!.data.registeredRiders as number;
         const max = dep!.data.maxCapacity as number;
         if (registered < max) {
-          await tx.updateNode('mx-dep2', { 'data.registeredRiders': registered + 1 });
+          await tx.updateNode('mx-dep2', { registeredRiders: registered + 1 });
         }
       });
 

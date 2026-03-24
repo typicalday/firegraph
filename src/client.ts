@@ -423,10 +423,13 @@ class GraphClientImpl implements DynamicGraphClient {
 
   async updateNode(uid: string, data: Record<string, unknown>): Promise<void> {
     const docId = computeNodeDocId(uid);
-    await this.adapter.updateDoc(docId, {
-      ...data,
+    const update: Record<string, unknown> = {
       updatedAt: FieldValue.serverTimestamp(),
-    });
+    };
+    for (const [k, v] of Object.entries(data)) {
+      update[`data.${k}`] = v;
+    }
+    await this.adapter.updateDoc(docId, update);
   }
 
   async removeNode(uid: string): Promise<void> {

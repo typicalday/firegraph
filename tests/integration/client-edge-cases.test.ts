@@ -71,7 +71,7 @@ describe('client edge cases', () => {
 
     await new Promise((r) => setTimeout(r, 50));
 
-    await g.updateNode('tour1', { 'data.name': 'Updated' });
+    await g.updateNode('tour1', { name: 'Updated' });
     const after = await g.getNode('tour1');
     const createdAfter = after!.createdAt.toMillis();
     const updatedAfter = after!.updatedAt.toMillis();

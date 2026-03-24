@@ -69,16 +69,16 @@ describe('pipeline client writes', () => {
   });
 
   describe('updateNode', () => {
-    it('partially updates via dot notation', async () => {
+    it('partially updates fields within the data map', async () => {
       await g.putNode('tour', 'w-tour3', tourData);
-      await g.updateNode('w-tour3', { 'data.name': 'New Name' });
+      await g.updateNode('w-tour3', { name: 'New Name' });
       const node = await g.getNode('w-tour3');
       expect(node!.data.name).toBe('New Name');
       expect(node!.data.difficulty).toBe('hard');
     });
 
     it('throws on update of nonexistent doc', async () => {
-      await expect(g.updateNode('nonexistent-w', { 'data.name': 'X' })).rejects.toThrow();
+      await expect(g.updateNode('nonexistent-w', { name: 'X' })).rejects.toThrow();
     });
   });
 
@@ -121,7 +121,7 @@ describe('pipeline client writes', () => {
 
     it('updated data is reflected in pipeline query results', async () => {
       await g.putNode('tour', 'w-tour3', { name: 'New Name', difficulty: 'hard', maxRiders: 30 });
-      await g.updateNode('w-tour3', { 'data.difficulty': 'extreme' });
+      await g.updateNode('w-tour3', { difficulty: 'extreme' });
 
       const results = await g.findEdges({
         axbType: 'is',

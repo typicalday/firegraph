@@ -54,16 +54,16 @@ describe('client writes', () => {
   });
 
   describe('updateNode', () => {
-    it('partially updates via dot notation', async () => {
+    it('partially updates fields within the data map', async () => {
       await g.putNode('tour', 'tour1', tourData);
-      await g.updateNode('tour1', { 'data.name': 'New Name' });
+      await g.updateNode('tour1', { name: 'New Name' });
       const node = await g.getNode('tour1');
       expect(node!.data.name).toBe('New Name');
       expect(node!.data.difficulty).toBe('hard');
     });
 
     it('throws on update of nonexistent doc', async () => {
-      await expect(g.updateNode('nonexistent', { 'data.name': 'X' })).rejects.toThrow();
+      await expect(g.updateNode('nonexistent', { name: 'X' })).rejects.toThrow();
     });
   });
 
