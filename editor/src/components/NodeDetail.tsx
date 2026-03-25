@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput, collectionBrowseUrl } from '../utils';
+import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput, fsUrl, resolveCollectionPath } from '../utils';
 import JsonView from './JsonView';
 import CustomView from './CustomView';
 import ViewSwitcher from './ViewSwitcher';
@@ -15,7 +15,7 @@ import GraphModal from './GraphModal';
 import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
 import DrillStack from './DrillStack';
 import { useFocusMaybe } from './focus-context';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import { useRecents } from './recents-context';
 
 interface Props {
@@ -473,16 +473,13 @@ export function NodeDetailContent({
               </button>
             ))}
             {attachedCollections.map((col) => {
-              const rawUrl = collectionBrowseUrl(
-                col.name,
-                col.pathParams.length > 0 ? { [col.pathParams[0]]: node.aUid } : {},
-                col.pathParams,
-              );
-              const colPath = rawUrl.replace(/^\/f/, '');
+              const colParams: Record<string, string> = {};
+              if (col.pathParams.length > 0) colParams[col.pathParams[0]] = node.aUid;
+              const resolvedColPath = resolveCollectionPath(col.path, colParams);
               return (
                 <Link
                   key={col.name}
-                  to={scopedPath(colPath)}
+                  to={fsUrl(resolvedColPath)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/30 border border-amber-500/20 rounded-lg text-xs text-amber-300 hover:bg-amber-900/40 hover:border-amber-400/40 transition-colors"
                 >
                   <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

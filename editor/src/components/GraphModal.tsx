@@ -5,7 +5,7 @@ import type { GraphRecord, ViewRegistryData, AppConfig, Schema } from '../types'
 import { getTypeHexColor, resolveViewForEntity, scopeInput } from '../utils';
 import { trpc } from '../trpc';
 import { useFocusMaybe } from './focus-context';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import CustomView from './CustomView';
 import JsonView from './JsonView';
 

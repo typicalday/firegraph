@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { CollectionDef } from '../types';
-import { collectionBrowseUrl } from '../utils';
-import { useScope } from './scope-context';
+import { fsUrl, resolveCollectionPath } from '../utils';
 
 interface Props {
   collectionDef: CollectionDef;
@@ -15,16 +14,11 @@ interface Props {
  * Parses a collection path template like "graph/{tourUid}/logs" and renders
  * each segment as either plain text or a clickable link:
  *   - Static segments at the end (last segment before docId) → link to collection browse
- *   - Parameter segments with resolved values → link to /f/node/{value}
+ *   - Parameter segments with resolved values → link to parent node
  *   - Unresolved parameters → displayed as {paramName} in muted text
  */
 export default function CollectionBreadcrumb({ collectionDef, params, docId }: Props) {
-  const { scopedPath } = useScope();
-
-  // Strip the /f prefix so scopedPath can prepend the correct scope
-  const rawBrowseUrl = collectionBrowseUrl(collectionDef.name, params, collectionDef.pathParams);
-  const browseRelPath = rawBrowseUrl.replace(/^\/f/, ''); // → '/col/name/...'
-  const scopedBrowseUrl = scopedPath(browseRelPath);
+  const browseUrl = fsUrl(resolveCollectionPath(collectionDef.path, params));
 
   const segments = collectionDef.path.split('/').filter(Boolean);
 
@@ -37,19 +31,25 @@ export default function CollectionBreadcrumb({ collectionDef, params, docId }: P
 
       {segments.map((seg, i) => {
         const isLastSeg = i === segments.length - 1;
-        const paramMatch = seg.match(/^\{([A-Za-z_][A-Za-z0-9_]*)\}$/);
+        const paramMatch = seg.match(/^\{(.+)\}$/);
         const separator = i > 0 ? <span className="text-slate-700 mx-0.5">/</span> : null;
 
         if (paramMatch) {
-          // Parameter segment — link to the node if value is resolved
+          // Parameter segment — link to the node in its graph context.
+          // For template "ive/{operatorId}/inbox", the graph context for
+          // {operatorId} is "ive" (all resolved segments before the param).
           const paramName = paramMatch[1];
           const value = params[paramName];
+          const graphPrefix = segments.slice(0, i).map((s) => {
+            const pm = s.match(/^\{(.+)\}$/);
+            return pm ? (params[pm[1]] ?? s) : s;
+          }).join('/');
           return (
             <span key={i} className="flex items-center">
               {separator}
               {value ? (
                 <Link
-                  to={scopedPath(`/node/${encodeURIComponent(value)}`)}
+                  to={fsUrl(graphPrefix, `node/${encodeURIComponent(value)}`)}
                   className="text-indigo-400 hover:text-indigo-300 font-mono transition-colors"
                   title={`${paramName}: ${value}`}
                 >
@@ -67,7 +67,7 @@ export default function CollectionBreadcrumb({ collectionDef, params, docId }: P
           return (
             <span key={i} className="flex items-center">
               {separator}
-              <Link to={scopedBrowseUrl} className="text-amber-400 hover:text-amber-300 font-medium transition-colors">
+              <Link to={browseUrl} className="text-amber-400 hover:text-amber-300 font-medium transition-colors">
                 {seg}
               </Link>
             </span>

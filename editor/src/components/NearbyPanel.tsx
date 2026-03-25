@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import type { Schema, GraphRecord } from '../types';
 import { getTypeBadgeColor } from '../utils';
 import { useFocus } from './focus-context';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import type { DrillFrame } from './drill-context';
 
 interface Props {

@@ -4,7 +4,7 @@ import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClau
 import { trpc } from '../trpc';
 import { getTypeBadgeColor, resolveViewForEntity, scopeInput } from '../utils';
 import { useDrillMaybe, type DrillFrame } from './drill-context';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import GraphModal from './GraphModal';
 import JsonView from './JsonView';
 import ViewSwitcher from './ViewSwitcher';

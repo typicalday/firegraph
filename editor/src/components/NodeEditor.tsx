@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import type { Schema, RegistryEntryMeta, GraphRecord } from '../types';
 import { trpc } from '../trpc';
 import { scopeInput } from '../utils';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import SchemaForm from './SchemaForm';
 
 interface Props {

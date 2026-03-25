@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { Schema, GraphRecord, ViewRegistryData, AppConfig, FieldMeta, WhereClause } from '../types';
 import { trpc } from '../trpc';
 import { formatTimestamp, truncateData, resolveViewForEntity, scopeInput } from '../utils';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import CustomView from './CustomView';
 
 export interface NodeListCoreProps {

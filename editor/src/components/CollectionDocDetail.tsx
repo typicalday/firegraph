@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { CollectionDef, ViewRegistryData } from '../types';
 import { trpc } from '../trpc';
-import { collectionBrowseUrl, collectionDocUrl } from '../utils';
+import { fsUrl, resolveCollectionPath } from '../utils';
 import { useRecents } from './recents-context';
 import CollectionBreadcrumb from './CollectionBreadcrumb';
 import JsonView from './JsonView';
@@ -45,14 +45,14 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
       type: 'collection-doc',
       label: docId,
       sublabel: collectionDef.name,
-      url: collectionDocUrl(collectionDef.name, docId, params, collectionDef.pathParams),
+      url: fsUrl(resolveCollectionPath(collectionDef.path, params), `doc/${encodeURIComponent(docId)}`),
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId, collectionDef.name]);
 
   const deleteMutation = trpc.deleteCollectionDoc.useMutation({
     onSuccess: () => {
-      navigate(collectionBrowseUrl(collectionDef.name, params, collectionDef.pathParams));
+      navigate(fsUrl(resolveCollectionPath(collectionDef.path, params)));
     },
     onError: (err) => alert(`Delete failed: ${err.message}`),
   });
@@ -91,7 +91,7 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
               <h1 className="text-xl font-bold font-mono text-slate-200">{docId}</h1>
             </div>
             <p className="text-xs text-slate-500 font-mono">
-              {collectionDef.path.replace(/\{([^}]+)\}/g, (_, k) => params[k] ?? `{${k}}`)}
+              {resolveCollectionPath(collectionDef.path, params)}
             </p>
           </div>
           {!readonly && !isEditing && (

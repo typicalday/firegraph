@@ -1,7 +1,7 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDrill, type DrillFrame, type Lane } from './drill-context';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 import { getTypeBadgeColor } from '../utils';
 import type { PeekPosition } from './DrillStack';
 import type { Schema } from '../types';

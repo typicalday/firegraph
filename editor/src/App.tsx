@@ -1,6 +1,7 @@
-import { Routes, Route, useParams, Navigate } from 'react-router-dom';
+import { Routes, Route, useParams } from 'react-router-dom';
 import { useCallback, useEffect, useRef } from 'react';
 import Layout from './components/Layout';
+import RootPage from './components/RootPage';
 import NodeBrowser from './components/NodeBrowser';
 import NodeDetail from './components/NodeDetail';
 import TraversalBuilder from './components/TraversalBuilder';
@@ -11,7 +12,7 @@ import { FocusProvider } from './components/focus-context';
 import { ChatProvider } from './components/chat-context';
 import { ArtifactProvider } from './components/artifact-context';
 import { ChatBarProvider } from './components/chat-bar-context';
-import { ScopeProvider, parseScopeSplat } from './components/scope-context';
+import { PathProvider, usePath } from './components/path-context';
 import { RecentsProvider } from './components/recents-context';
 import type { Schema, ViewRegistryData, AppConfig } from './types';
 import { trpc } from './trpc';
@@ -104,23 +105,29 @@ export default function App() {
         <ArtifactProvider>
           <ChatBarProvider>
             <RecentsProvider>
-            <ScopeProvider>
               <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/f" replace />} />
                   <Route
-                    path="/f/*"
+                    path="/"
+                    element={<RootPage schema={schema!} config={config!} />}
+                  />
+                  <Route
+                    path="/:encodedPath/*"
                     element={
-                      <ScopedShell
-                        schema={schema!}
-                        viewRegistry={viewRegistry}
-                        config={config!}
-                      />
+                      <PathProvider
+                        graphCollection={config?.collection}
+                        collections={schema?.collections}
+                      >
+                        <PathShell
+                          schema={schema!}
+                          viewRegistry={viewRegistry}
+                          config={config!}
+                        />
+                      </PathProvider>
                     }
                   />
                 </Routes>
               </Layout>
-            </ScopeProvider>
             </RecentsProvider>
           </ChatBarProvider>
         </ArtifactProvider>
@@ -135,97 +142,90 @@ interface ShellProps {
   config: AppConfig;
 }
 
-function ScopedShell({ schema, viewRegistry, config }: ShellProps) {
+function PathShell({ schema, viewRegistry, config }: ShellProps) {
   const { '*': splat = '' } = useParams();
-  const { pageRoute } = parseScopeSplat(splat);
+  const { pathType, collectionMatch } = usePath();
 
-  // Match page route: /browse/type, /node/uid, /traverse, /views, or / (browse all)
-  const browseMatch = pageRoute.match(/^\/browse\/(.+)$/);
-  const nodeMatch = pageRoute.match(/^\/node\/(.+)$/);
+  // Parse page action from the splat (everything after the encoded path)
+  const pageRoute = splat ? `/${splat}` : '';
 
-  if (browseMatch) {
+  // --- Graph context ---
+  if (pathType === 'graph') {
+    const browseMatch = pageRoute.match(/^\/browse\/(.+)$/);
+    const nodeMatch = pageRoute.match(/^\/node\/(.+)$/);
+
+    if (browseMatch) {
+      return (
+        <NodeBrowser
+          schema={schema}
+          viewRegistry={viewRegistry}
+          config={config}
+          typeParam={decodeURIComponent(browseMatch[1])}
+        />
+      );
+    }
+    if (nodeMatch) {
+      return (
+        <NodeDetail
+          schema={schema}
+          viewRegistry={viewRegistry}
+          config={config}
+          uidParam={decodeURIComponent(nodeMatch[1])}
+        />
+      );
+    }
+    if (pageRoute === '/traverse') {
+      return <TraversalBuilder schema={schema} />;
+    }
+    if (pageRoute === '/views') {
+      return <ViewGallery viewRegistry={viewRegistry} schema={schema} />;
+    }
+
+    // Default: graph landing (browse all node types)
     return (
       <NodeBrowser
         schema={schema}
         viewRegistry={viewRegistry}
         config={config}
-        typeParam={decodeURIComponent(browseMatch[1])}
+        typeParam=""
       />
     );
   }
-  if (nodeMatch) {
-    return (
-      <NodeDetail
-        schema={schema}
-        viewRegistry={viewRegistry}
-        config={config}
-        uidParam={decodeURIComponent(nodeMatch[1])}
-      />
-    );
-  }
-  if (pageRoute === '/traverse') {
-    return <TraversalBuilder schema={schema} />;
-  }
-  if (pageRoute === '/views') {
-    return <ViewGallery viewRegistry={viewRegistry} schema={schema} />;
-  }
 
-  // Collection routes: /col/{name}[/{paramVal1}[/{paramVal2}...]]/[doc/{docId}]
-  if (pageRoute.startsWith('/col/')) {
-    const colPath = pageRoute.slice('/col/'.length);
-    const docSepIdx = colPath.indexOf('/doc/');
+  // --- Collection context ---
+  if (pathType === 'collection' && collectionMatch) {
+    const docMatch = pageRoute.match(/^\/doc\/(.+)$/);
 
-    let colName: string;
-    let paramVals: string[];
-    let docId: string | undefined;
-
-    if (docSepIdx >= 0) {
-      const beforeDoc = colPath.slice(0, docSepIdx);
-      docId = decodeURIComponent(colPath.slice(docSepIdx + '/doc/'.length));
-      const beforeParts = beforeDoc.split('/');
-      colName = decodeURIComponent(beforeParts[0]);
-      paramVals = beforeParts.slice(1).filter(Boolean).map(decodeURIComponent);
-    } else {
-      const parts = colPath.split('/');
-      colName = decodeURIComponent(parts[0]);
-      paramVals = parts.slice(1).filter(Boolean).map(decodeURIComponent);
-    }
-
-    const colDef = (schema.collections ?? []).find((c) => c.name === colName);
-    if (colDef) {
-      const colParams: Record<string, string> = {};
-      for (let i = 0; i < Math.min(paramVals.length, colDef.pathParams.length); i++) {
-        colParams[colDef.pathParams[i]] = paramVals[i];
-      }
-
-      if (docId !== undefined) {
-        return (
-          <CollectionDocDetail
-            collectionDef={colDef}
-            docId={docId}
-            params={colParams}
-            readonly={config.readonly}
-            viewRegistry={viewRegistry}
-          />
-        );
-      }
+    if (docMatch) {
       return (
-        <CollectionBrowser
-          collectionDef={colDef}
-          params={colParams}
+        <CollectionDocDetail
+          collectionDef={collectionMatch.collection}
+          docId={decodeURIComponent(docMatch[1])}
+          params={collectionMatch.params}
           readonly={config.readonly}
+          viewRegistry={viewRegistry}
         />
       );
     }
+
+    return (
+      <CollectionBrowser
+        collectionDef={collectionMatch.collection}
+        params={collectionMatch.params}
+        readonly={config.readonly}
+      />
+    );
   }
 
-  // Default: browse all nodes in current scope (root /f or scoped /f/uid:name)
+  // --- Unknown path ---
   return (
-    <NodeBrowser
-      schema={schema}
-      viewRegistry={viewRegistry}
-      config={config}
-      typeParam=""
-    />
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
+        <h2 className="text-lg font-semibold mb-2 text-slate-300">Unknown Path</h2>
+        <p className="text-sm text-slate-400">
+          This Firestore path doesn't match any configured graph or collection.
+        </p>
+      </div>
+    </div>
   );
 }

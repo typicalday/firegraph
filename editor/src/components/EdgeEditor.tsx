@@ -4,7 +4,7 @@ import { trpc } from '../trpc';
 import { getTypeBadgeColor, scopeInput } from '../utils';
 import SchemaForm from './SchemaForm';
 import NodeListCore from './NodeListCore';
-import { useScope } from './scope-context';
+import { useScope } from './path-context';
 
 type TargetMode = 'create' | 'existing' | 'manual';
 

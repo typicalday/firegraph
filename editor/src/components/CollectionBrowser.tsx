@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { CollectionDef, FieldMeta, WhereClause } from '../types';
 import { trpc } from '../trpc';
-import { collectionBrowseUrl, collectionDocUrl, formatTimestamp, truncateData } from '../utils';
+import { fsUrl, resolveCollectionPath, formatTimestamp, truncateData } from '../utils';
 import { useRecents } from './recents-context';
 import CollectionBreadcrumb from './CollectionBreadcrumb';
 import CollectionDocEditor from './CollectionDocEditor';
@@ -89,8 +89,8 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
     addRecent({
       type: 'collection',
       label: collectionDef.name,
-      sublabel: collectionDef.path.replace(/\{([^}]+)\}/g, (_, k) => resolvedParams[k] ?? `{${k}}`),
-      url: collectionBrowseUrl(collectionDef.name, resolvedParams, collectionDef.pathParams),
+      sublabel: resolveCollectionPath(collectionDef.path, resolvedParams),
+      url: fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams)),
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionDef.name, paramsKey]);
@@ -104,7 +104,7 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
       for (const p of missingParams) {
         filled[p] = paramInputs[p];
       }
-      navigate(collectionBrowseUrl(collectionDef.name, filled, collectionDef.pathParams));
+      navigate(fsUrl(resolveCollectionPath(collectionDef.path, filled)));
     };
 
     return (
@@ -179,7 +179,7 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
             onSaved={(id) => {
               setShowCreate(false);
               void refetch();
-              navigate(collectionDocUrl(collectionDef.name, id, resolvedParams, collectionDef.pathParams));
+              navigate(fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams), `doc/${encodeURIComponent(id)}`));
             }}
             onCancel={() => setShowCreate(false)}
           />
@@ -300,7 +300,7 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
                   >
                     <td className="px-5 py-2.5">
                       <Link
-                        to={collectionDocUrl(collectionDef.name, doc.id, resolvedParams, collectionDef.pathParams)}
+                        to={fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams), `doc/${encodeURIComponent(doc.id)}`)}
                         className="text-indigo-400 hover:text-indigo-300 font-mono transition-colors"
                       >
                         {doc.id.length > 16 ? `${doc.id.slice(0, 14)}\u2026` : doc.id}

@@ -103,31 +103,6 @@ export function scopeInput(scopePath: string): { scope?: string } {
   return scopePath ? { scope: scopePath } : {};
 }
 
-/**
- * Build a URL for browsing a registered plain Firestore collection.
- * Parameterized collections include param values as additional path segments.
- * Pass `pathParams` (from collectionDef.pathParams) to guarantee correct ordering.
- * e.g. collectionBrowseUrl('taskLogs', { nodeUid: 'abc123' }, ['nodeUid']) → '/f/col/taskLogs/abc123'
- */
-export function collectionBrowseUrl(name: string, params?: Record<string, string>, pathParams?: string[]): string {
-  const base = `/f/col/${encodeURIComponent(name)}`;
-  if (!params || Object.keys(params).length === 0) return base;
-  const orderedKeys = pathParams?.length ? pathParams : Object.keys(params);
-  const paramPath = orderedKeys
-    .filter((k) => params[k] !== undefined)
-    .map((k) => encodeURIComponent(params[k]))
-    .join('/');
-  return paramPath ? `${base}/${paramPath}` : base;
-}
-
-/**
- * Build a URL for a single document in a registered plain Firestore collection.
- * Pass `pathParams` (from collectionDef.pathParams) to guarantee correct ordering.
- */
-export function collectionDocUrl(name: string, docId: string, params?: Record<string, string>, pathParams?: string[]): string {
-  return `${collectionBrowseUrl(name, params, pathParams)}/doc/${encodeURIComponent(docId)}`;
-}
-
 // --- Scope matching ---
 // Mirrors `matchScope`/`matchScopeAny` from `src/scope.ts` to avoid cross-build imports.
 
@@ -161,6 +136,26 @@ export function matchScopeAny(scopePath: string, patterns: string[] | undefined)
   return patterns.some((p) => matchScope(scopePath, p));
 }
 
+/**
+ * Editor-specific scope filter for node/edge type visibility.
+ *
+ * Core `matchScopeAny` treats missing `allowedIn` as "allowed everywhere"
+ * (backwards-compatible for validation). But for the editor UI, types without
+ * an explicit `allowedIn` should only appear at root — if they were intended
+ * for subgraphs, they'd declare it. This prevents cluttering subgraph views
+ * with root-only types.
+ */
+export function isTypeVisibleInScope(
+  scopeNamesPath: string,
+  allowedIn: string[] | undefined,
+): boolean {
+  // At root: show everything (no constraint = root-allowed)
+  if (!scopeNamesPath) return matchScopeAny(scopeNamesPath, allowedIn);
+  // In a subgraph: types without allowedIn are treated as root-only
+  if (!allowedIn || allowedIn.length === 0) return false;
+  return matchScopeAny(scopeNamesPath, allowedIn);
+}
+
 // --- Collection path filtering ---
 
 /** Check if a collection's path template is under the graph collection. */
@@ -170,35 +165,79 @@ export function isCollectionUnderGraph(colPath: string, graphCollection?: string
   return firstSegment === graphCollection;
 }
 
-// --- Page context detection ---
+// --- Firestore path encoding (tilde-encoding, same convention as Firestore console) ---
 
-export type PageContext = 'graph' | 'collection' | 'other';
-
-export function detectPageContext(pathname: string): PageContext {
-  if (pathname.includes('/col/')) return 'collection';
-  return 'graph';
+/** Encode a Firestore path for URL usage (/ → ~2F). */
+export function encodeFsPath(path: string): string {
+  return path.replace(/\//g, '~2F');
 }
 
-export function extractCollectionFromPath(pathname: string): string | undefined {
-  const match = pathname.match(/\/col\/([^/]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
+/** Decode a tilde-encoded Firestore path (~2F → /). */
+export function decodeFsPath(encoded: string): string {
+  return encoded.replace(/~2F/g, '/');
 }
 
-export function extractCollectionParams(
-  pathname: string,
-  colDef: { name: string; pathParams: string[] },
-): Record<string, string> {
-  const colPrefix = `/col/${encodeURIComponent(colDef.name)}/`;
-  const idx = pathname.indexOf(colPrefix);
-  if (idx < 0) return {};
-  const remainder = pathname.slice(idx + colPrefix.length);
-  const beforeDoc = remainder.includes('/doc/') ? remainder.slice(0, remainder.indexOf('/doc/')) : remainder;
-  const parts = beforeDoc.split('/').filter(Boolean).map(decodeURIComponent);
+/** Check if a decoded Firestore path belongs to the graph collection. */
+export function isGraphPath(fsPath: string, graphCollection?: string): boolean {
+  if (!graphCollection) return false;
+  return fsPath === graphCollection || fsPath.startsWith(graphCollection + '/');
+}
+
+/** Extract graph scope from a decoded Firestore path. Returns "" for root. */
+export function extractGraphScope(fsPath: string, graphCollection: string): string {
+  if (fsPath === graphCollection) return '';
+  return fsPath.slice(graphCollection.length + 1);
+}
+
+/** Derive scopeNamesPath from a graph scope string (odd-indexed segments = subgraph names). */
+export function scopeToNamesPath(scope: string): string {
+  if (!scope) return '';
+  const parts = scope.split('/');
+  return parts.filter((_, i) => i % 2 === 1).join('/');
+}
+
+/** Parse a graph scope into breadcrumb segments. */
+export function parseScopeSegments(scope: string): Array<{ parentUid: string; subgraphName: string }> {
+  if (!scope) return [];
+  const parts = scope.split('/');
+  const segs: Array<{ parentUid: string; subgraphName: string }> = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    segs.push({ parentUid: parts[i], subgraphName: parts[i + 1] });
+  }
+  return segs;
+}
+
+/** Match a Firestore path against a collection path template. Returns params or null. */
+export function matchCollectionTemplate(
+  fsPath: string,
+  template: string,
+): Record<string, string> | null {
+  const fsSegments = fsPath.split('/');
+  const tplSegments = template.split('/');
+  if (fsSegments.length !== tplSegments.length) return null;
   const params: Record<string, string> = {};
-  for (let i = 0; i < Math.min(parts.length, colDef.pathParams.length); i++) {
-    params[colDef.pathParams[i]] = parts[i];
+  for (let i = 0; i < tplSegments.length; i++) {
+    const tpl = tplSegments[i];
+    const paramMatch = tpl.match(/^\{(.+)\}$/);
+    if (paramMatch) {
+      params[paramMatch[1]] = fsSegments[i];
+    } else if (tpl !== fsSegments[i]) {
+      return null;
+    }
   }
   return params;
+}
+
+/** Resolve a collection path template by substituting `{param}` with values from `params`. */
+export function resolveCollectionPath(template: string, params: Record<string, string>): string {
+  return template.replace(/\{([^}]+)\}/g, (_, k: string) => params[k] ?? `{${k}}`);
+}
+
+/** Build a URL for a Firestore path + optional page action. */
+export function fsUrl(fsPath: string, pageAction?: string): string {
+  const encoded = encodeFsPath(fsPath);
+  if (!pageAction) return `/${encoded}`;
+  return `/${encoded}/${pageAction}`;
 }
 
 export function resolveViewForEntity(

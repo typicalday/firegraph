@@ -4,16 +4,18 @@ import { createPortal } from 'react-dom';
 import type { Schema, AppConfig, ViewRegistryData } from '../types';
 import {
   getTypeColor,
-  collectionBrowseUrl,
-  collectionDocUrl,
-  detectPageContext,
-  extractCollectionFromPath,
-  extractCollectionParams,
-  matchScopeAny,
+  isTypeVisibleInScope,
   isCollectionUnderGraph,
+  decodeFsPath,
+  encodeFsPath,
+  isGraphPath,
+  extractGraphScope,
+  scopeToNamesPath,
+  matchCollectionTemplate,
+  fsUrl,
+  resolveCollectionPath,
 } from '../utils';
 import { useFocusMaybe } from './focus-context';
-import { useScope } from './scope-context';
 import { useRecents, type RecentEntry } from './recents-context';
 import NearbyPanel from './NearbyPanel';
 import { trpc } from '../trpc';
@@ -83,9 +85,10 @@ function RecentsPopover({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
-    if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    setPos({ top: rect.top, left: rect.right + 8 });
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ top: rect.top, left: rect.right + 8 });
+    }
   }, [triggerRef]);
 
   // Close on outside click
@@ -137,6 +140,89 @@ interface Props {
   viewRegistry?: ViewRegistryData | null;
 }
 
+/**
+ * Derive path context info from the URL. Works outside of PathProvider.
+ */
+function usePathFromUrl(graphCollection?: string, collections?: Schema['collections']) {
+  const location = useLocation();
+
+  return useMemo(() => {
+    const pathname = location.pathname;
+
+    // Root page
+    if (pathname === '/') {
+      return {
+        pathType: 'root' as const,
+        firestorePath: '',
+        encodedPath: '',
+        graphScope: '',
+        scopeNamesPath: '',
+        isScoped: false,
+        collectionMatch: null as { collection: NonNullable<Schema['collections']>[number]; params: Record<string, string> } | null,
+        pageAction: '',
+        isOnNodePage: false,
+      };
+    }
+
+    // Extract encoded path (first segment) and page action (rest)
+    const withoutLeadingSlash = pathname.slice(1);
+    const firstSlashIdx = withoutLeadingSlash.indexOf('/');
+    const encodedPath = firstSlashIdx >= 0 ? withoutLeadingSlash.slice(0, firstSlashIdx) : withoutLeadingSlash;
+    const pageAction = firstSlashIdx >= 0 ? withoutLeadingSlash.slice(firstSlashIdx) : '';
+    const firestorePath = decodeFsPath(encodedPath);
+
+    const isOnNodePage = pageAction.startsWith('/node/');
+
+    // Check collection templates first — more specific than the graph catch-all prefix.
+    if (collections) {
+      for (const col of collections) {
+        const params = matchCollectionTemplate(firestorePath, col.path);
+        if (params) {
+          return {
+            pathType: 'collection' as const,
+            firestorePath,
+            encodedPath,
+            graphScope: '',
+            scopeNamesPath: '',
+            isScoped: false,
+            collectionMatch: { collection: col, params },
+            pageAction,
+            isOnNodePage,
+          };
+        }
+      }
+    }
+
+    // Check if graph path
+    if (isGraphPath(firestorePath, graphCollection)) {
+      const graphScope = extractGraphScope(firestorePath, graphCollection!);
+      return {
+        pathType: 'graph' as const,
+        firestorePath,
+        encodedPath,
+        graphScope,
+        scopeNamesPath: scopeToNamesPath(graphScope),
+        isScoped: graphScope !== '',
+        collectionMatch: null,
+        pageAction,
+        isOnNodePage,
+      };
+    }
+
+    return {
+      pathType: 'unknown' as const,
+      firestorePath,
+      encodedPath,
+      graphScope: '',
+      scopeNamesPath: '',
+      isScoped: false,
+      collectionMatch: null,
+      pageAction,
+      isOnNodePage,
+    };
+  }, [location.pathname, graphCollection, collections]);
+}
+
 export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -144,8 +230,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const [recentsOpen, setRecentsOpen] = useState(false);
   const { displayRecents, clearRecents } = useRecents();
   const focus = useFocusMaybe();
-  const { scopePath, scopeNamesPath, scopedPath, scopeUrlPrefix, isScoped, exitToRoot, enterSubgraph } = useScope();
   const recentsTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const pathInfo = usePathFromUrl(config.collection, schema.collections);
 
   const utils = trpc.useUtils();
   const reloadMutation = trpc.reloadSchema.useMutation({
@@ -157,43 +244,52 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   });
   const [reloadMessage, setReloadMessage] = useState<string | null>(null);
 
-  // Page context detection
-  const pageContext = detectPageContext(location.pathname);
-  const isOnNodePage = location.pathname.includes('/node/');
+  // Build URL helpers based on current path
+  const pathUrl = useCallback((pageAction?: string) => {
+    if (!pathInfo.encodedPath) return '/';
+    const prefix = `/${pathInfo.encodedPath}`;
+    if (!pageAction) return prefix;
+    const action = pageAction.startsWith('/') ? pageAction.slice(1) : pageAction;
+    return `${prefix}/${action}`;
+  }, [pathInfo.encodedPath]);
 
-  // Scope-aware node type filtering — always applies (root scopeNamesPath="" matches "root" and undefined allowedIn)
+  const enterSubgraph = useCallback((parentUid: string, subgraphName: string) => {
+    const newPath = pathInfo.firestorePath + '/' + parentUid + '/' + subgraphName;
+    navigate(`/${encodeFsPath(newPath)}`);
+  }, [navigate, pathInfo.firestorePath]);
+
+  const navigateToRoot = useCallback(() => {
+    if (config.collection) {
+      navigate(`/${encodeFsPath(config.collection)}`);
+    } else {
+      navigate('/');
+    }
+  }, [navigate, config.collection]);
+
+  // Scope-aware node type filtering
   const filteredNodeTypes = useMemo(() => {
     const nodeSchemas = schema.nodeSchemas ?? [];
     return schema.nodeTypes.filter((nt) => {
       const meta = nodeSchemas.find((s) => s.aType === nt.type && s.isNodeEntry);
-      return matchScopeAny(scopeNamesPath, meta?.allowedIn);
+      return isTypeVisibleInScope(pathInfo.scopeNamesPath, meta?.allowedIn);
     });
-  }, [schema.nodeTypes, schema.nodeSchemas, scopeNamesPath]);
-
-  // Context-aware search
-  const currentCollectionName = pageContext === 'collection'
-    ? extractCollectionFromPath(location.pathname)
-    : undefined;
+  }, [schema.nodeTypes, schema.nodeSchemas, pathInfo.scopeNamesPath]);
 
   const handleSearch = useCallback((e: React.FormEvent) => {
     e.preventDefault();
     const q = searchQuery.trim();
     if (!q) return;
 
-    if (pageContext === 'collection' && currentCollectionName) {
-      const colDef = (schema.collections ?? []).find((c) => c.name === currentCollectionName);
-      if (colDef) {
-        const params = extractCollectionParams(location.pathname, colDef);
-        navigate(collectionDocUrl(currentCollectionName, q, params, colDef.pathParams));
-      }
+    if (pathInfo.pathType === 'collection' && pathInfo.collectionMatch) {
+      navigate(fsUrl(pathInfo.firestorePath, `doc/${encodeURIComponent(q)}`));
     } else {
-      navigate(scopedPath(`/node/${encodeURIComponent(q)}`));
+      navigate(pathUrl(`/node/${encodeURIComponent(q)}`));
     }
     setSearchQuery('');
-  }, [searchQuery, pageContext, currentCollectionName, schema.collections, location.pathname, navigate, scopedPath]);
+  }, [searchQuery, pathInfo, navigate, pathUrl]);
 
   // Show Nearby panel inline when on a node page with a focused node
-  const showNearby = pageContext === 'graph' && isOnNodePage && !!focus?.focused;
+  const showNearby = pathInfo.pathType === 'graph' && pathInfo.isOnNodePage && !!focus?.focused;
 
   // Contextual subgraphs and collections for the focused node
   const availableSubgraphs = useMemo(() => {
@@ -224,6 +320,22 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
     [schema.collections, config.collection],
   );
 
+  // All top-level collections (for root page sidebar)
+  const topLevelCollections = useMemo(
+    () => (schema.collections ?? []).filter((c) => !c.path.includes('/')),
+    [schema.collections],
+  );
+
+  // Build the collection URL by resolving path params from the focused node
+  const buildCollectionUrl = useCallback((col: { path: string; pathParams: string[] }) => {
+    if (col.pathParams.length === 0) return fsUrl(col.path);
+    const colParams: Record<string, string> = {};
+    if (focus?.focused && col.pathParams.length > 0) {
+      colParams[col.pathParams[0]] = focus.focused.uid;
+    }
+    return fsUrl(resolveCollectionPath(col.path, colParams));
+  }, [focus?.focused]);
+
   return (
     <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
       {/* Header */}
@@ -239,16 +351,16 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
         <div className="mt-2 text-[10px] text-slate-500 font-mono truncate" title={config.projectId}>
           {config.projectId}
         </div>
-        {isScoped && (
+        {pathInfo.isScoped && (
           <div className="mt-1 flex items-center gap-1.5">
             <svg className="w-3 h-3 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
             </svg>
-            <span className="text-[10px] text-indigo-400 font-mono truncate" title={scopePath}>
-              {scopePath}
+            <span className="text-[10px] text-indigo-400 font-mono truncate" title={pathInfo.graphScope}>
+              {pathInfo.graphScope}
             </span>
             <button
-              onClick={exitToRoot}
+              onClick={navigateToRoot}
               className="text-[9px] text-slate-500 hover:text-slate-300 underline shrink-0 transition-colors"
             >
               exit
@@ -304,29 +416,72 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
         )}
       </div>
 
-      {/* Search */}
-      <div className="p-3 border-b border-slate-800">
-        <form onSubmit={handleSearch}>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={pageContext === 'collection' ? 'Go to document by ID...' : 'Go to node by UID...'}
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </form>
-      </div>
+      {/* Search — only in graph or collection context */}
+      {(pathInfo.pathType === 'graph' || pathInfo.pathType === 'collection') && (
+        <div className="p-3 border-b border-slate-800">
+          <form onSubmit={handleSearch}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={pathInfo.pathType === 'collection' ? 'Go to document by ID...' : 'Go to node by UID...'}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+          </form>
+        </div>
+      )}
 
       {/* Navigation */}
       <nav className="flex-1 overflow-auto p-3">
-        {pageContext === 'graph' && (
+        {/* Root page: show graph + top-level collections as nav */}
+        {pathInfo.pathType === 'root' && (
+          <div className="mb-4">
+            {config.collection && (
+              <>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3">
+                  Graphs
+                </h3>
+                <Link
+                  to={`/${encodeFsPath(config.collection)}`}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                  </svg>
+                  {config.collection}
+                </Link>
+              </>
+            )}
+            {topLevelCollections.length > 0 && (
+              <>
+                <h3 className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 mt-3 px-3">
+                  Collections
+                </h3>
+                {topLevelCollections.map((col) => (
+                  <Link
+                    key={col.name}
+                    to={fsUrl(col.path)}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
+                  >
+                    <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <span className="flex-1 truncate">{col.name}</span>
+                  </Link>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {pathInfo.pathType === 'graph' && (
           <>
             {/* Graph navigation links */}
             <div className="mb-4">
               <Link
-                to="/f"
+                to={pathUrl()}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                  location.pathname === scopeUrlPrefix
+                  location.pathname === pathUrl()
                     ? 'bg-indigo-600/20 text-indigo-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
@@ -337,9 +492,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 Graph
               </Link>
               <Link
-                to={scopedPath('/traverse')}
+                to={pathUrl('/traverse')}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                  location.pathname === scopedPath('/traverse')
+                  location.pathname === pathUrl('/traverse')
                     ? 'bg-indigo-600/20 text-indigo-400'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                 }`}
@@ -351,9 +506,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               </Link>
               {viewRegistry?.hasViews && (
                 <Link
-                  to={scopedPath('/views')}
+                  to={pathUrl('/views')}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                    location.pathname === scopedPath('/views')
+                    location.pathname === pathUrl('/views')
                       ? 'bg-indigo-600/20 text-indigo-400'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
@@ -367,7 +522,7 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               {displayRecents.length > 0 && (
                 <>
                   <button
-                    ref={pageContext === 'graph' ? recentsTriggerRef : undefined}
+                    ref={recentsTriggerRef}
                     onClick={() => setRecentsOpen((v) => !v)}
                     onMouseEnter={() => setRecentsOpen(true)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors w-full text-left ${
@@ -412,9 +567,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                   filteredNodeTypes.map((nt) => (
                     <Link
                       key={nt.type}
-                      to={scopedPath(`/browse/${encodeURIComponent(nt.type)}`)}
+                      to={pathUrl(`/browse/${encodeURIComponent(nt.type)}`)}
                       className={`flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                        location.pathname === scopedPath(`/browse/${encodeURIComponent(nt.type)}`)
+                        location.pathname === pathUrl(`/browse/${encodeURIComponent(nt.type)}`)
                           ? 'bg-slate-800 text-slate-100'
                           : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                       }`}
@@ -437,12 +592,12 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
         )}
 
         {/* Collection page nav links */}
-        {pageContext === 'collection' && (
+        {pathInfo.pathType === 'collection' && (
           <div className="mb-4">
             {displayRecents.length > 0 && (
               <>
                 <button
-                  ref={pageContext !== 'graph' ? recentsTriggerRef : undefined}
+                  ref={recentsTriggerRef}
                   onClick={() => setRecentsOpen((v) => !v)}
                   onMouseEnter={() => setRecentsOpen(true)}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors w-full text-left ${
@@ -496,28 +651,22 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 <h3 className={`text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3 ${availableSubgraphs.length > 0 ? 'mt-3' : ''}`}>
                   Collections
                 </h3>
-                {attachedCollections.map((col) => {
-                  const params: Record<string, string> = {};
-                  if (focus?.focused && col.pathParams.length > 0) {
-                    params[col.pathParams[0]] = focus.focused.uid;
-                  }
-                  return (
-                    <Link
-                      key={col.name}
-                      to={collectionBrowseUrl(col.name, params, col.pathParams)}
-                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                        location.pathname.startsWith(collectionBrowseUrl(col.name))
-                          ? 'bg-slate-800 text-slate-100'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                      }`}
-                    >
-                      <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                      </svg>
-                      <span className="flex-1 truncate">{col.name}</span>
-                    </Link>
-                  );
-                })}
+                {attachedCollections.map((col) => (
+                  <Link
+                    key={col.name}
+                    to={buildCollectionUrl(col)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                      location.pathname.startsWith(buildCollectionUrl(col))
+                        ? 'bg-slate-800 text-slate-100'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <span className="flex-1 truncate">{col.name}</span>
+                  </Link>
+                ))}
               </>
             )}
           </div>
@@ -532,9 +681,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
             {globalCollections.map((col) => (
               <Link
                 key={col.name}
-                to={collectionBrowseUrl(col.name)}
+                to={fsUrl(col.path)}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                  location.pathname.startsWith(collectionBrowseUrl(col.name))
+                  location.pathname.startsWith(fsUrl(col.path))
                     ? 'bg-slate-800 text-slate-100'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}

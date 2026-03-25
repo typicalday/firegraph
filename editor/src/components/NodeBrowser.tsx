@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Schema, ViewRegistryData, AppConfig } from '../types';
-import { getTypeBadgeColor, matchScopeAny } from '../utils';
-import { useScope } from './scope-context';
+import { getTypeBadgeColor, isTypeVisibleInScope } from '../utils';
+import { useScope } from './path-context';
 import NodeEditor from './NodeEditor';
 import NodeListCore from './NodeListCore';
 
@@ -28,7 +28,7 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
     const nodeSchemas = schema.nodeSchemas ?? [];
     return schema.nodeTypes.filter((nt) => {
       const meta = nodeSchemas.find((s) => s.aType === nt.type && s.isNodeEntry);
-      return matchScopeAny(scopeNamesPath, meta?.allowedIn);
+      return isTypeVisibleInScope(scopeNamesPath, meta?.allowedIn);
     });
   }, [schema.nodeTypes, schema.nodeSchemas, scopeNamesPath]);
 
