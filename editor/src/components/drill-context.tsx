@@ -228,10 +228,10 @@ export function DrillProvider({
           id: nextLaneId(),
           frames: [makeRootFrame(init.rootUid), ...frames],
         }));
-        return { lanes, activeLaneId: lanes[0].id };
+        return { lanes, activeLaneId: lanes[0].id, previewLaneId: undefined };
       }
       const id = nextLaneId();
-      return { lanes: [{ id, frames: [makeRootFrame(init.rootUid)] }], activeLaneId: id };
+      return { lanes: [{ id, frames: [makeRootFrame(init.rootUid)] }], activeLaneId: id, previewLaneId: undefined };
     },
   );
 

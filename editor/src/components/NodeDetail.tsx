@@ -859,7 +859,7 @@ function PaginatedEdgeSection({
     { placeholderData: (prev) => prev },
   );
 
-  const edges = (edgeData?.edges ?? []) as GraphRecord[];
+  const edges = (edgeData?.edges ?? []) as unknown as GraphRecord[];
   const hasMore = edgeData?.hasMore ?? false;
   const nextCursor = edgeData?.nextCursor ?? null;
   const error = queryError?.message ?? null;

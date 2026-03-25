@@ -78,7 +78,7 @@ export default function NodeListCore({
     placeholderData: (prev) => prev,
   });
 
-  const nodes = (data?.nodes ?? []) as GraphRecord[];
+  const nodes = (data?.nodes ?? []) as unknown as GraphRecord[];
   const hasMore = data?.hasMore ?? false;
   const nextCursor = data?.nextCursor ?? null;
   const error = queryError?.message ?? null;
