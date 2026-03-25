@@ -128,6 +128,79 @@ export function collectionDocUrl(name: string, docId: string, params?: Record<st
   return `${collectionBrowseUrl(name, params, pathParams)}/doc/${encodeURIComponent(docId)}`;
 }
 
+// --- Scope matching ---
+// Mirrors `matchScope`/`matchScopeAny` from `src/scope.ts` to avoid cross-build imports.
+
+function matchSegments(path: string[], pi: number, pattern: string[], qi: number): boolean {
+  if (pi === path.length && qi === pattern.length) return true;
+  if (qi === pattern.length) return false;
+  const seg = pattern[qi];
+  if (seg === '**') {
+    if (qi === pattern.length - 1) return true;
+    for (let skip = 0; skip <= path.length - pi; skip++) {
+      if (matchSegments(path, pi + skip, pattern, qi + 1)) return true;
+    }
+    return false;
+  }
+  if (pi === path.length) return false;
+  if (seg === '*') return matchSegments(path, pi + 1, pattern, qi + 1);
+  if (path[pi] === seg) return matchSegments(path, pi + 1, pattern, qi + 1);
+  return false;
+}
+
+export function matchScope(scopePath: string, pattern: string): boolean {
+  if (pattern === 'root') return scopePath === '';
+  if (pattern === '**') return true;
+  const pathSegments = scopePath === '' ? [] : scopePath.split('/');
+  const patternSegments = pattern.split('/');
+  return matchSegments(pathSegments, 0, patternSegments, 0);
+}
+
+export function matchScopeAny(scopePath: string, patterns: string[] | undefined): boolean {
+  if (!patterns || patterns.length === 0) return true;
+  return patterns.some((p) => matchScope(scopePath, p));
+}
+
+// --- Collection path filtering ---
+
+/** Check if a collection's path template is under the graph collection. */
+export function isCollectionUnderGraph(colPath: string, graphCollection?: string): boolean {
+  if (!graphCollection) return true;
+  const firstSegment = colPath.split('/')[0];
+  return firstSegment === graphCollection;
+}
+
+// --- Page context detection ---
+
+export type PageContext = 'graph' | 'collection' | 'other';
+
+export function detectPageContext(pathname: string): PageContext {
+  if (pathname.includes('/col/')) return 'collection';
+  return 'graph';
+}
+
+export function extractCollectionFromPath(pathname: string): string | undefined {
+  const match = pathname.match(/\/col\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+export function extractCollectionParams(
+  pathname: string,
+  colDef: { name: string; pathParams: string[] },
+): Record<string, string> {
+  const colPrefix = `/col/${encodeURIComponent(colDef.name)}/`;
+  const idx = pathname.indexOf(colPrefix);
+  if (idx < 0) return {};
+  const remainder = pathname.slice(idx + colPrefix.length);
+  const beforeDoc = remainder.includes('/doc/') ? remainder.slice(0, remainder.indexOf('/doc/')) : remainder;
+  const parts = beforeDoc.split('/').filter(Boolean).map(decodeURIComponent);
+  const params: Record<string, string> = {};
+  for (let i = 0; i < Math.min(parts.length, colDef.pathParams.length); i++) {
+    params[colDef.pathParams[i]] = parts[i];
+  }
+  return params;
+}
+
 export function resolveViewForEntity(
   resolverConfig: { default?: string; listing?: string; detail?: string; inline?: string } | undefined,
   availableViews: Array<{ viewName: string; tagName: string }>,

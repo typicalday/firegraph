@@ -126,7 +126,7 @@ export interface TraversalResult {
 
 export interface AppConfig {
   projectId: string;
-  collection: string;
+  collection?: string;
   readonly: boolean;
   viewDefaults?: ViewDefaultsConfig | null;
   chatEnabled?: boolean;

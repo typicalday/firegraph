@@ -9,6 +9,8 @@ export interface ScopeSegment {
 export interface ScopeContextValue {
   /** Full scope path: "uid1/name1/uid2/name2" or "" for root. Passed to tRPC. */
   scopePath: string;
+  /** Subgraph-names-only path: "name1/name2" or "" for root. Used for allowedIn matching. */
+  scopeNamesPath: string;
   /** Parsed segments for breadcrumb display. */
   segments: ScopeSegment[];
   /** True when inside a subgraph. */
@@ -94,6 +96,11 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     [segments],
   );
 
+  const scopeNamesPath = useMemo(
+    () => segments.map((s) => s.subgraphName).join('/'),
+    [segments],
+  );
+
   const scopeUrlPrefix = useMemo(() => buildScopeUrlPrefix(segments), [segments]);
 
   const scopedPath = useCallback(
@@ -122,6 +129,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ScopeContextValue>(
     () => ({
       scopePath,
+      scopeNamesPath,
       segments,
       isScoped: segments.length > 0,
       scopeUrlPrefix,
@@ -130,7 +138,7 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
       popToDepth,
       exitToRoot,
     }),
-    [scopePath, segments, scopeUrlPrefix, scopedPath, enterSubgraph, popToDepth, exitToRoot],
+    [scopePath, scopeNamesPath, segments, scopeUrlPrefix, scopedPath, enterSubgraph, popToDepth, exitToRoot],
   );
 
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;

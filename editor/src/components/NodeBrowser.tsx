@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Schema, ViewRegistryData, AppConfig } from '../types';
-import { getTypeBadgeColor } from '../utils';
+import { getTypeBadgeColor, matchScopeAny } from '../utils';
 import { useScope } from './scope-context';
 import NodeEditor from './NodeEditor';
 import NodeListCore from './NodeListCore';
@@ -16,12 +16,21 @@ interface Props {
 }
 
 export default function NodeBrowser({ schema, viewRegistry, config, onDataChanged, typeParam }: Props) {
-  const { scopedPath } = useScope();
+  const { scopedPath, scopeNamesPath } = useScope();
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
 
   const type = typeParam ?? '';
   const canWrite = !schema.readonly;
+
+  // Scope-aware node type filtering (same logic as sidebar)
+  const filteredNodeTypes = useMemo(() => {
+    const nodeSchemas = schema.nodeSchemas ?? [];
+    return schema.nodeTypes.filter((nt) => {
+      const meta = nodeSchemas.find((s) => s.aType === nt.type && s.isNodeEntry);
+      return matchScopeAny(scopeNamesPath, meta?.allowedIn);
+    });
+  }, [schema.nodeTypes, schema.nodeSchemas, scopeNamesPath]);
 
   // No type selected — show landing
   if (!type) {
@@ -31,9 +40,9 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
           <h1 className="text-xl font-bold text-slate-300">Graph</h1>
           <p className="text-sm text-slate-400 mt-1">Select a node type from the sidebar to browse.</p>
         </div>
-        {schema.nodeTypes.length > 0 && (
+        {filteredNodeTypes.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {schema.nodeTypes.map((nt) => (
+            {filteredNodeTypes.map((nt) => (
               <button
                 key={nt.type}
                 onClick={() => navigate(scopedPath(`/browse/${encodeURIComponent(nt.type)}`))}

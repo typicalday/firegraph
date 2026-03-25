@@ -142,34 +142,37 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between shrink-0">
-        <div>
-          <div className="mb-1.5">
-            <CollectionBreadcrumb collectionDef={collectionDef} params={resolvedParams} />
-          </div>
-          <h1 className="text-sm font-semibold text-slate-200">{collectionDef.name}</h1>
-          {collectionDef.description && (
-            <p className="text-xs text-slate-500 mt-0.5">{collectionDef.description}</p>
+      <div className="mb-4">
+        <div className="mb-1.5">
+          <CollectionBreadcrumb collectionDef={collectionDef} params={resolvedParams} />
+        </div>
+        <div className="flex items-center gap-3 mb-1">
+          <h1 className="text-xl font-bold">{collectionDef.name}</h1>
+          <span className="px-2 py-0.5 rounded text-xs font-mono bg-amber-500/15 text-amber-400">
+            collection
+          </span>
+          {!readonly && !showCreate && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New Document
+            </button>
           )}
         </div>
-        {!readonly && (
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            New Document
-          </button>
+        {collectionDef.description && (
+          <p className="text-sm text-slate-400">{collectionDef.description}</p>
         )}
       </div>
 
       {/* Create form */}
       {showCreate && (
-        <div className="px-6 py-4 border-b border-slate-800 shrink-0">
+        <div className="mb-6">
           <CollectionDocEditor
             collectionDef={collectionDef}
             params={resolvedParams}
@@ -183,155 +186,158 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
         </div>
       )}
 
-      {/* Filter toolbar */}
-      <div className="px-6 py-2.5 border-b border-slate-800 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
-          <button
-            onClick={() => setShowFilterBuilder(!showFilterBuilder)}
-            className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
-              showFilterBuilder || filters.length > 0
-                ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
-                : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-            </svg>
-            Filters
-            {activeFilters.length > 0 && (
-              <span className="bg-indigo-500 text-white text-[10px] w-4 h-4 rounded-full inline-flex items-center justify-center font-bold">
-                {activeFilters.length}
-              </span>
-            )}
-          </button>
+      {/* Document list card */}
+      <section className="bg-slate-900 rounded-xl border border-slate-800">
+        {/* Filter toolbar */}
+        <div className="px-5 py-3 border-b border-slate-800">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => setShowFilterBuilder(!showFilterBuilder)}
+              className={`px-2 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
+                showFilterBuilder || filters.length > 0
+                  ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30'
+                  : 'bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              Filters
+              {activeFilters.length > 0 && (
+                <span className="bg-indigo-500 text-white text-[10px] w-4 h-4 rounded-full inline-flex items-center justify-center font-bold">
+                  {activeFilters.length}
+                </span>
+              )}
+            </button>
 
-          {/* Active filter chips (shown when builder is collapsed; only complete filters) */}
-          {activeFilters.length > 0 && !showFilterBuilder && (
-            <>
-              {filters.map((f, i) => {
-                if (!f.field || f.value === '') return null;
-                return (
-                  <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
-                    {f.field} {f.op}{' '}
-                    <span className="text-indigo-200">{String(f.value)}</span>
-                    <button
-                      onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
-                      className="ml-0.5 text-indigo-400 hover:text-indigo-200"
-                    >
-                      &times;
-                    </button>
-                  </span>
-                );
-              })}
-              <button
-                onClick={() => setFilters([])}
-                className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                Clear all
-              </button>
-            </>
+            {/* Active filter chips (shown when builder is collapsed; only complete filters) */}
+            {activeFilters.length > 0 && !showFilterBuilder && (
+              <>
+                {filters.map((f, i) => {
+                  if (!f.field || f.value === '') return null;
+                  return (
+                    <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
+                      {f.field} {f.op}{' '}
+                      <span className="text-indigo-200">{String(f.value)}</span>
+                      <button
+                        onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
+                        className="ml-0.5 text-indigo-400 hover:text-indigo-200"
+                      >
+                        &times;
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  onClick={() => setFilters([])}
+                  className="text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Clear all
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Filter builder panel */}
+          {showFilterBuilder && (
+            <div className="mt-2">
+              <CollectionFilterBuilder
+                filters={filters}
+                onFiltersChange={setFilters}
+                fieldMetas={collectionDef.fields}
+              />
+            </div>
           )}
         </div>
 
-        {/* Filter builder panel */}
-        {showFilterBuilder && (
-          <div className="mt-2">
-            <CollectionFilterBuilder
-              filters={filters}
-              onFiltersChange={setFilters}
-              fieldMetas={collectionDef.fields}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Document list */}
-      <div className="flex-1 overflow-auto">
-        {isLoading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        )}
-        {error && (
-          <div className="px-6 py-4 text-sm text-red-400">{error.message}</div>
-        )}
-        {data && data.documents.length === 0 && (
-          <div className="px-6 py-8 text-center text-xs text-slate-500">
-            No documents found
-            {activeFilters.length > 0 && (
-              <span className="block mt-1">(try adjusting or clearing filters)</span>
-            )}
-            {collectionDef.typeField && activeFilters.length === 0 && (
-              <span className="block mt-1">
-                (filtered by {collectionDef.typeField} = {String(collectionDef.typeValue)})
-              </span>
-            )}
-          </div>
-        )}
-        {data && data.documents.length > 0 && (
-          <table className="w-full min-w-[480px] text-xs">
-            <thead className="sticky top-0 bg-slate-950 border-b border-slate-800">
-              <tr>
-                <th className="px-6 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-48">
-                  ID
-                </th>
-                {collectionDef.fields.slice(0, 3).map((f) => (
-                  <th key={f.name} className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
-                    {f.name}
+        {/* Document table */}
+        <div className="overflow-auto">
+          {isLoading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+          {error && (
+            <div className="px-5 py-4 text-sm text-red-400">{error.message}</div>
+          )}
+          {data && data.documents.length === 0 && (
+            <div className="px-5 py-8 text-center text-xs text-slate-500">
+              No documents found
+              {activeFilters.length > 0 && (
+                <span className="block mt-1">(try adjusting or clearing filters)</span>
+              )}
+              {collectionDef.typeField && activeFilters.length === 0 && (
+                <span className="block mt-1">
+                  (filtered by {collectionDef.typeField} = {String(collectionDef.typeValue)})
+                </span>
+              )}
+            </div>
+          )}
+          {data && data.documents.length > 0 && (
+            <table className="w-full min-w-[480px] text-xs">
+              <thead className="sticky top-0 bg-slate-900 border-b border-slate-800">
+                <tr>
+                  <th className="px-5 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-48">
+                    ID
                   </th>
-                ))}
-                {collectionDef.fields.length === 0 && (
-                  <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
-                    Data
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/50">
-              {data.documents.map((doc) => (
-                <tr
-                  key={doc.id}
-                  className="hover:bg-slate-800/30 transition-colors cursor-pointer"
-                >
-                  <td className="px-6 py-2.5">
-                    <Link
-                      to={collectionDocUrl(collectionDef.name, doc.id, resolvedParams, collectionDef.pathParams)}
-                      className="text-indigo-400 hover:text-indigo-300 font-mono transition-colors"
-                    >
-                      {doc.id.length > 16 ? `${doc.id.slice(0, 14)}…` : doc.id}
-                    </Link>
-                  </td>
                   {collectionDef.fields.slice(0, 3).map((f) => (
-                    <td key={f.name} className="px-4 py-2.5 text-slate-400 truncate max-w-xs">
-                      {doc.data[f.name] !== undefined
-                        ? String(doc.data[f.name])
-                        : <span className="text-slate-600">—</span>
-                      }
-                    </td>
+                    <th key={f.name} className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                      {f.name}
+                    </th>
                   ))}
                   {collectionDef.fields.length === 0 && (
-                    <td className="px-4 py-2.5 text-slate-600 font-mono text-[10px] truncate max-w-xs">
-                      {truncateData(doc.data, 60)}
-                    </td>
+                    <th className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                      Data
+                    </th>
                   )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody className="divide-y divide-slate-800/50">
+                {data.documents.map((doc) => (
+                  <tr
+                    key={doc.id}
+                    className="hover:bg-slate-800/30 transition-colors cursor-pointer"
+                  >
+                    <td className="px-5 py-2.5">
+                      <Link
+                        to={collectionDocUrl(collectionDef.name, doc.id, resolvedParams, collectionDef.pathParams)}
+                        className="text-indigo-400 hover:text-indigo-300 font-mono transition-colors"
+                      >
+                        {doc.id.length > 16 ? `${doc.id.slice(0, 14)}\u2026` : doc.id}
+                      </Link>
+                    </td>
+                    {collectionDef.fields.slice(0, 3).map((f) => (
+                      <td key={f.name} className="px-4 py-2.5 text-slate-400 truncate max-w-xs">
+                        {doc.data[f.name] !== undefined
+                          ? String(doc.data[f.name])
+                          : <span className="text-slate-600">&mdash;</span>
+                        }
+                      </td>
+                    ))}
+                    {collectionDef.fields.length === 0 && (
+                      <td className="px-4 py-2.5 text-slate-600 font-mono text-[10px] truncate max-w-xs">
+                        {truncateData(doc.data, 60)}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
 
         {/* Pagination */}
         {data?.hasMore && (
-          <div className="px-6 py-4 border-t border-slate-800">
+          <div className="px-5 py-3 border-t border-slate-800">
             <button
               onClick={() => setCursor(data.nextCursor ?? undefined)}
               className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
             >
-              Load more →
+              Load more &rarr;
             </button>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
@@ -375,7 +381,7 @@ function CollectionFilterBuilder({
         <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Where</span>
         <span className="text-[10px] text-slate-600">
           {filters.length === 0
-            ? 'No filters — click "Add filter" to start'
+            ? 'No filters \u2014 click "Add filter" to start'
             : activeCount > 0
               ? `${activeCount} active filter${activeCount > 1 ? 's' : ''}${filters.length > activeCount ? ` (${filters.length - activeCount} incomplete)` : ''}`
               : `${filters.length} filter${filters.length > 1 ? 's' : ''} (none active yet)`}

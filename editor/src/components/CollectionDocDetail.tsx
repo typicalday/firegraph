@@ -74,9 +74,9 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
   if (!data) return null;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-slate-800 shrink-0">
+      <div className="mb-6">
         {/* Breadcrumb */}
         <div className="mb-3">
           <CollectionBreadcrumb collectionDef={collectionDef} params={params} docId={docId} />
@@ -139,8 +139,8 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-6">
-        {isEditing ? (
+      {isEditing ? (
+        <div className="mb-6">
           <CollectionDocEditor
             collectionDef={collectionDef}
             params={params}
@@ -151,55 +151,55 @@ export default function CollectionDocDetail({ collectionDef, docId, params, read
             }}
             onCancel={() => setIsEditing(false)}
           />
-        ) : (
-          <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-200">Data</h2>
-              {views.length > 0 && (
-                <ViewSwitcher views={views} activeView={activeView} onSwitch={setActiveView} />
-              )}
-            </div>
-            {activeView !== 'json' ? (
-              <CustomView tagName={activeView} data={data.data} onError={() => setActiveView('json')} />
-            ) : (
-              <>
-                {collectionDef.fields.length > 0 ? (
-                  <div>
-                    {collectionDef.fields.map((f) => (
-                      <div key={f.name} className="flex gap-3 py-2 border-b border-slate-800/50">
-                        <span className="text-xs text-slate-500 w-36 shrink-0 font-mono">{f.name}</span>
-                        <span className="text-xs text-slate-300 break-all">
-                          {data.data[f.name] !== undefined
-                            ? typeof data.data[f.name] === 'object'
-                              ? <code className="text-[10px] font-mono text-slate-400">{JSON.stringify(data.data[f.name])}</code>
-                              : String(data.data[f.name])
-                            : <span className="text-slate-600">—</span>
-                          }
+        </div>
+      ) : (
+        <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-slate-200">Data</h2>
+            {views.length > 0 && (
+              <ViewSwitcher views={views} activeView={activeView} onSwitch={setActiveView} />
+            )}
+          </div>
+          {activeView !== 'json' ? (
+            <CustomView tagName={activeView} data={data.data} onError={() => setActiveView('json')} />
+          ) : (
+            <>
+              {collectionDef.fields.length > 0 ? (
+                <div>
+                  {collectionDef.fields.map((f) => (
+                    <div key={f.name} className="flex gap-3 py-2 border-b border-slate-800/50">
+                      <span className="text-xs text-slate-500 w-36 shrink-0 font-mono">{f.name}</span>
+                      <span className="text-xs text-slate-300 break-all">
+                        {data.data[f.name] !== undefined
+                          ? typeof data.data[f.name] === 'object'
+                            ? <code className="text-[10px] font-mono text-slate-400">{JSON.stringify(data.data[f.name])}</code>
+                            : String(data.data[f.name])
+                          : <span className="text-slate-600">&mdash;</span>
+                        }
+                      </span>
+                    </div>
+                  ))}
+                  {/* Show any extra fields not in schema */}
+                  {Object.entries(data.data)
+                    .filter(([k]) => !collectionDef.fields.some((f) => f.name === k))
+                    .map(([k, v]) => (
+                      <div key={k} className="flex gap-3 py-2 border-b border-slate-800/50">
+                        <span className="text-xs text-slate-600 w-36 shrink-0 font-mono">{k}</span>
+                        <span className="text-xs text-slate-500 break-all">
+                          {typeof v === 'object' ? (
+                            <code className="text-[10px] font-mono">{JSON.stringify(v)}</code>
+                          ) : String(v)}
                         </span>
                       </div>
                     ))}
-                    {/* Show any extra fields not in schema */}
-                    {Object.entries(data.data)
-                      .filter(([k]) => !collectionDef.fields.some((f) => f.name === k))
-                      .map(([k, v]) => (
-                        <div key={k} className="flex gap-3 py-2 border-b border-slate-800/50">
-                          <span className="text-xs text-slate-600 w-36 shrink-0 font-mono">{k}</span>
-                          <span className="text-xs text-slate-500 break-all">
-                            {typeof v === 'object' ? (
-                              <code className="text-[10px] font-mono">{JSON.stringify(v)}</code>
-                            ) : String(v)}
-                          </span>
-                        </div>
-                      ))}
-                  </div>
-                ) : (
-                  <JsonView data={data.data} />
-                )}
-              </>
-            )}
-          </section>
-        )}
-      </div>
+                </div>
+              ) : (
+                <JsonView data={data.data} />
+              )}
+            </>
+          )}
+        </section>
+      )}
     </div>
   );
 }
