@@ -97,7 +97,7 @@ export default function App() {
     );
   }
 
-  const viewRegistry: ViewRegistryData = viewsData ?? { nodes: {}, edges: {}, collections: {}, hasViews: false };
+  const viewRegistry = (viewsData as ViewRegistryData | undefined) ?? { nodes: {}, edges: {}, collections: {}, hasViews: false } as ViewRegistryData;
 
   return (
     <FocusProvider>
