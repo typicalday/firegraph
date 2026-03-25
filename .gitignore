@@ -7,6 +7,7 @@ firebase-debug.log
 firestore-debug.log
 ui-debug.log
 coverage/
+.husky/_
 .env
 .env.local
 EDITOR_ISSUES.md
