@@ -1,122 +1,126 @@
-export { createGraphClient } from './client.js';
-export { createRegistry, createMergedRegistry } from './registry.js';
-export {
-  createRegistryFromGraph,
-  createBootstrapRegistry,
-  generateDeterministicUid,
-  META_NODE_TYPE,
-  META_EDGE_TYPE,
-  NODE_TYPE_SCHEMA,
-  EDGE_TYPE_SCHEMA,
-  BOOTSTRAP_ENTRIES,
-} from './dynamic-registry.js';
-export { generateId } from './id.js';
-export { computeNodeDocId, computeEdgeDocId } from './docid.js';
-export { buildNodeRecord, buildEdgeRecord } from './record.js';
-export { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';
-export { createTraversal } from './traverse.js';
-export { defineViews } from './views.js';
-export { defineConfig, resolveView } from './config.js';
-export { discoverEntities } from './discover.js';
-export { matchScope, matchScopeAny } from './scope.js';
-export { resolveAncestorCollection, isAncestorUid } from './cross-graph.js';
-export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
-
-export {
-  FiregraphError,
-  NodeNotFoundError,
-  EdgeNotFoundError,
-  ValidationError,
-  RegistryViolationError,
-  InvalidQueryError,
-  TraversalError,
-  DynamicRegistryError,
-  QuerySafetyError,
-  RegistryScopeError,
-  MigrationError,
-} from './errors.js';
-
-export { compileMigrations, compileMigrationFn, defaultExecutor, precompileSource, destroySandboxWorker } from './sandbox.js';
-export { serializeFirestoreTypes, deserializeFirestoreTypes, isTaggedValue, SERIALIZATION_TAG } from './serialization.js';
-export { applyMigrationChain, validateMigrationChain, migrateRecord, migrateRecords } from './migration.js';
-export type { MigrationResult } from './migration.js';
-
-export { DiscoveryError } from './discover.js';
-
-export type {
-  GraphRecord,
-  StoredGraphRecord,
-  WhereClause,
-  FindEdgesParams,
-  FindNodesParams,
-  QueryPlan,
-  QueryFilter,
-  QueryOptions,
-  RegistryEntry,
-  GraphClientOptions,
-  GraphRegistry,
-  GraphReader,
-  GraphWriter,
-  GraphClient,
-  GraphTransaction,
-  GraphBatch,
-  DynamicGraphClient,
-  DynamicRegistryConfig,
-  DefineTypeOptions,
-  NodeTypeData,
-  EdgeTypeData,
-  HopDefinition,
-  TraversalOptions,
-  HopResult,
-  TraversalResult,
-  TraversalBuilder,
-  EdgeTopology,
-  DiscoveredEntity,
-  DiscoveryResult,
-  BulkOptions,
-  BulkProgress,
-  BulkResult,
-  BulkBatchError,
-  CascadeResult,
-  QueryMode,
-  ScanProtection,
-  MigrationFn,
-  MigrationStep,
-  StoredMigrationStep,
-  MigrationExecutor,
-  MigrationWriteBack,
-} from './types.js';
-
-export type {
-  ViewComponentClass,
-  EntityViewConfig,
-  ViewRegistryInput,
-  ViewMeta,
-  EntityViewMeta,
-  ViewRegistry,
-} from './views.js';
-
+export { createGraphClientFromBackend } from './client.js';
+export type { CodegenOptions } from './codegen/index.js';
+export { generateTypes } from './codegen/index.js';
 export type {
   FiregraphConfig,
   ViewContext,
-  ViewResolverConfig,
   ViewDefaultsConfig,
+  ViewResolverConfig,
 } from './config.js';
-
-export type { FieldMeta } from './json-schema.js';
-
-export type { DiscoveryWarning, DiscoverResult } from './discover.js';
-
-export { generateTypes } from './codegen/index.js';
-export type { CodegenOptions } from './codegen/index.js';
-
+export { defineConfig, resolveView } from './config.js';
+export { isAncestorUid, resolveAncestorCollection } from './cross-graph.js';
+export type { DiscoverResult, DiscoveryWarning } from './discover.js';
+export { discoverEntities } from './discover.js';
+export { DiscoveryError } from './discover.js';
+export { computeEdgeDocId, computeNodeDocId } from './docid.js';
+export {
+  BOOTSTRAP_ENTRIES,
+  createBootstrapRegistry,
+  createRegistryFromGraph,
+  EDGE_TYPE_SCHEMA,
+  generateDeterministicUid,
+  META_EDGE_TYPE,
+  META_NODE_TYPE,
+  NODE_TYPE_SCHEMA,
+} from './dynamic-registry.js';
+export {
+  DynamicRegistryError,
+  EdgeNotFoundError,
+  FiregraphError,
+  InvalidQueryError,
+  MigrationError,
+  NodeNotFoundError,
+  QuerySafetyError,
+  RegistryScopeError,
+  RegistryViolationError,
+  TraversalError,
+  ValidationError,
+} from './errors.js';
+export { createGraphClient } from './firestore.js';
+export { generateId } from './id.js';
+export type { FirestoreIndex, FirestoreIndexConfig, FirestoreIndexField } from './indexes.js';
 export { generateIndexConfig } from './indexes.js';
-export type { FirestoreIndexConfig, FirestoreIndex, FirestoreIndexField } from './indexes.js';
-
-export { analyzeQuerySafety } from './query-safety.js';
-export type { QuerySafetyResult } from './query-safety.js';
-
 export { DEFAULT_QUERY_LIMIT } from './internal/constants.js';
-
-export { QueryClient, QueryClientError } from './query-client/index.js';
+export type { FieldMeta } from './json-schema.js';
+export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
+export type { MigrationResult } from './migration.js';
+export {
+  applyMigrationChain,
+  migrateRecord,
+  migrateRecords,
+  validateMigrationChain,
+} from './migration.js';
+export { buildEdgeQueryPlan, buildNodeQueryPlan } from './query.js';
 export type { QueryClientErrorCode, QueryClientOptions } from './query-client/index.js';
+export { QueryClient, QueryClientError } from './query-client/index.js';
+export type { QuerySafetyResult } from './query-safety.js';
+export { analyzeQuerySafety } from './query-safety.js';
+export { buildEdgeRecord, buildNodeRecord } from './record.js';
+export { createMergedRegistry, createRegistry } from './registry.js';
+export {
+  compileMigrationFn,
+  compileMigrations,
+  defaultExecutor,
+  destroySandboxWorker,
+  precompileSource,
+} from './sandbox.js';
+export { matchScope, matchScopeAny } from './scope.js';
+export {
+  deserializeFirestoreTypes,
+  isTaggedValue,
+  SERIALIZATION_TAG,
+  serializeFirestoreTypes,
+} from './serialization.js';
+export { createTraversal } from './traverse.js';
+export type {
+  BulkBatchError,
+  BulkOptions,
+  BulkProgress,
+  BulkResult,
+  CascadeResult,
+  DefineTypeOptions,
+  DiscoveredEntity,
+  DiscoveryResult,
+  DynamicGraphClient,
+  DynamicRegistryConfig,
+  EdgeTopology,
+  EdgeTypeData,
+  FindEdgesParams,
+  FindNodesParams,
+  GraphBatch,
+  GraphClient,
+  GraphClientOptions,
+  GraphReader,
+  GraphRecord,
+  GraphRegistry,
+  GraphTransaction,
+  GraphWriter,
+  HopDefinition,
+  HopResult,
+  MigrationExecutor,
+  MigrationFn,
+  MigrationStep,
+  MigrationWriteBack,
+  NodeTypeData,
+  QueryFilter,
+  QueryMode,
+  QueryOptions,
+  QueryPlan,
+  RegistryEntry,
+  ScanProtection,
+  StoredGraphRecord,
+  StoredMigrationStep,
+  TraversalBuilder,
+  TraversalOptions,
+  TraversalResult,
+  WhereClause,
+} from './types.js';
+export type {
+  EntityViewConfig,
+  EntityViewMeta,
+  ViewComponentClass,
+  ViewMeta,
+  ViewRegistry,
+  ViewRegistryInput,
+} from './views.js';
+export { defineViews } from './views.js';

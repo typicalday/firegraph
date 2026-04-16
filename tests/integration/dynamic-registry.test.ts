@@ -1,12 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { META_EDGE_TYPE, META_NODE_TYPE } from '../../src/dynamic-registry.js';
+import { DynamicRegistryError, RegistryViolationError, ValidationError } from '../../src/errors.js';
+import { createGraphClient } from '../../src/firestore.js';
 import { createRegistry } from '../../src/registry.js';
-import {
-  RegistryViolationError,
-  ValidationError,
-  DynamicRegistryError,
-} from '../../src/errors.js';
-import { META_NODE_TYPE, META_EDGE_TYPE } from '../../src/dynamic-registry.js';
 import type { DynamicGraphClient } from '../../src/types.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
@@ -73,9 +70,7 @@ describe('dynamic registry — full workflow', () => {
     await g.defineNodeType('tour', tourSchema);
     // Don't reload — dynamic registry is not compiled yet
 
-    await expect(
-      g.putNode('tour', 'tour1', { name: 'X' }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('tour', 'tour1', { name: 'X' })).rejects.toThrow(RegistryViolationError);
   });
 
   it('meta-type write without reload succeeds (bootstrap validates)', async () => {
@@ -98,9 +93,9 @@ describe('dynamic registry — full workflow', () => {
 
   it('rejects invalid meta-type data (bad edgeType)', async () => {
     // from and to are required
-    await expect(
-      g.putNode(META_EDGE_TYPE, 'bad-uid', { name: 'missingFields' }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode(META_EDGE_TYPE, 'bad-uid', { name: 'missingFields' })).rejects.toThrow(
+      ValidationError,
+    );
   });
 
   it('validates domain data after reload', async () => {
@@ -111,9 +106,9 @@ describe('dynamic registry — full workflow', () => {
     await g.putNode('tour', 'tour1', { name: 'Dolomites' });
 
     // Invalid data — name must be a string
-    await expect(
-      g.putNode('tour', 'tour2', { name: 123 as unknown as string }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode('tour', 'tour2', { name: 123 as unknown as string })).rejects.toThrow(
+      ValidationError,
+    );
   });
 
   it('rejects unregistered domain types after reload', async () => {
@@ -121,18 +116,14 @@ describe('dynamic registry — full workflow', () => {
     await g.reloadRegistry();
 
     // 'booking' was never defined
-    await expect(
-      g.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 
   it('validates edge data after reload', async () => {
     await g.defineNodeType('tour', tourSchema);
-    await g.defineEdgeType(
-      'hasDeparture',
-      { from: 'tour', to: 'departure' },
-      edgeSchema,
-    );
+    await g.defineEdgeType('hasDeparture', { from: 'tour', to: 'departure' }, edgeSchema);
     await g.reloadRegistry();
 
     // Valid
@@ -281,9 +272,7 @@ describe('dynamic registry — upsert', () => {
     await g.putNode('tour', 'tour1', { title: 'X' });
 
     // { name } is NOT valid under new schema
-    await expect(
-      g.putNode('tour', 'tour2', { name: 'Y' }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode('tour', 'tour2', { name: 'Y' })).rejects.toThrow(ValidationError);
   });
 });
 
@@ -302,27 +291,27 @@ describe('dynamic registry — reserved names', () => {
   });
 
   it('defineNodeType("nodeType") throws DynamicRegistryError', async () => {
-    await expect(
-      g.defineNodeType('nodeType', { type: 'object' }),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(g.defineNodeType('nodeType', { type: 'object' })).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 
   it('defineNodeType("edgeType") throws DynamicRegistryError', async () => {
-    await expect(
-      g.defineNodeType('edgeType', { type: 'object' }),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(g.defineNodeType('edgeType', { type: 'object' })).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 
   it('defineEdgeType("nodeType") throws DynamicRegistryError', async () => {
-    await expect(
-      g.defineEdgeType('nodeType', { from: 'a', to: 'b' }),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(g.defineEdgeType('nodeType', { from: 'a', to: 'b' })).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 
   it('defineEdgeType("edgeType") throws DynamicRegistryError', async () => {
-    await expect(
-      g.defineEdgeType('edgeType', { from: 'a', to: 'b' }),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(g.defineEdgeType('edgeType', { from: 'a', to: 'b' })).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 });
 
@@ -430,9 +419,9 @@ describe('dynamic registry — batches', () => {
 
   it('batch rejects unregistered domain types', async () => {
     const batch = g.batch();
-    await expect(
-      batch.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(batch.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 });
 
@@ -444,9 +433,7 @@ describe('dynamic registry — mutual exclusivity', () => {
   const db = getTestFirestore();
 
   it('accepts both registry and registryMode for merged mode', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
 
     // Merged mode: static + dynamic — should NOT throw
     expect(() =>
@@ -467,9 +454,9 @@ describe('dynamic registry — mutual exclusivity', () => {
     const node = await g.getNode('tour1');
     expect(node).not.toBeNull();
 
-    await expect(
-      g.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 
   it('no registry mode works unchanged (no validation)', async () => {
@@ -494,17 +481,15 @@ describe('dynamic registry — methods unavailable in static mode', () => {
     // We need to cast because TypeScript won't expose these methods
     // on a non-dynamic client, but we test runtime safety
     const dynamic = g as unknown as DynamicGraphClient;
-    await expect(
-      dynamic.defineNodeType('tour', tourSchema),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(dynamic.defineNodeType('tour', tourSchema)).rejects.toThrow(DynamicRegistryError);
   });
 
   it('defineEdgeType throws on static client', async () => {
     const g = createGraphClient(db, uniqueCollectionPath());
     const dynamic = g as unknown as DynamicGraphClient;
-    await expect(
-      dynamic.defineEdgeType('rel', { from: 'a', to: 'b' }),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(dynamic.defineEdgeType('rel', { from: 'a', to: 'b' })).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 
   it('reloadRegistry throws on static client', async () => {

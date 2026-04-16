@@ -1,14 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import { tourData, departureData } from '../helpers/fixtures.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { GraphClient } from '../../src/types.js';
+import { departureData, tourData } from '../helpers/fixtures.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 describe('transactions', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    g = createTestGraphClient(uniqueCollectionPath());
   });
 
   it('read-then-write: data persists after transaction', async () => {

@@ -4,12 +4,13 @@
  * Validates that schema validation via the registry works correctly
  * when the client is in pipeline mode.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
-import { getFirestore, uniqueCollectionPath, cleanupCollection } from './setup.js';
+import { createGraphClient } from '../../src/firestore.js';
+import { createRegistry } from '../../src/registry.js';
 import type { GraphClient } from '../../src/types.js';
+import { cleanupCollection, getFirestore, uniqueCollectionPath } from './setup.js';
 
 const tourSchema = {
   type: 'object',
@@ -53,9 +54,9 @@ describe('pipeline client with registry', () => {
   }, 15_000);
 
   it('throws RegistryViolationError for unregistered triple and does NOT write', async () => {
-    await expect(
-      g.putNode('booking', 'reg-b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('booking', 'reg-b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
 
     const node = await g.getNode('reg-b1');
     expect(node).toBeNull();
@@ -84,7 +85,9 @@ describe('pipeline client with registry', () => {
 
   it('rejects putEdge with invalid data', async () => {
     await expect(
-      g.putEdge('tour', 'reg-tour1', 'hasDeparture', 'departure', 'reg-dep3', { order: 'not-a-number' as unknown as number }),
+      g.putEdge('tour', 'reg-tour1', 'hasDeparture', 'departure', 'reg-dep3', {
+        order: 'not-a-number' as unknown as number,
+      }),
     ).rejects.toThrow(ValidationError);
 
     const edge = await g.getEdge('reg-tour1', 'hasDeparture', 'reg-dep3');
@@ -96,7 +99,7 @@ describe('pipeline client with registry', () => {
 
     const results = await g.findNodes({ aType: 'tour' });
     expect(results.length).toBeGreaterThanOrEqual(2);
-    expect(results.some(r => r.aUid === 'reg-tour3')).toBe(true);
+    expect(results.some((r) => r.aUid === 'reg-tour3')).toBe(true);
   });
 });
 

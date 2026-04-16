@@ -1,15 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import { tourData, departureData, riderData } from '../helpers/fixtures.js';
-import type { BulkProgress } from '../../src/types.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { BulkProgress, GraphClient } from '../../src/types.js';
+import { departureData, riderData, tourData } from '../helpers/fixtures.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 describe('bulk operations', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    g = createTestGraphClient(uniqueCollectionPath());
   });
 
   describe('removeNodeCascade', () => {
@@ -220,9 +223,18 @@ describe('bulk operations', () => {
     });
 
     it('supports where clauses to filter edges by data fields', async () => {
-      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, status: 'draft' });
-      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1, status: 'published' });
-      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep3', { order: 2, status: 'draft' });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', {
+        order: 0,
+        status: 'draft',
+      });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', {
+        order: 1,
+        status: 'published',
+      });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep3', {
+        order: 2,
+        status: 'draft',
+      });
 
       // Delete only draft edges
       const result = await g.bulkRemoveEdges({
@@ -242,7 +254,10 @@ describe('bulk operations', () => {
     });
 
     it('where clause with no matches deletes nothing', async () => {
-      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, status: 'published' });
+      await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', {
+        order: 0,
+        status: 'published',
+      });
 
       const result = await g.bulkRemoveEdges({
         aUid: 'tour1',

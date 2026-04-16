@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import { tourData, departureData, riderData } from '../helpers/fixtures.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+
+import type { GraphClient } from '../../src/types.js';
+import { departureData, riderData, tourData } from '../helpers/fixtures.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 describe('client reads', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
 
   beforeAll(async () => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    await ensureSqliteBackend();
+    g = createTestGraphClient(uniqueCollectionPath());
 
     await g.putNode('tour', 'tour1', tourData);
     await g.putNode('tour', 'tour2', { name: 'Alps Challenge' });
@@ -17,7 +18,9 @@ describe('client reads', () => {
 
     await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0 });
     await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1 });
-    await g.putEdge('rider', 'rider1', 'bookedForDeparture', 'departure', 'dep1', { confirmedAt: '2025-01-10' });
+    await g.putEdge('rider', 'rider1', 'bookedForDeparture', 'departure', 'dep1', {
+      confirmedAt: '2025-01-10',
+    });
     await g.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', { order: 0 });
   });
 

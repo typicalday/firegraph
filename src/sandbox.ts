@@ -15,11 +15,17 @@
  * go through this module.
  */
 
-import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
+import type { Worker } from 'node:worker_threads';
+
 import { MigrationError } from './errors.js';
-import { serializeFirestoreTypes, deserializeFirestoreTypes } from './serialization.js';
-import type { MigrationFn, MigrationStep, MigrationExecutor, StoredMigrationStep } from './types.js';
+import type * as SerializationModule from './serialization.js';
+import type {
+  MigrationExecutor,
+  MigrationFn,
+  MigrationStep,
+  StoredMigrationStep,
+} from './types.js';
 
 // ---------------------------------------------------------------------------
 // Sandbox worker — SES lockdown and Compartment evaluation run in a
@@ -29,10 +35,13 @@ import type { MigrationFn, MigrationStep, MigrationExecutor, StoredMigrationStep
 
 let _worker: Worker | null = null;
 let _requestId = 0;
-const _pending = new Map<number, {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-}>();
+const _pending = new Map<
+  number,
+  {
+    resolve: (value: unknown) => void;
+    reject: (reason: Error) => void;
+  }
+>();
 
 /**
  * Inline worker source evaluated as CJS in a dedicated worker thread.
@@ -164,10 +173,23 @@ interface WorkerResponse {
   jsonResult?: string;
 }
 
-function ensureWorker(): Worker {
+// `node:worker_threads` is loaded lazily so this module can be imported in
+// runtimes without it (Cloudflare Workers, browsers). Only callers that
+// actually exercise the default migration sandbox will trigger the import.
+let _WorkerCtor: (new (source: string, opts: Record<string, unknown>) => Worker) | null = null;
+
+async function loadWorkerCtor(): Promise<NonNullable<typeof _WorkerCtor>> {
+  if (_WorkerCtor) return _WorkerCtor;
+  const wt = await import('node:worker_threads');
+  _WorkerCtor = wt.Worker as unknown as NonNullable<typeof _WorkerCtor>;
+  return _WorkerCtor;
+}
+
+async function ensureWorker(): Promise<Worker> {
   if (_worker) return _worker;
 
-  _worker = new Worker(WORKER_SOURCE, {
+  const Ctor = await loadWorkerCtor();
+  _worker = new Ctor(WORKER_SOURCE, {
     eval: true,
     workerData: { parentUrl: import.meta.url },
   });
@@ -213,8 +235,8 @@ function ensureWorker(): Worker {
   return _worker;
 }
 
-function sendToWorker(msg: Record<string, unknown>): Promise<WorkerResponse> {
-  const worker = ensureWorker();
+async function sendToWorker(msg: Record<string, unknown>): Promise<WorkerResponse> {
+  const worker = await ensureWorker();
   if (_requestId >= Number.MAX_SAFE_INTEGER) _requestId = 0;
   const id = ++_requestId;
   return new Promise<WorkerResponse>((resolve, reject) => {
@@ -248,6 +270,20 @@ function hashSource(source: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Lazy serialization loader. Pulls `@google-cloud/firestore` only when the
+// default executor actually runs a migration — keeps Firestore out of
+// SQLite-only bundles (D1, DO-SQLite).
+// ---------------------------------------------------------------------------
+
+let _serializationModule: typeof SerializationModule | null = null;
+
+async function loadSerialization(): Promise<typeof SerializationModule> {
+  if (_serializationModule) return _serializationModule;
+  _serializationModule = await import('./serialization.js');
+  return _serializationModule;
+}
+
+// ---------------------------------------------------------------------------
 // Default executor
 // ---------------------------------------------------------------------------
 
@@ -267,25 +303,25 @@ function hashSource(source: string): string {
  * with the worker is inherently async via `postMessage`).
  */
 export function defaultExecutor(source: string): MigrationFn {
-  // Eagerly spawn the worker (lazy on first defaultExecutor call)
-  ensureWorker();
+  // Worker is spawned lazily on first execution via `sendToWorker`.
+  // Eager spawning here would force a top-level `node:worker_threads`
+  // load and break Cloudflare Workers / browser callers that never
+  // exercise the default sandbox.
 
   // Return a MigrationFn that delegates to the worker thread.
   // Compilation + execution happen in the worker's SES Compartment.
-  return ((data: Record<string, unknown>) => {
+  return (async (data: Record<string, unknown>) => {
+    const { serializeFirestoreTypes, deserializeFirestoreTypes } = await loadSerialization();
     const jsonData = JSON.stringify(serializeFirestoreTypes(data));
-    return sendToWorker({ type: 'execute', source, jsonData }).then(
-      (response) => {
-        if (response.jsonResult === undefined || response.jsonResult === null) {
-          throw new MigrationError('Migration returned a non-JSON-serializable value');
-        }
-        try {
-          return deserializeFirestoreTypes(JSON.parse(response.jsonResult));
-        } catch {
-          throw new MigrationError('Migration returned a non-JSON-serializable value');
-        }
-      },
-    );
+    const response = await sendToWorker({ type: 'execute', source, jsonData });
+    if (response.jsonResult === undefined || response.jsonResult === null) {
+      throw new MigrationError('Migration returned a non-JSON-serializable value');
+    }
+    try {
+      return deserializeFirestoreTypes(JSON.parse(response.jsonResult));
+    } catch {
+      throw new MigrationError('Migration returned a non-JSON-serializable value');
+    }
   }) as MigrationFn;
 }
 
@@ -313,9 +349,7 @@ export async function precompileSource(
       executor(source);
     } catch (err: unknown) {
       if (err instanceof MigrationError) throw err;
-      throw new MigrationError(
-        `Failed to compile migration source: ${(err as Error).message}`,
-      );
+      throw new MigrationError(`Failed to compile migration source: ${(err as Error).message}`);
     }
     return;
   }
@@ -350,9 +384,7 @@ export function compileMigrationFn(
     return fn;
   } catch (err: unknown) {
     if (err instanceof MigrationError) throw err;
-    throw new MigrationError(
-      `Failed to compile migration source: ${(err as Error).message}`,
-    );
+    throw new MigrationError(`Failed to compile migration source: ${(err as Error).message}`);
   }
 }
 

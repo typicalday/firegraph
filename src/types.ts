@@ -1,4 +1,7 @@
-import type { Timestamp, FieldValue, WhereFilterOp } from '@google-cloud/firestore';
+import type { FieldValue, Timestamp, WhereFilterOp } from '@google-cloud/firestore';
+
+import type { ViewResolverConfig } from './config.js';
+import type { GraphTimestamp } from './timestamp.js';
 
 export interface GraphRecord {
   aType: string;
@@ -20,8 +23,13 @@ export interface StoredGraphRecord {
   bType: string;
   bUid: string;
   data: Record<string, unknown>;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  /**
+   * Backend-agnostic timestamp. Firestore returns its native `Timestamp`
+   * (which structurally satisfies `GraphTimestamp`); the SQLite backends
+   * return a `GraphTimestampImpl` instance.
+   */
+  createdAt: GraphTimestamp;
+  updatedAt: GraphTimestamp;
   /** Schema version — set automatically when the registry entry has migrations. */
   v?: number;
 }
@@ -217,7 +225,7 @@ export interface DiscoveredEntity {
   /** Data field to use as the display subtitle (e.g. 'status', 'difficulty'). */
   subtitleField?: string;
   /** View defaults from meta.json. */
-  viewDefaults?: import('./config.js').ViewResolverConfig;
+  viewDefaults?: ViewResolverConfig;
   /** Absolute path to views.ts if present. */
   viewsPath?: string;
   /** Sample data from sample.json. */

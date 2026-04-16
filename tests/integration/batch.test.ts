@@ -1,15 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
 import { RegistryViolationError } from '../../src/errors.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import { tourData, riderData } from '../helpers/fixtures.js';
+import { createRegistry } from '../../src/registry.js';
+import type { GraphClient } from '../../src/types.js';
+import { tourData } from '../helpers/fixtures.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
+
 describe('batch operations', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    g = createTestGraphClient(uniqueCollectionPath());
   });
 
   it('atomic commit: all documents exist after commit', async () => {
@@ -49,15 +54,24 @@ describe('batch operations', () => {
 
   it('registry violation during enqueue prevents commit', async () => {
     const registry = createRegistry([
-      { aType: 'rider', axbType: 'is', bType: 'rider', jsonSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } } },
+      {
+        aType: 'rider',
+        axbType: 'is',
+        bType: 'rider',
+        jsonSchema: {
+          type: 'object',
+          required: ['name'],
+          properties: { name: { type: 'string' } },
+        },
+      },
     ]);
-    const gWithRegistry = createGraphClient(db, uniqueCollectionPath(), { registry });
+    const gWithRegistry = createTestGraphClient(uniqueCollectionPath(), { registry });
 
     const batch = gWithRegistry.batch();
     await batch.putNode('rider', 'r1', { name: 'Valid' });
 
-    await expect(
-      batch.putNode('unregistered', 'u1', { data: 'bad' }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(batch.putNode('unregistered', 'u1', { data: 'bad' })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 });

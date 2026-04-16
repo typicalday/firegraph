@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
+import { describe, expect, it } from 'vitest';
+
+import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import type { DynamicGraphClient } from '../../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Dynamic registry migration — end-to-end
@@ -10,13 +10,6 @@ import type { DynamicGraphClient } from '../../src/types.js';
 
 describe('migration — dynamic registry', () => {
   const db = getTestFirestore();
-  let g: DynamicGraphClient;
-
-  beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath(), {
-      registryMode: { mode: 'dynamic' },
-    });
-  });
 
   it('workflow: define with migrations → reload → read triggers migration', async () => {
     const collPath = uniqueCollectionPath();
@@ -78,9 +71,7 @@ describe('migration — dynamic registry', () => {
       },
       'A task',
       {
-        migrations: [
-          { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, done: false })' },
-        ],
+        migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, done: false })' }],
       },
     );
 
@@ -146,8 +137,10 @@ describe('migration — dynamic registry', () => {
       registryMode: { mode: 'dynamic' },
       migrationSandbox: (source: string) => {
         executorCallCount++;
-        // eslint-disable-next-line @typescript-eslint/no-implied-eval
-        return new Function('return ' + source)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+        return new Function('return ' + source)() as (
+          d: Record<string, unknown>,
+        ) => Record<string, unknown>;
       },
     });
 
@@ -163,9 +156,7 @@ describe('migration — dynamic registry', () => {
       },
       'An item',
       {
-        migrations: [
-          { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, rank: 0 })' },
-        ],
+        migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, rank: 0 })' }],
       },
     );
 
@@ -250,9 +241,7 @@ describe('migration — dynamic registry', () => {
       },
       'Project has tasks',
       {
-        migrations: [
-          { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, priority: "normal" })' },
-        ],
+        migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, priority: "normal" })' }],
       },
     );
 

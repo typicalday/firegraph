@@ -11,15 +11,16 @@
  *
  * Requires: PIPELINE_TEST_PROJECT + PIPELINE_TEST_DATABASE env vars, ADC.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { createGraphClient } from '../../src/firestore.js';
 import {
-  getPipelineFirestore,
-  getAdminFirestore,
-  uniqueCollectionPath,
   cleanupCollection,
+  getAdminFirestore,
+  getPipelineFirestore,
   Pipelines,
+  uniqueCollectionPath,
 } from './setup.js';
-import { createGraphClient } from '../../src/client.js';
 
 const { field, constant, equal, and } = Pipelines;
 
@@ -49,12 +50,12 @@ describe('pipeline transactions', () => {
     await pipeDb.runTransaction(async (tx) => {
       // Attempt to run a pipeline query inside the transaction
       // This tests whether pipeline().execute() works within a transaction context
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-        ));
+        .where(
+          and(equal(field('axbType'), constant('is')), equal(field('aType'), constant('tour'))),
+        );
 
       const snap = await pipeline.execute();
       pipelineResults = snap.results.length;
@@ -74,12 +75,12 @@ describe('pipeline transactions', () => {
   it('combines pipeline read with standard write in transaction', async () => {
     await pipeDb.runTransaction(async (tx) => {
       // Read via pipeline
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-        ));
+        .where(
+          and(equal(field('axbType'), constant('is')), equal(field('aType'), constant('tour'))),
+        );
 
       const snap = await pipeline.execute();
       const tourCount = snap.results.length;
@@ -116,14 +117,21 @@ describe('pipeline transactions', () => {
     const tempCollPath = uniqueCollectionPath();
     const tempRef = pipeDb.collection(tempCollPath).doc('tempDoc');
     await tempRef.set({
-      aType: 'temp', aUid: 'tempDoc', axbType: 'is', bType: 'temp', bUid: 'tempDoc',
-      data: { value: 42 }, createdAt: new Date(), updatedAt: new Date(),
+      aType: 'temp',
+      aUid: 'tempDoc',
+      axbType: 'is',
+      bType: 'temp',
+      bUid: 'tempDoc',
+      data: { value: 42 },
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     let seenInPipeline = false;
 
     await pipeDb.runTransaction(async (tx) => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(tempCollPath)
         .where(equal(field('aType'), constant('temp')));
 
@@ -155,7 +163,8 @@ describe('pipeline transactions', () => {
         // Check if transaction has a pipeline method
         if (typeof (tx as any).pipeline === 'function') {
           hasTxPipeline = true;
-          const pipeline = (tx as any).pipeline()
+          const pipeline = (tx as any)
+            .pipeline()
             .collection(collPath)
             .where(equal(field('axbType'), constant('is')));
 
@@ -185,7 +194,8 @@ describe('pipeline transactions', () => {
 
     await pipeDb.runTransaction(async (tx) => {
       // Pipeline read (not transactionally bound, but within the callback)
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('hasDeparture')));
 

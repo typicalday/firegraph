@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { isAncestorUid, resolveAncestorCollection } from '../../src/cross-graph.js';
+import { createGraphClient } from '../../src/firestore.js';
+import { generateId } from '../../src/id.js';
 import { createRegistry } from '../../src/registry.js';
 import { createTraversal } from '../../src/traverse.js';
-import { generateId } from '../../src/id.js';
-import { resolveAncestorCollection, isAncestorUid } from '../../src/cross-graph.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 const taskSchema = {
@@ -105,7 +106,9 @@ describe('cross-graph edges', () => {
       const taskUid = generateId();
       await g.putNode('task', taskUid, { title: 'Task' });
 
-      const workflow = g.subgraph(taskUid, 'workflow');
+      // Constructing the subgraph isn't required for the path-scanning
+      // assertions below, but mirrors how the path is produced in practice.
+      g.subgraph(taskUid, 'workflow');
       const workflowPath = `${collectionPath}/${taskUid}/workflow`;
 
       // taskUid should be identified as an ancestor
@@ -120,7 +123,7 @@ describe('cross-graph edges', () => {
       const taskUid = generateId();
       const agentUid = generateId();
 
-      const workflow = g.subgraph(taskUid, 'workflow');
+      g.subgraph(taskUid, 'workflow');
       const workflowPath = `${collectionPath}/${taskUid}/workflow`;
 
       // agentUid is a local node, not an ancestor
@@ -133,7 +136,13 @@ describe('cross-graph edges', () => {
       const registry = createRegistry([
         { aType: 'task', axbType: 'is', bType: 'task', jsonSchema: taskSchema },
         { aType: 'agent', axbType: 'is', bType: 'agent', jsonSchema: agentSchema },
-        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow', jsonSchema: linkSchema },
+        {
+          aType: 'task',
+          axbType: 'assignedTo',
+          bType: 'agent',
+          targetGraph: 'workflow',
+          jsonSchema: linkSchema,
+        },
       ]);
 
       const g = createGraphClient(db, collectionPath, { registry });
@@ -154,9 +163,7 @@ describe('cross-graph edges', () => {
       await workflow.putEdge('task', taskUid, 'assignedTo', 'agent', agent2, { role: 'support' });
 
       // Forward traversal from task — should cross into workflow subgraph
-      const result = await createTraversal(g, taskUid, registry)
-        .follow('assignedTo')
-        .run();
+      const result = await createTraversal(g, taskUid, registry).follow('assignedTo').run();
 
       expect(result.nodes).toHaveLength(2);
       expect(result.totalReads).toBe(1);
@@ -188,7 +195,13 @@ describe('cross-graph edges', () => {
       const registry = createRegistry([
         { aType: 'task', axbType: 'is', bType: 'task', jsonSchema: taskSchema },
         { aType: 'agent', axbType: 'is', bType: 'agent', jsonSchema: agentSchema },
-        { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow', jsonSchema: linkSchema },
+        {
+          aType: 'task',
+          axbType: 'assignedTo',
+          bType: 'agent',
+          targetGraph: 'workflow',
+          jsonSchema: linkSchema,
+        },
         { aType: 'agent', axbType: 'mentors', bType: 'agent', jsonSchema: linkSchema },
       ]);
 
@@ -209,9 +222,7 @@ describe('cross-graph edges', () => {
       // Note: hop 2 (mentors) has no targetGraph so it stays in the workflow subgraph
       // But the traversal currently uses the root reader for hop 2, not the subgraph reader.
       // For now, we test the first hop correctly crosses into the subgraph.
-      const result = await createTraversal(g, taskUid, registry)
-        .follow('assignedTo')
-        .run();
+      const result = await createTraversal(g, taskUid, registry).follow('assignedTo').run();
 
       expect(result.nodes).toHaveLength(1);
       expect(result.nodes[0].bUid).toBe(senior);

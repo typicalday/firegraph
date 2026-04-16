@@ -1,14 +1,23 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import { Timestamp } from '@google-cloud/firestore';
-import { createGraphClient } from '../../src/client.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { GraphClient } from '../../src/types.js';
+import {
+  createTestGraphClient,
+  ensureSqliteBackend,
+  skipIfSqlite,
+  uniqueCollectionPath,
+} from './setup.js';
 
 describe('client edge cases', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    g = createTestGraphClient(uniqueCollectionPath());
   });
 
   it('putNode with empty data succeeds', async () => {
@@ -56,7 +65,10 @@ describe('client edge cases', () => {
     expect(edge!.axbType).toBe('está-inscrito');
   });
 
-  it('createdAt and updatedAt are real Firestore Timestamps', async () => {
+  // Firestore-only: SQLite backend uses GraphTimestampImpl (same surface but
+  // not the Firestore SDK class). Skip on SQLite.
+  it('createdAt and updatedAt are real Firestore Timestamps', async (ctx) => {
+    if (skipIfSqlite(ctx)) return;
     await g.putNode('tour', 'tour1', { name: 'Test' });
     const node = await g.getNode('tour1');
     expect(node!.createdAt).toBeInstanceOf(Timestamp);

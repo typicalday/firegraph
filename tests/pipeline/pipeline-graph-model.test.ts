@@ -11,20 +11,29 @@
  *
  * Requires: PIPELINE_TEST_PROJECT + PIPELINE_TEST_DATABASE env vars, ADC.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { createGraphClient } from '../../src/firestore.js';
 import {
-  getPipelineFirestore,
-  getAdminFirestore,
-  uniqueCollectionPath,
   cleanupCollection,
+  getAdminFirestore,
+  getPipelineFirestore,
   Pipelines,
+  uniqueCollectionPath,
 } from './setup.js';
-import { createGraphClient } from '../../src/client.js';
 
 const {
-  field, constant, and, or, equal, greaterThan, lessThan,
-  ascending, descending, countAll, sum, average, minimum, maximum,
-  regexMatch, startsWith,
+  field,
+  constant,
+  and,
+  or,
+  equal,
+  greaterThan,
+  countAll,
+  sum,
+  average,
+  regexMatch,
+  startsWith,
 } = Pipelines;
 
 describe('pipeline graph model', () => {
@@ -38,23 +47,54 @@ describe('pipeline graph model', () => {
 
     // Build a realistic graph:
     // Tours -> Departures -> Riders
-    await g.putNode('tour', 'tourA', { name: 'Dolomites Classic', difficulty: 'hard', price: 5000, region: 'europe' });
-    await g.putNode('tour', 'tourB', { name: 'Alps Easy', difficulty: 'easy', price: 2000, region: 'europe' });
-    await g.putNode('tour', 'tourC', { name: 'Colorado Trail', difficulty: 'medium', price: 3500, region: 'americas' });
+    await g.putNode('tour', 'tourA', {
+      name: 'Dolomites Classic',
+      difficulty: 'hard',
+      price: 5000,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tourB', {
+      name: 'Alps Easy',
+      difficulty: 'easy',
+      price: 2000,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tourC', {
+      name: 'Colorado Trail',
+      difficulty: 'medium',
+      price: 3500,
+      region: 'americas',
+    });
 
     await g.putNode('departure', 'depX', { date: '2025-07-15', spotsLeft: 5, status: 'open' });
     await g.putNode('departure', 'depY', { date: '2025-08-01', spotsLeft: 0, status: 'full' });
     await g.putNode('departure', 'depZ', { date: '2025-09-10', spotsLeft: 12, status: 'open' });
 
     await g.putNode('rider', 'r1', { firstName: 'Jamie', lastName: 'Chen', level: 'pro' });
-    await g.putNode('rider', 'r2', { firstName: 'Jordan', lastName: 'Smith', level: 'intermediate' });
+    await g.putNode('rider', 'r2', {
+      firstName: 'Jordan',
+      lastName: 'Smith',
+      level: 'intermediate',
+    });
     await g.putNode('rider', 'r3', { firstName: 'Casey', lastName: 'Lee', level: 'beginner' });
 
     // Edges: tours -> departures
-    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'depX', { order: 0, guide: 'Marco' });
-    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'depY', { order: 1, guide: 'Luca' });
-    await g.putEdge('tour', 'tourB', 'hasDeparture', 'departure', 'depZ', { order: 0, guide: 'Marco' });
-    await g.putEdge('tour', 'tourC', 'hasDeparture', 'departure', 'depX', { order: 0, guide: 'Sarah' });
+    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'depX', {
+      order: 0,
+      guide: 'Marco',
+    });
+    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'depY', {
+      order: 1,
+      guide: 'Luca',
+    });
+    await g.putEdge('tour', 'tourB', 'hasDeparture', 'departure', 'depZ', {
+      order: 0,
+      guide: 'Marco',
+    });
+    await g.putEdge('tour', 'tourC', 'hasDeparture', 'departure', 'depX', {
+      order: 0,
+      guide: 'Sarah',
+    });
 
     // Edges: riders -> departures (bookings)
     await g.putEdge('rider', 'r1', 'bookedFor', 'departure', 'depX', { price: 5000, paid: true });
@@ -76,12 +116,15 @@ describe('pipeline graph model', () => {
       // In Standard Firestore, this would require a composite index on
       // (axbType, data.guide) or do a full collection scan.
       // With Pipeline Enterprise, it should use axbType index and scan subset.
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('hasDeparture')),
-          equal(field('data.guide'), constant('Marco')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('hasDeparture')),
+            equal(field('data.guide'), constant('Marco')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // tourA->depX + tourB->depZ
@@ -93,14 +136,17 @@ describe('pipeline graph model', () => {
     it('finds nodes by type + multiple data conditions', async () => {
       // aType == 'tour' AND data.region == 'europe' AND data.price > 3000
       // Three-field filter — no composite index for this combination
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-          equal(field('data.region'), constant('europe')),
-          greaterThan(field('data.price'), constant(3000)),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('tour')),
+            equal(field('data.region'), constant('europe')),
+            greaterThan(field('data.price'), constant(3000)),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(1); // Only Dolomites (5000, europe)
@@ -109,13 +155,16 @@ describe('pipeline graph model', () => {
 
     it('filters edges by data range without composite index', async () => {
       // bookedFor edges where 2000 < price <= 5000 AND paid == true
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('bookedFor')),
-          greaterThan(field('data.price'), constant(2000)),
-          equal(field('data.paid'), constant(true)),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('bookedFor')),
+            greaterThan(field('data.price'), constant(2000)),
+            equal(field('data.paid'), constant(true)),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // r1->depX (5000,true) + r2->depX (4500,true)
@@ -127,7 +176,8 @@ describe('pipeline graph model', () => {
   // -------------------------------------------------------------------------
   describe('reverse lookups', () => {
     it('finds all edges pointing to a specific node', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('bUid'), constant('depX')));
 
@@ -139,12 +189,15 @@ describe('pipeline graph model', () => {
     });
 
     it('finds incoming edges of specific type to a node', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('bookedFor')),
-          equal(field('bUid'), constant('depX')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('bookedFor')),
+            equal(field('bUid'), constant('depX')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // r1 + r2
@@ -157,7 +210,8 @@ describe('pipeline graph model', () => {
   describe('graph aggregations', () => {
     it('counts edges per relation type', async () => {
       const { notEqual } = Pipelines;
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(
           // Exclude node self-loops
@@ -169,13 +223,14 @@ describe('pipeline graph model', () => {
         });
 
       const snap = await pipeline.execute();
-      const groups = new Map(snap.results.map(r => [r.data().axbType, r.data().edgeCount]));
+      const groups = new Map(snap.results.map((r) => [r.data().axbType, r.data().edgeCount]));
       expect(groups.get('hasDeparture')).toBe(4);
       expect(groups.get('bookedFor')).toBe(4);
     });
 
     it('sums booking revenue per departure', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('bookedFor')))
         .aggregate({
@@ -187,10 +242,12 @@ describe('pipeline graph model', () => {
         });
 
       const snap = await pipeline.execute();
-      const byDep = new Map(snap.results.map(r => [
-        r.data().bUid,
-        { revenue: r.data().totalRevenue, count: r.data().bookingCount },
-      ]));
+      const byDep = new Map(
+        snap.results.map((r) => [
+          r.data().bUid,
+          { revenue: r.data().totalRevenue, count: r.data().bookingCount },
+        ]),
+      );
 
       expect(byDep.get('depX')).toEqual({ revenue: 9500, count: 2 });
       expect(byDep.get('depY')).toEqual({ revenue: 5000, count: 1 });
@@ -198,7 +255,8 @@ describe('pipeline graph model', () => {
     });
 
     it('computes average booking price', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('bookedFor')))
         .aggregate(average(field('data.price')).as('avgPrice'));
@@ -216,40 +274,47 @@ describe('pipeline graph model', () => {
   describe('multi-hop traversal patterns', () => {
     it('two-hop: tour -> departures -> riders (manual join)', async () => {
       // Hop 1: Find departures for tourA
-      const hop1 = await pipeDb.pipeline()
+      const hop1 = await pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('aUid'), constant('tourA')),
-          equal(field('axbType'), constant('hasDeparture')),
-        ))
+        .where(
+          and(
+            equal(field('aUid'), constant('tourA')),
+            equal(field('axbType'), constant('hasDeparture')),
+          ),
+        )
         .execute();
 
-      const depUids = hop1.results.map(r => r.data().bUid as string);
+      const depUids = hop1.results.map((r) => r.data().bUid as string);
       expect(depUids.sort()).toEqual(['depX', 'depY']);
 
       // Hop 2: Find riders booked for those departures
       // Pipeline supports OR over the list of bUids
-      const hop2 = await pipeDb.pipeline()
+      const hop2 = await pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('bookedFor')),
-          or(...depUids.map(uid => equal(field('bUid'), constant(uid)))),
-        ))
+        .where(
+          and(
+            equal(field('axbType'), constant('bookedFor')),
+            or(...depUids.map((uid) => equal(field('bUid'), constant(uid)))),
+          ),
+        )
         .execute();
 
-      const riderUids = hop2.results.map(r => r.data().aUid as string);
+      const riderUids = hop2.results.map((r) => r.data().aUid as string);
       expect(riderUids.sort()).toEqual(['r1', 'r2', 'r3']);
     });
 
     it('finds all node types connected to a specific node', async () => {
       // Find all edge types going out of tourA
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('aUid'), constant('tourA')))
         .where(field('axbType').notEqual(constant('is')));
 
       const snap = await pipeline.execute();
-      const edgeTypes = [...new Set(snap.results.map(r => r.data().axbType))];
+      const edgeTypes = [...new Set(snap.results.map((r) => r.data().axbType))];
       expect(edgeTypes).toEqual(['hasDeparture']);
     });
   });
@@ -259,13 +324,16 @@ describe('pipeline graph model', () => {
   // -------------------------------------------------------------------------
   describe('advanced expressions (pipeline-only)', () => {
     it('filters with startsWith on data field', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-          startsWith(field('data.name'), constant('Dol')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('tour')),
+            startsWith(field('data.name'), constant('Dol')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(1);
@@ -273,17 +341,20 @@ describe('pipeline graph model', () => {
     });
 
     it('filters with regex on data field', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('rider')),
-          regexMatch(field('data.lastName'), constant('^(Chen|Lee)$')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('rider')),
+            regexMatch(field('data.lastName'), constant('^(Chen|Lee)$')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2);
-      const names = snap.results.map(r => r.data()['data'].lastName).sort();
+      const names = snap.results.map((r) => r.data()['data'].lastName).sort();
       expect(names).toEqual(['Chen', 'Lee']);
     });
   });
@@ -294,12 +365,15 @@ describe('pipeline graph model', () => {
   describe('pipeline vs core comparison', () => {
     it('same query via pipeline and core returns same results', async () => {
       // Pipeline query
-      const pipeSnap = await pipeDb.pipeline()
+      const pipeSnap = await pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('hasDeparture')),
-          equal(field('aUid'), constant('tourA')),
-        ))
+        .where(
+          and(
+            equal(field('axbType'), constant('hasDeparture')),
+            equal(field('aUid'), constant('tourA')),
+          ),
+        )
         .sort(field('data.order').ascending())
         .execute();
 
@@ -315,8 +389,8 @@ describe('pipeline graph model', () => {
       expect(pipeSnap.results.length).toBe(2);
 
       // Same order
-      const pipeOrders = pipeSnap.results.map(r => r.data()['data'].order);
-      const coreOrders = coreResults.map(r => r.data.order);
+      const pipeOrders = pipeSnap.results.map((r) => r.data()['data'].order);
+      const coreOrders = coreResults.map((r) => r.data.order);
       expect(pipeOrders).toEqual(coreOrders);
     });
   });
@@ -326,12 +400,14 @@ describe('pipeline graph model', () => {
   // -------------------------------------------------------------------------
   describe('single-collection edge cases', () => {
     it('distinguishes nodes from edges in same collection', async () => {
-      const nodesSnap = await pipeDb.pipeline()
+      const nodesSnap = await pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('is')))
         .execute();
 
-      const edgesSnap = await pipeDb.pipeline()
+      const edgesSnap = await pipeDb
+        .pipeline()
         .collection(collPath)
         .where(field('axbType').notEqual(constant('is')))
         .execute();
@@ -342,12 +418,15 @@ describe('pipeline graph model', () => {
     });
 
     it('handles queries that match zero documents', async () => {
-      const snap = await pipeDb.pipeline()
+      const snap = await pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('nonexistentRelation')),
-          equal(field('aType'), constant('ghost')),
-        ))
+        .where(
+          and(
+            equal(field('axbType'), constant('nonexistentRelation')),
+            equal(field('aType'), constant('ghost')),
+          ),
+        )
         .execute();
 
       expect(snap.results.length).toBe(0);

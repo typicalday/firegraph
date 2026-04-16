@@ -18,9 +18,11 @@
  * Example:
  *   PIPELINE_TEST_PROJECT=my-project PIPELINE_TEST_DATABASE=my-db pnpm vitest run tests/integration-pipeline/
  */
-import { Firestore } from '@google-cloud/firestore';
 import { randomUUID } from 'node:crypto';
-import { createGraphClient } from '../../src/client.js';
+
+import { Firestore } from '@google-cloud/firestore';
+
+import { createGraphClient } from '../../src/firestore.js';
 import type { GraphClient } from '../../src/types.js';
 
 const PROJECT_ID = process.env.PIPELINE_TEST_PROJECT;
@@ -29,9 +31,9 @@ const DATABASE_ID = process.env.PIPELINE_TEST_DATABASE;
 if (!PROJECT_ID || !DATABASE_ID) {
   throw new Error(
     'PIPELINE_TEST_PROJECT and PIPELINE_TEST_DATABASE environment variables are required.\n\n' +
-    'Pipeline integration tests require a real Firestore Enterprise database.\n\n' +
-    'Usage:\n' +
-    '  PIPELINE_TEST_PROJECT=<project> PIPELINE_TEST_DATABASE=<db-id> pnpm vitest run tests/integration-pipeline/\n',
+      'Pipeline integration tests require a real Firestore Enterprise database.\n\n' +
+      'Usage:\n' +
+      '  PIPELINE_TEST_PROJECT=<project> PIPELINE_TEST_DATABASE=<db-id> pnpm vitest run tests/integration-pipeline/\n',
   );
 }
 

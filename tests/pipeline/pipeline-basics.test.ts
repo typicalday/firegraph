@@ -9,17 +9,18 @@
  *
  * Requires: PIPELINE_TEST_PROJECT + PIPELINE_TEST_DATABASE env vars, ADC.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  getPipelineFirestore,
-  getAdminFirestore,
-  uniqueCollectionPath,
-  cleanupCollection,
-  Pipelines,
-} from './setup.js';
-import { createGraphClient } from '../../src/client.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const { field, constant, and, or, equal, greaterThan, lessThan, ascending, descending } = Pipelines;
+import { createGraphClient } from '../../src/firestore.js';
+import {
+  cleanupCollection,
+  getAdminFirestore,
+  getPipelineFirestore,
+  Pipelines,
+  uniqueCollectionPath,
+} from './setup.js';
+
+const { field, constant, and, or, equal, greaterThan, lessThan } = Pipelines;
 
 describe('pipeline basics', () => {
   const pipeDb = getPipelineFirestore();
@@ -32,21 +33,70 @@ describe('pipeline basics', () => {
     g = createGraphClient(adminDb, collPath);
 
     // Create nodes
-    await g.putNode('tour', 'tour1', { name: 'Dolomites Classic', difficulty: 'hard', maxRiders: 30, region: 'europe' });
-    await g.putNode('tour', 'tour2', { name: 'Alps Challenge', difficulty: 'medium', maxRiders: 20, region: 'europe' });
-    await g.putNode('tour', 'tour3', { name: 'Rockies Adventure', difficulty: 'easy', maxRiders: 15, region: 'americas' });
-    await g.putNode('departure', 'dep1', { date: '2025-07-15', registeredRiders: 12, maxCapacity: 30 });
-    await g.putNode('departure', 'dep2', { date: '2025-08-01', registeredRiders: 5, maxCapacity: 20 });
-    await g.putNode('rider', 'rider1', { firstName: 'Jamie', lastName: 'Chen', email: 'jamie@example.com' });
-    await g.putNode('rider', 'rider2', { firstName: 'Jordan', lastName: 'Smith', email: 'jordan@example.com' });
+    await g.putNode('tour', 'tour1', {
+      name: 'Dolomites Classic',
+      difficulty: 'hard',
+      maxRiders: 30,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tour2', {
+      name: 'Alps Challenge',
+      difficulty: 'medium',
+      maxRiders: 20,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tour3', {
+      name: 'Rockies Adventure',
+      difficulty: 'easy',
+      maxRiders: 15,
+      region: 'americas',
+    });
+    await g.putNode('departure', 'dep1', {
+      date: '2025-07-15',
+      registeredRiders: 12,
+      maxCapacity: 30,
+    });
+    await g.putNode('departure', 'dep2', {
+      date: '2025-08-01',
+      registeredRiders: 5,
+      maxCapacity: 20,
+    });
+    await g.putNode('rider', 'rider1', {
+      firstName: 'Jamie',
+      lastName: 'Chen',
+      email: 'jamie@example.com',
+    });
+    await g.putNode('rider', 'rider2', {
+      firstName: 'Jordan',
+      lastName: 'Smith',
+      email: 'jordan@example.com',
+    });
 
     // Create edges
-    await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, season: 'summer' });
-    await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1, season: 'summer' });
-    await g.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', { order: 0, season: 'winter' });
-    await g.putEdge('rider', 'rider1', 'bookedFor', 'departure', 'dep1', { confirmedAt: '2025-01-10', price: 2500 });
-    await g.putEdge('rider', 'rider2', 'bookedFor', 'departure', 'dep1', { confirmedAt: '2025-02-15', price: 3000 });
-    await g.putEdge('rider', 'rider1', 'bookedFor', 'departure', 'dep2', { confirmedAt: '2025-03-01', price: 1800 });
+    await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', {
+      order: 0,
+      season: 'summer',
+    });
+    await g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', {
+      order: 1,
+      season: 'summer',
+    });
+    await g.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', {
+      order: 0,
+      season: 'winter',
+    });
+    await g.putEdge('rider', 'rider1', 'bookedFor', 'departure', 'dep1', {
+      confirmedAt: '2025-01-10',
+      price: 2500,
+    });
+    await g.putEdge('rider', 'rider2', 'bookedFor', 'departure', 'dep1', {
+      confirmedAt: '2025-02-15',
+      price: 3000,
+    });
+    await g.putEdge('rider', 'rider1', 'bookedFor', 'departure', 'dep2', {
+      confirmedAt: '2025-03-01',
+      price: 1800,
+    });
   }, 30_000);
 
   afterAll(async () => {
@@ -58,9 +108,7 @@ describe('pipeline basics', () => {
   // -------------------------------------------------------------------------
   describe('basic collection query', () => {
     it('reads all documents in a collection via pipeline', async () => {
-      const pipeline = pipeDb.pipeline()
-        .collection(collPath)
-        .limit(100);
+      const pipeline = pipeDb.pipeline().collection(collPath).limit(100);
 
       const snap = await pipeline.execute();
       // 7 nodes + 6 edges = 13 total docs
@@ -68,7 +116,8 @@ describe('pipeline basics', () => {
     });
 
     it('filters by equality on a top-level field', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('aType'), constant('tour')));
 
@@ -87,7 +136,8 @@ describe('pipeline basics', () => {
   // -------------------------------------------------------------------------
   describe('node queries (axbType == is)', () => {
     it('finds all nodes via is-relation filter', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('is')));
 
@@ -96,12 +146,12 @@ describe('pipeline basics', () => {
     });
 
     it('finds nodes of specific type', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-        ));
+        .where(
+          and(equal(field('axbType'), constant('is')), equal(field('aType'), constant('tour'))),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(3);
@@ -117,13 +167,16 @@ describe('pipeline basics', () => {
   // -------------------------------------------------------------------------
   describe('data field filtering', () => {
     it('filters on nested data field (data.difficulty)', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-          equal(field('data.difficulty'), constant('hard')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('tour')),
+            equal(field('data.difficulty'), constant('hard')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(1);
@@ -131,54 +184,66 @@ describe('pipeline basics', () => {
     });
 
     it('filters on numeric data field with inequality', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-          greaterThan(field('data.maxRiders'), constant(18)),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('tour')),
+            greaterThan(field('data.maxRiders'), constant(18)),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // Dolomites (30) + Alps (20)
     });
 
     it('combines topology + data filters on edges', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('hasDeparture')),
-          equal(field('data.season'), constant('summer')),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('hasDeparture')),
+            equal(field('data.season'), constant('summer')),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // tour1 -> dep1 and tour1 -> dep2
     });
 
     it('uses OR logic across data fields', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-          or(
-            equal(field('data.difficulty'), constant('hard')),
-            equal(field('data.difficulty'), constant('easy')),
+        .where(
+          and(
+            equal(field('axbType'), constant('is')),
+            equal(field('aType'), constant('tour')),
+            or(
+              equal(field('data.difficulty'), constant('hard')),
+              equal(field('data.difficulty'), constant('easy')),
+            ),
           ),
-        ));
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // Dolomites (hard) + Rockies (easy)
     });
 
     it('filters edge data with numeric range', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('bookedFor')),
-          greaterThan(field('data.price'), constant(2000)),
-          lessThan(field('data.price'), constant(3500)),
-        ));
+        .where(
+          and(
+            equal(field('axbType'), constant('bookedFor')),
+            greaterThan(field('data.price'), constant(2000)),
+            lessThan(field('data.price'), constant(3500)),
+          ),
+        );
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2); // rider1->dep1 (2500) + rider2->dep1 (3000)
@@ -190,22 +255,23 @@ describe('pipeline basics', () => {
   // -------------------------------------------------------------------------
   describe('sort and limit', () => {
     it('sorts by data field ascending', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-        ))
+        .where(
+          and(equal(field('axbType'), constant('is')), equal(field('aType'), constant('tour'))),
+        )
         .sort(field('data.maxRiders').ascending());
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(3);
-      const maxRiders = snap.results.map(r => r.data()['data'].maxRiders);
+      const maxRiders = snap.results.map((r) => r.data()['data'].maxRiders);
       expect(maxRiders).toEqual([15, 20, 30]);
     });
 
     it('limits results', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('is')))
         .sort(field('aType').ascending())
@@ -216,7 +282,8 @@ describe('pipeline basics', () => {
     });
 
     it('sort + limit combined (top-N pattern)', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('bookedFor')))
         .sort(field('data.price').descending())
@@ -224,7 +291,7 @@ describe('pipeline basics', () => {
 
       const snap = await pipeline.execute();
       expect(snap.results.length).toBe(2);
-      const prices = snap.results.map(r => r.data()['data'].price);
+      const prices = snap.results.map((r) => r.data()['data'].price);
       expect(prices[0]).toBeGreaterThanOrEqual(prices[1]);
     });
   });
@@ -234,12 +301,12 @@ describe('pipeline basics', () => {
   // -------------------------------------------------------------------------
   describe('projection', () => {
     it('selects only specific fields', async () => {
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
-        .where(and(
-          equal(field('axbType'), constant('is')),
-          equal(field('aType'), constant('tour')),
-        ))
+        .where(
+          and(equal(field('axbType'), constant('is')), equal(field('aType'), constant('tour'))),
+        )
         .select(field('aType'), field('aUid'), field('data.name'));
 
       const snap = await pipeline.execute();
@@ -259,7 +326,8 @@ describe('pipeline basics', () => {
   describe('aggregation', () => {
     it('counts documents', async () => {
       const { countAll } = Pipelines;
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('is')))
         .aggregate(countAll().as('total'));
@@ -271,7 +339,8 @@ describe('pipeline basics', () => {
 
     it('sums a numeric field', async () => {
       const { sum } = Pipelines;
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('bookedFor')))
         .aggregate(sum(field('data.price')).as('totalRevenue'));
@@ -283,15 +352,14 @@ describe('pipeline basics', () => {
 
     it('groups by field and counts', async () => {
       const { countAll } = Pipelines;
-      const pipeline = pipeDb.pipeline()
+      const pipeline = pipeDb
+        .pipeline()
         .collection(collPath)
         .where(equal(field('axbType'), constant('is')))
-        .aggregate(
-          { accumulators: [countAll().as('count')], groups: [field('aType')] },
-        );
+        .aggregate({ accumulators: [countAll().as('count')], groups: [field('aType')] });
 
       const snap = await pipeline.execute();
-      const groups = new Map(snap.results.map(r => [r.data().aType, r.data().count]));
+      const groups = new Map(snap.results.map((r) => [r.data().aType, r.data().count]));
       expect(groups.get('tour')).toBe(3);
       expect(groups.get('departure')).toBe(2);
       expect(groups.get('rider')).toBe(2);

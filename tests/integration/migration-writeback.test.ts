@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { describe, expect, it } from 'vitest';
+
+import { computeEdgeDocId, computeNodeDocId } from '../../src/docid.js';
+import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
-import { computeNodeDocId, computeEdgeDocId } from '../../src/docid.js';
+import { createRegistry } from '../../src/registry.js';
+import type { MigrationStep } from '../../src/types.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-import type { GraphClient, MigrationStep } from '../../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers

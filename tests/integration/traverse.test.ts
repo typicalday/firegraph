@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
+import { beforeAll, describe, expect, it } from 'vitest';
+
 import { createTraversal } from '../../src/traverse.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
+import type { GraphClient } from '../../src/types.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 describe('traversal integration', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
 
   // Graph fixture:
   // tour1 --hasDeparture--> dep1 --hasRider--> rider1 (confirmed)
@@ -13,7 +13,8 @@ describe('traversal integration', () => {
   // tour1 --hasDeparture--> dep3 --hasRider--> rider3 (confirmed)
   //                         dep1 --hasRider--> rider4 (confirmed)
   beforeAll(async () => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    await ensureSqliteBackend();
+    g = createTestGraphClient(uniqueCollectionPath());
 
     await g.putNode('tour', 'tour1', { name: 'Dolomites Classic' });
     await g.putNode('departure', 'dep1', { date: '2025-07-15' });
@@ -35,9 +36,7 @@ describe('traversal integration', () => {
 
   describe('single hop', () => {
     it('Tour → departures returns correct edges', async () => {
-      const result = await createTraversal(g, 'tour1')
-        .follow('hasDeparture')
-        .run();
+      const result = await createTraversal(g, 'tour1').follow('hasDeparture').run();
 
       expect(result.nodes).toHaveLength(3);
       expect(result.nodes.every((e) => e.axbType === 'hasDeparture')).toBe(true);
@@ -85,9 +84,7 @@ describe('traversal integration', () => {
 
   describe('per-hop limit', () => {
     it('limit=2 on first hop returns max 2 departures', async () => {
-      const result = await createTraversal(g, 'tour1')
-        .follow('hasDeparture', { limit: 2 })
-        .run();
+      const result = await createTraversal(g, 'tour1').follow('hasDeparture', { limit: 2 }).run();
 
       expect(result.nodes).toHaveLength(2);
     });
@@ -136,9 +133,7 @@ describe('traversal integration', () => {
 
   describe('empty results', () => {
     it('traversal from nonexistent node returns empty', async () => {
-      const result = await createTraversal(g, 'nonexistent-uid')
-        .follow('hasDeparture')
-        .run();
+      const result = await createTraversal(g, 'nonexistent-uid').follow('hasDeparture').run();
 
       expect(result.nodes).toHaveLength(0);
       expect(result.totalReads).toBe(1);
@@ -149,10 +144,7 @@ describe('traversal integration', () => {
   describe('transaction support', () => {
     it('works inside runTransaction', async () => {
       const result = await g.runTransaction(async (tx) => {
-        return createTraversal(tx, 'tour1')
-          .follow('hasDeparture')
-          .follow('hasRider')
-          .run();
+        return createTraversal(tx, 'tour1').follow('hasDeparture').follow('hasRider').run();
       });
 
       expect(result.nodes.length).toBeGreaterThanOrEqual(4);

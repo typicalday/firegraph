@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
+import { createRegistry } from '../../src/registry.js';
 import type { GraphClient, MigrationStep } from '../../src/types.js';
+import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 // ---------------------------------------------------------------------------
 // Shared schemas & migrations
@@ -488,9 +489,7 @@ describe('migration — static registry', () => {
           aType: 'task',
           axbType: 'is',
           bType: 'task',
-          migrations: [
-            { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, priority: 'normal' }) },
-          ],
+          migrations: [{ fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, priority: 'normal' }) }],
         },
       ]);
 

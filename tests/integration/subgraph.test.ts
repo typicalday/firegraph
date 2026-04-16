@@ -1,16 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
 import { RegistryScopeError } from '../../src/errors.js';
 import { generateId } from '../../src/id.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
-
-const tourSchema = {
-  type: 'object',
-  required: ['name'],
-  properties: { name: { type: 'string' } },
-  additionalProperties: false,
-};
+import { createRegistry } from '../../src/registry.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 const memorySchema = {
   type: 'object',
@@ -19,15 +12,12 @@ const memorySchema = {
   additionalProperties: false,
 };
 
-const linkSchema = {
-  type: 'object',
-  properties: { weight: { type: 'number' } },
-  additionalProperties: false,
-};
-
 describe('subgraph', () => {
-  const db = getTestFirestore();
   let collectionPath: string;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
     collectionPath = uniqueCollectionPath();
@@ -35,7 +25,7 @@ describe('subgraph', () => {
 
   describe('basic CRUD', () => {
     it('putNode + getNode in a subgraph', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent1' });
 
@@ -50,7 +40,7 @@ describe('subgraph', () => {
     });
 
     it('putEdge + getEdge in a subgraph', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent1' });
 
@@ -67,7 +57,7 @@ describe('subgraph', () => {
     });
 
     it('findNodes in a subgraph only returns subgraph data', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('memory', parentUid, { text: 'root-level memory' });
 
@@ -87,7 +77,7 @@ describe('subgraph', () => {
 
   describe('namespace isolation', () => {
     it('same UID in parent and subgraph are independent', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       const sharedUid = generateId();
 
@@ -107,7 +97,7 @@ describe('subgraph', () => {
 
   describe('nested subgraphs', () => {
     it('supports multi-level nesting', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const agentUid = generateId();
       await g.putNode('agent', agentUid, { name: 'Agent' });
 
@@ -135,7 +125,7 @@ describe('subgraph', () => {
         { aType: 'agent', axbType: 'is', bType: 'agent' },
         { aType: 'memory', axbType: 'is', bType: 'memory', jsonSchema: memorySchema },
       ]);
-      const g = createGraphClient(db, collectionPath, { registry });
+      const g = createTestGraphClient(collectionPath, { registry });
       const agentUid = generateId();
       await g.putNode('agent', agentUid, {});
 
@@ -146,9 +136,7 @@ describe('subgraph', () => {
       await sub.putNode('memory', memUid, { text: 'valid' });
 
       // Invalid data fails
-      await expect(
-        sub.putNode('memory', generateId(), { text: 123 } as any),
-      ).rejects.toThrow();
+      await expect(sub.putNode('memory', generateId(), { text: 123 } as any)).rejects.toThrow();
     });
 
     it('allowedIn restricts types to specific subgraph paths', async () => {
@@ -156,16 +144,14 @@ describe('subgraph', () => {
         { aType: 'agent', axbType: 'is', bType: 'agent', allowedIn: ['root'] },
         { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['memories', '**/memories'] },
       ]);
-      const g = createGraphClient(db, collectionPath, { registry });
+      const g = createTestGraphClient(collectionPath, { registry });
 
       // Agent allowed at root
       const agentUid = generateId();
       await g.putNode('agent', agentUid, {});
 
       // Memory not allowed at root
-      await expect(
-        g.putNode('memory', generateId(), {}),
-      ).rejects.toThrow(RegistryScopeError);
+      await expect(g.putNode('memory', generateId(), {})).rejects.toThrow(RegistryScopeError);
 
       const sub = g.subgraph(agentUid, 'memories');
 
@@ -173,15 +159,13 @@ describe('subgraph', () => {
       await sub.putNode('memory', generateId(), {});
 
       // Agent not allowed in 'memories' subgraph
-      await expect(
-        sub.putNode('agent', generateId(), {}),
-      ).rejects.toThrow(RegistryScopeError);
+      await expect(sub.putNode('agent', generateId(), {})).rejects.toThrow(RegistryScopeError);
     });
   });
 
   describe('transactions in subgraph', () => {
     it('transaction reads and writes within subgraph scope', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent' });
 
@@ -205,7 +189,7 @@ describe('subgraph', () => {
         { aType: 'agent', axbType: 'is', bType: 'agent', allowedIn: ['root'] },
         { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['**/memories'] },
       ]);
-      const g = createGraphClient(db, collectionPath, { registry });
+      const g = createTestGraphClient(collectionPath, { registry });
       const agentUid = generateId();
       await g.putNode('agent', agentUid, {});
 
@@ -222,7 +206,7 @@ describe('subgraph', () => {
 
   describe('batch in subgraph', () => {
     it('batch writes within subgraph scope', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent' });
 
@@ -246,7 +230,7 @@ describe('subgraph', () => {
         { aType: 'agent', axbType: 'is', bType: 'agent', allowedIn: ['root'] },
         { aType: 'memory', axbType: 'is', bType: 'memory', allowedIn: ['**/memories'] },
       ]);
-      const g = createGraphClient(db, collectionPath, { registry });
+      const g = createTestGraphClient(collectionPath, { registry });
       const agentUid = generateId();
       await g.putNode('agent', agentUid, {});
 
@@ -254,15 +238,13 @@ describe('subgraph', () => {
       const batch = sub.batch();
 
       // Agent not allowed in memories subgraph
-      await expect(
-        batch.putNode('agent', generateId(), {}),
-      ).rejects.toThrow(RegistryScopeError);
+      await expect(batch.putNode('agent', generateId(), {})).rejects.toThrow(RegistryScopeError);
     });
   });
 
   describe('cascade delete with subcollections', () => {
     it('removeNodeCascade deletes subgraph data recursively', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent' });
 
@@ -290,7 +272,7 @@ describe('subgraph', () => {
     });
 
     it('removeNodeCascade with deleteSubcollections=false preserves subgraph', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent' });
 
@@ -312,14 +294,14 @@ describe('subgraph', () => {
 
   describe('subgraph name validation', () => {
     it('rejects names containing slashes', () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       expect(() => g.subgraph(generateId(), 'a/b')).toThrow(/must not contain/);
     });
   });
 
   describe('default subgraph name', () => {
     it('uses "graph" as default name', async () => {
-      const g = createGraphClient(db, collectionPath);
+      const g = createTestGraphClient(collectionPath);
       const parentUid = generateId();
       await g.putNode('agent', parentUid, { name: 'Agent' });
 

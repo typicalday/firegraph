@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
-import { createRegistry } from '../../src/registry.js';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
-import { getTestFirestore, uniqueCollectionPath } from './setup.js';
+import { createRegistry } from '../../src/registry.js';
+import type { GraphClient } from '../../src/types.js';
+import { createTestGraphClient, ensureSqliteBackend, uniqueCollectionPath } from './setup.js';
 
 const tourSchema = {
   type: 'object',
@@ -20,15 +21,18 @@ const edgeSchema = {
 };
 
 describe('client with registry', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
     const registry = createRegistry([
       { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
       { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ]);
-    g = createGraphClient(db, uniqueCollectionPath(), { registry });
+    g = createTestGraphClient(uniqueCollectionPath(), { registry });
   });
 
   it('allows putNode with registered triple and valid data', async () => {
@@ -39,18 +43,18 @@ describe('client with registry', () => {
   });
 
   it('throws RegistryViolationError for unregistered triple and does NOT write', async () => {
-    await expect(
-      g.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
 
     const node = await g.getNode('b1');
     expect(node).toBeNull();
   });
 
   it('throws ValidationError for invalid data and does NOT write', async () => {
-    await expect(
-      g.putNode('tour', 'tour1', { name: 123 as unknown as string }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode('tour', 'tour1', { name: 123 as unknown as string })).rejects.toThrow(
+      ValidationError,
+    );
 
     const node = await g.getNode('tour1');
     expect(node).toBeNull();
@@ -70,7 +74,9 @@ describe('client with registry', () => {
 
   it('rejects putEdge with invalid data', async () => {
     await expect(
-      g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 'not-a-number' as unknown as number }),
+      g.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', {
+        order: 'not-a-number' as unknown as number,
+      }),
     ).rejects.toThrow(ValidationError);
 
     const edge = await g.getEdge('tour1', 'hasDeparture', 'dep1');
@@ -79,11 +85,14 @@ describe('client with registry', () => {
 });
 
 describe('client without registry', () => {
-  const db = getTestFirestore();
-  let g: ReturnType<typeof createGraphClient>;
+  let g: GraphClient;
+
+  beforeAll(async () => {
+    await ensureSqliteBackend();
+  });
 
   beforeEach(() => {
-    g = createGraphClient(db, uniqueCollectionPath());
+    g = createTestGraphClient(uniqueCollectionPath());
   });
 
   it('accepts any triple without validation', async () => {

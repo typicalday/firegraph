@@ -1,11 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createGraphClient } from '../../src/client.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import { DynamicRegistryError, RegistryViolationError, ValidationError } from '../../src/errors.js';
+import { createGraphClient } from '../../src/firestore.js';
 import { createRegistry } from '../../src/registry.js';
-import {
-  DynamicRegistryError,
-  RegistryViolationError,
-  ValidationError,
-} from '../../src/errors.js';
 import type { DynamicGraphClient } from '../../src/types.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
@@ -67,15 +64,15 @@ describe('merged registry — basic workflow', () => {
   });
 
   it('static types validate data correctly', async () => {
-    await expect(
-      g.putNode('tour', 'tour1', { name: 123 as unknown as string }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode('tour', 'tour1', { name: 123 as unknown as string })).rejects.toThrow(
+      ValidationError,
+    );
   });
 
   it('unregistered types are rejected before reload', async () => {
-    await expect(
-      g.putNode('milestone', 'm1', { title: 'v1.0' }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(g.putNode('milestone', 'm1', { title: 'v1.0' })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 
   it('dynamic types work after defineNodeType + reloadRegistry', async () => {
@@ -99,9 +96,9 @@ describe('merged registry — basic workflow', () => {
     expect(node!.data.name).toBe('Alps');
 
     // Static validation still enforced
-    await expect(
-      g.putNode('tour', 'tour2', { name: 123 as unknown as string }),
-    ).rejects.toThrow(ValidationError);
+    await expect(g.putNode('tour', 'tour2', { name: 123 as unknown as string })).rejects.toThrow(
+      ValidationError,
+    );
   });
 
   it('static edge types work in merged mode', async () => {
@@ -154,9 +151,9 @@ describe('merged registry — override protection', () => {
   });
 
   it('defineNodeType rejects with descriptive message', async () => {
-    await expect(
-      g.defineNodeType('tour', { type: 'object' }),
-    ).rejects.toThrow(/already defined in the static registry/);
+    await expect(g.defineNodeType('tour', { type: 'object' })).rejects.toThrow(
+      /already defined in the static registry/,
+    );
   });
 
   it('defineEdgeType rejects edges already in static registry', async () => {
@@ -284,9 +281,9 @@ describe('merged registry — batches', () => {
 
   it('batch rejects unregistered types', async () => {
     const batch = g.batch();
-    await expect(
-      batch.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(batch.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 });
 
@@ -369,9 +366,9 @@ describe('merged registry — subgraph', () => {
     await g.putNode('tour', 'tour1', { name: 'Parent' });
     const sub = g.subgraph('tour1');
 
-    await expect(
-      sub.putNode('booking', 'b1', { total: 500 }),
-    ).rejects.toThrow(RegistryViolationError);
+    await expect(sub.putNode('booking', 'b1', { total: 500 })).rejects.toThrow(
+      RegistryViolationError,
+    );
   });
 
   it('subgraph client validates against correct schema', async () => {
@@ -379,9 +376,9 @@ describe('merged registry — subgraph', () => {
     const sub = g.subgraph('tour1');
 
     // Static type validation
-    await expect(
-      sub.putNode('tour', 'sub-t1', { name: 123 as unknown as string }),
-    ).rejects.toThrow(ValidationError);
+    await expect(sub.putNode('tour', 'sub-t1', { name: 123 as unknown as string })).rejects.toThrow(
+      ValidationError,
+    );
 
     // Dynamic type validation
     await expect(
@@ -399,22 +396,18 @@ describe('merged registry — dynamic methods only in dynamic mode', () => {
 
   it('static-only client still rejects defineNodeType', async () => {
     const g = createGraphClient(db, uniqueCollectionPath(), {
-      registry: createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]),
+      registry: createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]),
     });
 
     const dynamic = g as unknown as DynamicGraphClient;
-    await expect(
-      dynamic.defineNodeType('milestone', milestoneSchema),
-    ).rejects.toThrow(DynamicRegistryError);
+    await expect(dynamic.defineNodeType('milestone', milestoneSchema)).rejects.toThrow(
+      DynamicRegistryError,
+    );
   });
 
   it('static-only client still rejects reloadRegistry', async () => {
     const g = createGraphClient(db, uniqueCollectionPath(), {
-      registry: createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]),
+      registry: createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]),
     });
 
     const dynamic = g as unknown as DynamicGraphClient;
