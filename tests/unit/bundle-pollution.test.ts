@@ -72,7 +72,7 @@ function walkStaticImports(entry: string): Map<string, string> {
   return visited;
 }
 
-describe.each(['d1.js', 'do-sqlite.js'])(
+describe.each(['d1.js', 'do-sqlite.js', 'backend.js'])(
   'bundle %s — Cloudflare Workers static-import allowlist',
   (entryName) => {
     const entry = resolve(DIST, entryName);
@@ -198,7 +198,7 @@ function isInsideAnyRange(pos: number, ranges: Range[]): boolean {
   return false;
 }
 
-describe.each(['d1.cjs', 'do-sqlite.cjs'])(
+describe.each(['d1.cjs', 'do-sqlite.cjs', 'backend.cjs'])(
   'bundle %s — Cloudflare Workers no-eager-require allowlist (CJS)',
   (entryName) => {
     const entry = resolve(DIST, entryName);

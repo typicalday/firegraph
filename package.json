@@ -66,6 +66,16 @@
         "types": "./dist/do-sqlite.d.cts",
         "default": "./dist/do-sqlite.cjs"
       }
+    },
+    "./backend": {
+      "import": {
+        "types": "./dist/backend.d.ts",
+        "default": "./dist/backend.js"
+      },
+      "require": {
+        "types": "./dist/backend.d.cts",
+        "default": "./dist/backend.cjs"
+      }
     }
   },
   "bin": {

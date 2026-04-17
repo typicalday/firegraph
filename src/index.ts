@@ -24,6 +24,7 @@ export {
   NODE_TYPE_SCHEMA,
 } from './dynamic-registry.js';
 export {
+  CrossBackendTransactionError,
   DynamicRegistryError,
   EdgeNotFoundError,
   FiregraphError,
@@ -65,6 +66,13 @@ export {
   precompileSource,
 } from './sandbox.js';
 export { matchScope, matchScopeAny } from './scope.js';
+export type { StorageScopeSegment } from './scope-path.js';
+export {
+  appendStorageScope,
+  isAncestorScopeUid,
+  parseStorageScope,
+  resolveAncestorScope,
+} from './scope-path.js';
 export {
   deserializeFirestoreTypes,
   isTaggedValue,

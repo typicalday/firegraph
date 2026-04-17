@@ -43,15 +43,16 @@ After completing a large change (new feature, multi-file refactor, or anything t
 
 Context-specific rules are in `.claude/rules/` and load automatically when working on matching files:
 
-| Rule file | Loads when editing | Content |
-|-----------|-------------------|---------|
-| `architecture.md` | Always | Graph model, key modules, interfaces |
-| `core-library.md` | `src/**/*.ts` | Query planning, adapters, dual-mode engine, traversal |
-| `testing.md` | `tests/**/*` | Test types, emulator setup, fixtures |
-| `entities.md` | `**/entities/**/*`, `**/schema.json`, `**/edge.json` | Per-entity folder convention, codegen CLI |
-| `views.md` | `**/views*.ts`, `**/views*.tsx`, `**/*.svelte` | Model views, defineViews, React/Svelte adapters |
-| `subgraphs.md` | `src/scope.ts`, `src/client.ts`, `src/bulk.ts`, `tests/**/subgraph*`, `tests/**/scope*` | Subgraph scoping, allowedIn patterns, cascade delete |
-| `dynamic-registry.md` | `**/dynamic-registry*`, `**/dynamic*registry*` | Bootstrap, meta-types, runtime type definition |
-| `editor.md` | `editor/**/*` | Editor architecture, server, frontend, build pipeline |
-| `config.md` | `**/firegraph.config.*`, `**/config*.ts` | defineConfig, discovery, view defaults |
-| `migration.md` | `**/migration*`, `**/sandbox*`, `**/migrations*` | Schema versioning, auto-migration, write-back |
+| Rule file             | Loads when editing                                                                                                                                         | Content                                                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `architecture.md`     | Always                                                                                                                                                     | Graph model, key modules, interfaces                                         |
+| `core-library.md`     | `src/**/*.ts`                                                                                                                                              | Query planning, adapters, dual-mode engine, traversal                        |
+| `testing.md`          | `tests/**/*`                                                                                                                                               | Test types, emulator setup, fixtures                                         |
+| `entities.md`         | `**/entities/**/*`, `**/schema.json`, `**/edge.json`                                                                                                       | Per-entity folder convention, codegen CLI                                    |
+| `views.md`            | `**/views*.ts`, `**/views*.tsx`, `**/*.svelte`                                                                                                             | Model views, defineViews, React/Svelte adapters                              |
+| `subgraphs.md`        | `src/scope.ts`, `src/client.ts`, `src/bulk.ts`, `tests/**/subgraph*`, `tests/**/scope*`                                                                    | Subgraph scoping, allowedIn patterns, cascade delete                         |
+| `routing.md`          | `src/backend.ts`, `src/scope-path.ts`, `src/internal/routing-backend.ts`, `tests/**/routing-backend*`, `tests/**/scope-path*`, `tests/**/backend-surface*` | `createRoutingBackend`, storage-scope helpers, cross-backend atomicity rules |
+| `dynamic-registry.md` | `**/dynamic-registry*`, `**/dynamic*registry*`                                                                                                             | Bootstrap, meta-types, runtime type definition                               |
+| `editor.md`           | `editor/**/*`                                                                                                                                              | Editor architecture, server, frontend, build pipeline                        |
+| `config.md`           | `**/firegraph.config.*`, `**/config*.ts`                                                                                                                   | defineConfig, discovery, view defaults                                       |
+| `migration.md`        | `**/migration*`, `**/sandbox*`, `**/migrations*`                                                                                                           | Schema versioning, auto-migration, write-back                                |

@@ -34,10 +34,7 @@ export class ValidationError extends FiregraphError {
 
 export class RegistryViolationError extends FiregraphError {
   constructor(aType: string, axbType: string, bType: string) {
-    super(
-      `Unregistered triple: (${aType}) -[${axbType}]-> (${bType})`,
-      'REGISTRY_VIOLATION',
-    );
+    super(`Unregistered triple: (${aType}) -[${axbType}]-> (${bType})`, 'REGISTRY_VIOLATION');
     this.name = 'RegistryViolationError';
   }
 }
@@ -71,7 +68,13 @@ export class QuerySafetyError extends FiregraphError {
 }
 
 export class RegistryScopeError extends FiregraphError {
-  constructor(aType: string, axbType: string, bType: string, scopePath: string, allowedIn: string[]) {
+  constructor(
+    aType: string,
+    axbType: string,
+    bType: string,
+    scopePath: string,
+    allowedIn: string[],
+  ) {
     super(
       `Type (${aType}) -[${axbType}]-> (${bType}) is not allowed at scope "${scopePath || 'root'}". ` +
         `Allowed in: [${allowedIn.join(', ')}]`,
@@ -85,5 +88,27 @@ export class MigrationError extends FiregraphError {
   constructor(message: string) {
     super(message, 'MIGRATION_ERROR');
     this.name = 'MigrationError';
+  }
+}
+
+/**
+ * Thrown when a caller tries to perform an operation that would require
+ * atomicity across two physical storage backends — e.g. opening a routed
+ * subgraph client from inside a transaction callback. Cross-backend
+ * atomicity cannot be honoured by any of the underlying drivers (D1, DO
+ * SQLite, Firestore), so firegraph surfaces this as a typed error instead
+ * of silently confining the write to the base backend.
+ *
+ * Normally `TransactionBackend` and `BatchBackend` don't expose `subgraph()`
+ * at the type level, so this error is unreachable through well-typed code.
+ * It exists as a public catchable type for app code that needs to tolerate
+ * this case deliberately (e.g. dynamic code paths that bypass the type
+ * system) and as future-proofing if the interface ever grows a way to
+ * request a sub-scope inside a transaction.
+ */
+export class CrossBackendTransactionError extends FiregraphError {
+  constructor(message: string) {
+    super(message, 'CROSS_BACKEND_TRANSACTION');
+    this.name = 'CrossBackendTransactionError';
   }
 }
