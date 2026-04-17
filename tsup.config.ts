@@ -10,6 +10,7 @@ export default defineConfig({
     'src/query-client/index.ts',
     'src/d1.ts',
     'src/do-sqlite.ts',
+    'src/cloudflare/index.ts',
   ],
   format: ['esm', 'cjs'],
   dts: true,

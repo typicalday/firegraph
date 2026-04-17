@@ -67,6 +67,16 @@
         "default": "./dist/do-sqlite.cjs"
       }
     },
+    "./cloudflare": {
+      "import": {
+        "types": "./dist/cloudflare/index.d.ts",
+        "default": "./dist/cloudflare/index.js"
+      },
+      "require": {
+        "types": "./dist/cloudflare/index.d.cts",
+        "default": "./dist/cloudflare/index.cjs"
+      }
+    },
     "./backend": {
       "import": {
         "types": "./dist/backend.d.ts",
