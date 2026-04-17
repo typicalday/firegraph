@@ -5,14 +5,11 @@
  * in pipeline mode. Writes use the standard adapter (not pipeline), but
  * we verify the full write → read round-trip through a pipeline client.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  createPipelineClient,
-  uniqueCollectionPath,
-  cleanupCollection,
-} from './setup.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import type { GraphClient } from '../../src/types.js';
-import { tourData, departureData } from '../helpers/fixtures.js';
+import { tourData } from '../helpers/fixtures.js';
+import { cleanupCollection, createPipelineClient, uniqueCollectionPath } from './setup.js';
 
 describe('pipeline client writes', () => {
   const collPath = uniqueCollectionPath();
@@ -107,7 +104,7 @@ describe('pipeline client writes', () => {
 
       const results = await g.findNodes({ aType: 'vehicle' });
       expect(results.length).toBe(2);
-      const types = results.map(r => r.data.type).sort();
+      const types = results.map((r) => r.data.type).sort();
       expect(types).toEqual(['bus', 'van']);
     });
 
@@ -129,7 +126,7 @@ describe('pipeline client writes', () => {
         where: [{ field: 'difficulty', op: '==', value: 'extreme' }],
       });
       expect(results.length).toBeGreaterThanOrEqual(1);
-      expect(results.some(r => r.aUid === 'w-tour3')).toBe(true);
+      expect(results.some((r) => r.aUid === 'w-tour3')).toBe(true);
     });
   });
 });

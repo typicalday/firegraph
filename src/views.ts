@@ -40,7 +40,6 @@
  * will satisfy this constraint naturally.
  */
 export interface ViewComponentClass {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   new (...args: any[]): { data: Record<string, unknown> };
   /** Short identifier for this view (e.g. 'card', 'profile'). */
   viewName: string;
@@ -113,7 +112,6 @@ interface CustomElementRegistryLike {
  * Returns `null` in Node.js or environments without Web Components support.
  */
 function getCustomElements(): CustomElementRegistryLike | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
   if (g.customElements && typeof g.customElements.define === 'function') {
     return g.customElements as CustomElementRegistryLike;
@@ -127,14 +125,10 @@ function getCustomElements(): CustomElementRegistryLike | null {
  * Shows an inline error message when the view fails to render.
  */
 function resilientView(ViewClass: ViewComponentClass, tagName: string): ViewComponentClass {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
   if (!g.HTMLElement) return ViewClass; // Node.js — no wrapping needed
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Base = g.HTMLElement as any;
-
-  const Wrapped = class extends (ViewClass as unknown as typeof Base) {
+  const Wrapped = class extends (ViewClass as unknown as new (...args: any[]) => any) {
     connectedCallback() {
       try {
         super.connectedCallback?.();
@@ -171,9 +165,12 @@ function resilientView(ViewClass: ViewComponentClass, tagName: string): ViewComp
 
     _showError(err: unknown) {
       try {
-        this.innerHTML = `<div style="padding:6px;color:#f87171;font-size:11px;font-family:monospace;">` +
+        this.innerHTML =
+          `<div style="padding:6px;color:#f87171;font-size:11px;font-family:monospace;">` +
           `View error in &lt;${tagName}&gt;: ${err instanceof Error ? err.message : String(err)}</div>`;
-      } catch { /* last resort — don't throw from error handler */ }
+      } catch {
+        /* last resort — don't throw from error handler */
+      }
     }
   };
 

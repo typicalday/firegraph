@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import type { CollectionDef } from '../types';
+
 import { trpc } from '../trpc';
+import type { CollectionDef } from '../types';
 import SchemaForm from './SchemaForm';
 
 interface Props {
@@ -49,7 +50,7 @@ export default function CollectionDocEditor({
       try {
         data = JSON.parse(jsonText) as Record<string, unknown>;
         setJsonError(null);
-      } catch (e) {
+      } catch {
         setJsonError('Invalid JSON');
         return;
       }
@@ -82,11 +83,7 @@ export default function CollectionDocEditor({
 
       <div className="mb-5">
         {hasSchema ? (
-          <SchemaForm
-            fields={collectionDef.fields}
-            values={formValues}
-            onChange={setFormValues}
-          />
+          <SchemaForm fields={collectionDef.fields} values={formValues} onChange={setFormValues} />
         ) : (
           <div>
             <label className="block text-xs text-slate-400 mb-1">Data (JSON)</label>

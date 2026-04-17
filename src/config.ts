@@ -15,6 +15,8 @@
  * ```
  */
 
+import type { DynamicRegistryConfig, QueryMode } from './types.js';
+
 // ---------------------------------------------------------------------------
 // View Resolution Types
 // ---------------------------------------------------------------------------
@@ -66,18 +68,20 @@ export interface FiregraphConfig {
    *
    * When the emulator is active, always falls back to `'standard'`.
    */
-  queryMode?: import('./types.js').QueryMode;
+  queryMode?: QueryMode;
 
   /**
    * AI chat configuration. Auto-detects `claude` CLI on PATH by default.
    * Set to `false` to disable chat even if claude is available.
    */
-  chat?: false | {
-    /** Claude model to use (default: 'sonnet'). */
-    model?: string;
-    /** Maximum concurrent claude processes (default: 2). */
-    maxConcurrency?: number;
-  };
+  chat?:
+    | false
+    | {
+        /** Claude model to use (default: 'sonnet'). */
+        model?: string;
+        /** Maximum concurrent claude processes (default: 2). */
+        maxConcurrency?: number;
+      };
 
   /** Editor-specific settings. */
   editor?: {
@@ -95,7 +99,7 @@ export interface FiregraphConfig {
    * from Firestore meta-nodes in addition to filesystem entities.
    * Filesystem types take precedence on name conflicts.
    */
-  registryMode?: import('./types.js').DynamicRegistryConfig;
+  registryMode?: DynamicRegistryConfig;
 }
 
 // ---------------------------------------------------------------------------

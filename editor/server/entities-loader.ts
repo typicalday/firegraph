@@ -7,22 +7,26 @@
  * - Merges entity-level view defaults with config-level overrides
  */
 
-import path from 'path';
 import Module from 'node:module';
+
 import { createJiti } from 'jiti';
-import { discoverEntities } from '../../src/discover.js';
-import type { DiscoveryResult, DiscoveredEntity } from '../../src/types.js';
-import type { ViewRegistry, EntityViewMeta, ViewMeta, ViewComponentClass } from '../../src/views.js';
+
 import type { ViewDefaultsConfig } from '../../src/config.js';
+import type { DiscoveryResult } from '../../src/types.js';
+import type {
+  EntityViewMeta,
+  ViewComponentClass,
+  ViewMeta,
+  ViewRegistry,
+} from '../../src/views.js';
 
 // Stub .svelte imports so jiti/require don't crash when a views.ts file
 // imports a Svelte component. The actual Svelte compilation happens in
 // the esbuild browser bundle — the server only needs the metadata
 // (viewName, description) which comes from the wrapSvelte() meta arg.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 const extensions = (Module as any)._extensions;
 if (extensions && !extensions['.svelte']) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   extensions['.svelte'] = (_module: any, filename: string) => {
     _module._compile('module.exports = {};', filename);
   };

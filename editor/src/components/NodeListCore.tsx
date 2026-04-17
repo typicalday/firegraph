@@ -1,10 +1,18 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Schema, GraphRecord, ViewRegistryData, AppConfig, FieldMeta, WhereClause } from '../types';
+
 import { trpc } from '../trpc';
-import { formatTimestamp, truncateData, resolveViewForEntity, scopeInput } from '../utils';
-import { useScope } from './path-context';
+import type {
+  AppConfig,
+  FieldMeta,
+  GraphRecord,
+  Schema,
+  ViewRegistryData,
+  WhereClause,
+} from '../types';
+import { formatTimestamp, resolveViewForEntity, scopeInput, truncateData } from '../utils';
 import CustomView from './CustomView';
+import { useScope } from './path-context';
 
 export interface NodeListCoreProps {
   /** The node type to browse */
@@ -74,7 +82,12 @@ export default function NodeListCore({
     ...scopeInput(scopePath),
   };
 
-  const { data, isLoading: loading, error: queryError, refetch } = trpc.getNodes.useQuery(queryInput, {
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = trpc.getNodes.useQuery(queryInput, {
     placeholderData: (prev) => prev,
   });
 
@@ -131,7 +144,10 @@ export default function NodeListCore({
   const sortFieldOptions = [
     ...BUILTIN_SORT_FIELDS,
     ...fieldMetas
-      .filter((f) => f.type === 'string' || f.type === 'number' || f.type === 'boolean' || f.type === 'enum')
+      .filter(
+        (f) =>
+          f.type === 'string' || f.type === 'number' || f.type === 'boolean' || f.type === 'enum',
+      )
       .map((f) => ({ value: f.name, label: `data.${f.name}` })),
   ];
 
@@ -144,18 +160,24 @@ export default function NodeListCore({
   return (
     <div>
       {/* Toolbar */}
-      <div className={`bg-slate-900 rounded-xl border border-slate-800 ${compact ? 'p-2' : 'p-3'} mb-4 space-y-3`}>
+      <div
+        className={`bg-slate-900 rounded-xl border border-slate-800 ${compact ? 'p-2' : 'p-3'} mb-4 space-y-3`}
+      >
         <div className="flex items-center gap-3 flex-wrap">
           {/* Limit */}
           <div className="flex items-center gap-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Show</label>
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+              Show
+            </label>
             <select
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
               className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
             >
               {limitOptions.map((n) => (
-                <option key={n} value={n}>{n}</option>
+                <option key={n} value={n}>
+                  {n}
+                </option>
               ))}
             </select>
           </div>
@@ -164,14 +186,18 @@ export default function NodeListCore({
 
           {/* Sort */}
           <div className="flex items-center gap-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Sort</label>
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+              Sort
+            </label>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
             >
               {sortFieldOptions.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
               ))}
             </select>
             <button
@@ -216,7 +242,12 @@ export default function NodeListCore({
             }`}
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+              />
             </svg>
             Filters
             {filters.length > 0 && (
@@ -234,7 +265,12 @@ export default function NodeListCore({
             title="Refresh"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
             </svg>
           </button>
         </div>
@@ -242,11 +278,16 @@ export default function NodeListCore({
         {/* Active filter chips */}
         {filters.length > 0 && !showFilterBuilder && (
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Active</span>
+            <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+              Active
+            </span>
             {filters.map((f, i) => (
-              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
-                <span className="text-slate-400">data.</span>{f.field} {f.op}{' '}
-                <span className="text-indigo-200">{String(f.value)}</span>
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs"
+              >
+                <span className="text-slate-400">data.</span>
+                {f.field} {f.op} <span className="text-indigo-200">{String(f.value)}</span>
                 <button
                   onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
                   className="ml-0.5 text-indigo-400 hover:text-indigo-200"
@@ -284,7 +325,9 @@ export default function NodeListCore({
 
       {/* Loading */}
       {loading ? (
-        <div className={`flex items-center gap-2 text-slate-400 ${compact ? 'py-6' : 'py-12'} justify-center`}>
+        <div
+          className={`flex items-center gap-2 text-slate-400 ${compact ? 'py-6' : 'py-12'} justify-center`}
+        >
           <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm">Loading nodes...</span>
         </div>
@@ -295,7 +338,9 @@ export default function NodeListCore({
       ) : (
         <>
           {/* Table */}
-          <div className={`bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto ${compact ? 'max-h-64 overflow-y-auto' : ''}`}>
+          <div
+            className={`bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto ${compact ? 'max-h-64 overflow-y-auto' : ''}`}
+          >
             <table className="w-full min-w-[480px]">
               <thead>
                 <tr className="border-b border-slate-800">
@@ -317,17 +362,13 @@ export default function NodeListCore({
                   <tr
                     key={node.aUid}
                     className={`border-b border-slate-800/50 transition-colors ${
-                      onPick
-                        ? 'hover:bg-indigo-600/10 cursor-pointer'
-                        : 'hover:bg-slate-800/30'
+                      onPick ? 'hover:bg-indigo-600/10 cursor-pointer' : 'hover:bg-slate-800/30'
                     }`}
                     onClick={onPick ? () => onPick(node.aUid) : undefined}
                   >
                     <td className="px-4 py-3">
                       {onPick ? (
-                        <span className="text-sm font-mono text-indigo-400">
-                          {node.aUid}
-                        </span>
+                        <span className="text-sm font-mono text-indigo-400">{node.aUid}</span>
                       ) : (
                         <Link
                           to={scopedPath(`/node/${encodeURIComponent(node.aUid)}`)}
@@ -338,7 +379,11 @@ export default function NodeListCore({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <NodeListingCell node={node} views={listingViews} resolverConfig={listingResolverConfig} />
+                      <NodeListingCell
+                        node={node}
+                        views={listingViews}
+                        resolverConfig={listingResolverConfig}
+                      />
                     </td>
                     {!compact && (
                       <td className="px-4 py-3 text-xs text-slate-500">
@@ -424,9 +469,13 @@ function FilterBuilder({
   return (
     <div className="border-t border-slate-700/50 pt-3 space-y-2">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Where</span>
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Where
+        </span>
         <span className="text-[10px] text-slate-600">
-          {filters.length === 0 ? 'No filters — click "Add filter" to start' : `${filters.length} active filter${filters.length > 1 ? 's' : ''}`}
+          {filters.length === 0
+            ? 'No filters — click "Add filter" to start'
+            : `${filters.length} active filter${filters.length > 1 ? 's' : ''}`}
         </span>
         {filters.length > 0 && (
           <button
@@ -477,7 +526,7 @@ function FilterRow({
   fieldNames,
   fieldMeta,
   allFieldMetas,
-  totalFilters,
+  totalFilters: _totalFilters,
   onUpdate,
   onRemove,
 }: {
@@ -534,7 +583,9 @@ function FilterRow({
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
         >
           {fieldNames.map((name) => (
-            <option key={name} value={name}>{name}</option>
+            <option key={name} value={name}>
+              {name}
+            </option>
           ))}
         </select>
       ) : (
@@ -555,7 +606,9 @@ function FilterRow({
         className="bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 w-14"
       >
         {FILTER_OPS.map((op) => (
-          <option key={op} value={op}>{op}</option>
+          <option key={op} value={op}>
+            {op}
+          </option>
         ))}
       </select>
 
@@ -567,7 +620,9 @@ function FilterRow({
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
         >
           {fieldMeta!.enumValues!.map((v) => (
-            <option key={v} value={v}>{v}</option>
+            <option key={v} value={v}>
+              {v}
+            </option>
           ))}
         </select>
       ) : isBool ? (
@@ -598,9 +653,7 @@ function FilterRow({
       )}
 
       {/* Type hint */}
-      {fieldMeta && (
-        <span className="text-[9px] text-slate-600 shrink-0">{fieldMeta.type}</span>
-      )}
+      {fieldMeta && <span className="text-[9px] text-slate-600 shrink-0">{fieldMeta.type}</span>}
 
       {/* Pending indicator — shows when local text differs from committed value */}
       {!isDropdown && localValue !== String(clause.value) && localValue.trim() !== '' && (
@@ -616,7 +669,12 @@ function FilterRow({
         title="Remove filter"
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
         </svg>
       </button>
     </div>
@@ -643,15 +701,15 @@ function NodeListingCell({
       if (match) {
         return (
           <div>
-            <CustomView tagName={match.tagName} data={node.data as Record<string, unknown>} onError={() => setViewFailed(true)} />
+            <CustomView
+              tagName={match.tagName}
+              data={node.data as Record<string, unknown>}
+              onError={() => setViewFailed(true)}
+            />
           </div>
         );
       }
     }
   }
-  return (
-    <span className="text-xs text-slate-400 font-mono">
-      {truncateData(node.data, 100)}
-    </span>
-  );
+  return <span className="text-xs text-slate-400 font-mono">{truncateData(node.data, 100)}</span>;
 }

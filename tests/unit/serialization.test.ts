@@ -1,10 +1,12 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Timestamp, GeoPoint, FieldValue } from '@google-cloud/firestore';
+import type { Firestore } from '@google-cloud/firestore';
+import { FieldValue, GeoPoint, Timestamp } from '@google-cloud/firestore';
+import { describe, expect, it, vi } from 'vitest';
+
 import {
-  serializeFirestoreTypes,
   deserializeFirestoreTypes,
   isTaggedValue,
   SERIALIZATION_TAG,
+  serializeFirestoreTypes,
 } from '../../src/serialization.js';
 
 // ---------------------------------------------------------------------------
@@ -28,8 +30,12 @@ describe('isTaggedValue', () => {
   });
 
   it('returns true for known tagged types', () => {
-    expect(isTaggedValue({ [SERIALIZATION_TAG]: 'Timestamp', seconds: 0, nanoseconds: 0 })).toBe(true);
-    expect(isTaggedValue({ [SERIALIZATION_TAG]: 'GeoPoint', latitude: 0, longitude: 0 })).toBe(true);
+    expect(isTaggedValue({ [SERIALIZATION_TAG]: 'Timestamp', seconds: 0, nanoseconds: 0 })).toBe(
+      true,
+    );
+    expect(isTaggedValue({ [SERIALIZATION_TAG]: 'GeoPoint', latitude: 0, longitude: 0 })).toBe(
+      true,
+    );
     expect(isTaggedValue({ [SERIALIZATION_TAG]: 'VectorValue', values: [] })).toBe(true);
     expect(isTaggedValue({ [SERIALIZATION_TAG]: 'DocumentReference', path: 'a/b' })).toBe(true);
   });
@@ -319,10 +325,7 @@ describe('serialize → JSON.stringify → JSON.parse → deserialize round-trip
       name: 'test',
       count: 42,
       createdAt: new Timestamp(1000, 0),
-      locations: [
-        new GeoPoint(10, 20),
-        new GeoPoint(30, 40),
-      ],
+      locations: [new GeoPoint(10, 20), new GeoPoint(30, 40)],
       nested: {
         updatedAt: new Timestamp(2000, 500),
         embedding: FieldValue.vector([0.1, 0.2]),
@@ -461,7 +464,7 @@ describe('deserializeFirestoreTypes — DocumentReference with db', () => {
     const mockDocRef = { id: 'abc123', path: 'users/abc123' };
     const mockDb = {
       doc: vi.fn().mockReturnValue(mockDocRef),
-    } as unknown as import('@google-cloud/firestore').Firestore;
+    } as unknown as Firestore;
 
     const data = {
       ref: { [SERIALIZATION_TAG]: 'DocumentReference', path: 'users/abc123' },

@@ -1,7 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
 import { bulkDeleteDocIds, bulkRemoveEdges, removeNodeCascade } from '../../src/bulk.js';
 import { computeEdgeDocId, computeNodeDocId } from '../../src/docid.js';
-import type { GraphReader, StoredGraphRecord, FindEdgesParams, BulkProgress } from '../../src/types.js';
+import type {
+  BulkProgress,
+  FindEdgesParams,
+  GraphReader,
+  StoredGraphRecord,
+} from '../../src/types.js';
 
 function makeRecord(overrides: Partial<StoredGraphRecord>): StoredGraphRecord {
   return {
@@ -41,7 +47,7 @@ function createMockFirestore(commitImpl?: () => Promise<void>) {
       }),
       commit: commitFn,
     })),
-    collection: vi.fn((path: string) => ({
+    collection: vi.fn((_path: string) => ({
       doc: (id: string) => ({
         _id: id,
         listCollections: vi.fn(async () => []),
@@ -201,7 +207,12 @@ describe('bulkRemoveEdges', () => {
     const result = await bulkRemoveEdges(db, 'col', reader, { aUid: 'n1', axbType: 'hasX' });
 
     expect(result.deleted).toBe(2);
-    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'n1', axbType: 'hasX', limit: 0, allowCollectionScan: true });
+    expect(reader.findEdges).toHaveBeenCalledWith({
+      aUid: 'n1',
+      axbType: 'hasX',
+      limit: 0,
+      allowCollectionScan: true,
+    });
   });
 
   it('returns zero when no edges match', async () => {
@@ -240,7 +251,12 @@ describe('bulkRemoveEdges', () => {
 
     await bulkRemoveEdges(db, 'col', reader, { bUid: 'target1', axbType: 'relType' });
 
-    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'target1', axbType: 'relType', limit: 0, allowCollectionScan: true });
+    expect(reader.findEdges).toHaveBeenCalledWith({
+      bUid: 'target1',
+      axbType: 'relType',
+      limit: 0,
+      allowCollectionScan: true,
+    });
   });
 
   it('computes correct sharded doc IDs for deletion', async () => {
@@ -263,8 +279,16 @@ describe('removeNodeCascade', () => {
     await removeNodeCascade(db, 'col', reader, 'node1');
 
     expect(reader.findEdges).toHaveBeenCalledTimes(2);
-    expect(reader.findEdges).toHaveBeenCalledWith({ aUid: 'node1', allowCollectionScan: true, limit: 0 });
-    expect(reader.findEdges).toHaveBeenCalledWith({ bUid: 'node1', allowCollectionScan: true, limit: 0 });
+    expect(reader.findEdges).toHaveBeenCalledWith({
+      aUid: 'node1',
+      allowCollectionScan: true,
+      limit: 0,
+    });
+    expect(reader.findEdges).toHaveBeenCalledWith({
+      bUid: 'node1',
+      allowCollectionScan: true,
+      limit: 0,
+    });
   });
 
   it('filters out self-loop (is) records from edge queries', async () => {
@@ -381,9 +405,7 @@ describe('removeNodeCascade', () => {
         ];
       }
       if (params.bUid === 'n1') {
-        return [
-          makeRecord({ aUid: 'p1', axbType: 'parentOf', bUid: 'n1' }),
-        ];
+        return [makeRecord({ aUid: 'p1', axbType: 'parentOf', bUid: 'n1' })];
       }
       return [];
     });
@@ -456,7 +478,7 @@ describe('removeNodeCascade', () => {
         delete: vi.fn(),
         commit: vi.fn(async () => {}),
       })),
-      collection: vi.fn((path: string) => ({
+      collection: vi.fn((_path: string) => ({
         doc: (id: string) => ({
           _id: id,
           listCollections: listCollectionsFn,

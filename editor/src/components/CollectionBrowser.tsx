@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { CollectionDef, FieldMeta, WhereClause } from '../types';
+
 import { trpc } from '../trpc';
-import { fsUrl, resolveCollectionPath, formatTimestamp, truncateData } from '../utils';
-import { useRecents } from './recents-context';
+import type { CollectionDef, FieldMeta, WhereClause } from '../types';
+import { fsUrl, resolveCollectionPath, truncateData } from '../utils';
 import CollectionBreadcrumb from './CollectionBreadcrumb';
 import CollectionDocEditor from './CollectionDocEditor';
+import { useRecents } from './recents-context';
 
 const FILTER_OPS: WhereClause['op'][] = ['==', '!=', '<', '<=', '>', '>='];
 
@@ -36,14 +37,12 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
   const paramsKey = JSON.stringify(params);
   useEffect(() => {
     setCursor(undefined);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionDef.name, paramsKey]);
 
   // Reset filters when switching collections
   useEffect(() => {
     setFilters([]);
     setShowFilterBuilder(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionDef.name]);
 
   // Reset cursor when filters change
@@ -62,11 +61,10 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
   // Reset paramInputs when switching to a different collection definition
   useEffect(() => {
     setParamInputs(Object.fromEntries(collectionDef.pathParams.map((p) => [p, params[p] ?? ''])));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionDef.name]);
 
-  const allParamsProvided = missingParams.length === 0 ||
-    missingParams.every((p) => paramInputs[p]?.trim());
+  const allParamsProvided =
+    missingParams.length === 0 || missingParams.every((p) => paramInputs[p]?.trim());
 
   const resolvedParams = { ...params, ...paramInputs };
 
@@ -92,7 +90,6 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
       sublabel: resolveCollectionPath(collectionDef.path, resolvedParams),
       url: fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams)),
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collectionDef.name, paramsKey]);
 
   // If path params are needed but not provided, show param input form
@@ -159,7 +156,12 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
               className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               New Document
             </button>
@@ -179,7 +181,12 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
             onSaved={(id) => {
               setShowCreate(false);
               void refetch();
-              navigate(fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams), `doc/${encodeURIComponent(id)}`));
+              navigate(
+                fsUrl(
+                  resolveCollectionPath(collectionDef.path, resolvedParams),
+                  `doc/${encodeURIComponent(id)}`,
+                ),
+              );
             }}
             onCancel={() => setShowCreate(false)}
           />
@@ -200,7 +207,12 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
               }`}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+                />
               </svg>
               Filters
               {activeFilters.length > 0 && (
@@ -216,9 +228,11 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
                 {filters.map((f, i) => {
                   if (!f.field || f.value === '') return null;
                   return (
-                    <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs">
-                      {f.field} {f.op}{' '}
-                      <span className="text-indigo-200">{String(f.value)}</span>
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-600/20 text-indigo-300 rounded text-xs"
+                    >
+                      {f.field} {f.op} <span className="text-indigo-200">{String(f.value)}</span>
                       <button
                         onClick={() => setFilters((prev) => prev.filter((_, j) => j !== i))}
                         className="ml-0.5 text-indigo-400 hover:text-indigo-200"
@@ -257,9 +271,7 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
               <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
             </div>
           )}
-          {error && (
-            <div className="px-5 py-4 text-sm text-red-400">{error.message}</div>
-          )}
+          {error && <div className="px-5 py-4 text-sm text-red-400">{error.message}</div>}
           {data && data.documents.length === 0 && (
             <div className="px-5 py-8 text-center text-xs text-slate-500">
               No documents found
@@ -281,7 +293,10 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
                     ID
                   </th>
                   {collectionDef.fields.slice(0, 3).map((f) => (
-                    <th key={f.name} className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                    <th
+                      key={f.name}
+                      className="px-4 py-2 text-left text-[10px] uppercase tracking-wider text-slate-500 font-semibold"
+                    >
                       {f.name}
                     </th>
                   ))}
@@ -300,7 +315,10 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
                   >
                     <td className="px-5 py-2.5">
                       <Link
-                        to={fsUrl(resolveCollectionPath(collectionDef.path, resolvedParams), `doc/${encodeURIComponent(doc.id)}`)}
+                        to={fsUrl(
+                          resolveCollectionPath(collectionDef.path, resolvedParams),
+                          `doc/${encodeURIComponent(doc.id)}`,
+                        )}
                         className="text-indigo-400 hover:text-indigo-300 font-mono transition-colors"
                       >
                         {doc.id.length > 16 ? `${doc.id.slice(0, 14)}\u2026` : doc.id}
@@ -308,10 +326,11 @@ export default function CollectionBrowser({ collectionDef, params, readonly }: P
                     </td>
                     {collectionDef.fields.slice(0, 3).map((f) => (
                       <td key={f.name} className="px-4 py-2.5 text-slate-400 truncate max-w-xs">
-                        {doc.data[f.name] !== undefined
-                          ? String(doc.data[f.name])
-                          : <span className="text-slate-600">&mdash;</span>
-                        }
+                        {doc.data[f.name] !== undefined ? (
+                          String(doc.data[f.name])
+                        ) : (
+                          <span className="text-slate-600">&mdash;</span>
+                        )}
                       </td>
                     ))}
                     {collectionDef.fields.length === 0 && (
@@ -378,7 +397,9 @@ function CollectionFilterBuilder({
   return (
     <div className="border-t border-slate-700/50 pt-2 space-y-1.5">
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Where</span>
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Where
+        </span>
         <span className="text-[10px] text-slate-600">
           {filters.length === 0
             ? 'No filters \u2014 click "Add filter" to start'
@@ -478,7 +499,9 @@ function CollectionFilterRow({
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
         >
           {fieldNames.map((name) => (
-            <option key={name} value={name}>{name}</option>
+            <option key={name} value={name}>
+              {name}
+            </option>
           ))}
         </select>
       ) : (
@@ -498,7 +521,9 @@ function CollectionFilterRow({
         className="bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500 w-14"
       >
         {FILTER_OPS.map((op) => (
-          <option key={op} value={op}>{op}</option>
+          <option key={op} value={op}>
+            {op}
+          </option>
         ))}
       </select>
 
@@ -510,7 +535,9 @@ function CollectionFilterRow({
           className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
         >
           {fieldMeta!.enumValues!.map((v) => (
-            <option key={v} value={v}>{v}</option>
+            <option key={v} value={v}>
+              {v}
+            </option>
           ))}
         </select>
       ) : isBool ? (
@@ -541,9 +568,7 @@ function CollectionFilterRow({
       )}
 
       {/* Type hint */}
-      {fieldMeta && (
-        <span className="text-[9px] text-slate-600 shrink-0">{fieldMeta.type}</span>
-      )}
+      {fieldMeta && <span className="text-[9px] text-slate-600 shrink-0">{fieldMeta.type}</span>}
 
       {/* Pending indicator */}
       {!isDropdown && localValue !== String(clause.value) && localValue.trim() !== '' && (
@@ -559,7 +584,12 @@ function CollectionFilterRow({
         title="Remove filter"
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
         </svg>
       </button>
     </div>

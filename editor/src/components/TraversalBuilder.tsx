@@ -1,14 +1,27 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Schema, HopDef, HopResult, TraversalResult, GraphRecord, WhereClause, FieldMeta, EdgeType, ViewRegistryData, AppConfig, ViewMeta } from '../types';
+
 import { trpc } from '../trpc';
+import type {
+  AppConfig,
+  EdgeType,
+  FieldMeta,
+  GraphRecord,
+  HopDef,
+  HopResult,
+  Schema,
+  TraversalResult,
+  ViewMeta,
+  ViewRegistryData,
+  WhereClause,
+} from '../types';
 import { getTypeBadgeColor, resolveViewForEntity, scopeInput } from '../utils';
-import { useDrillMaybe, type DrillFrame } from './drill-context';
-import { useScope } from './path-context';
+import CustomView from './CustomView';
+import { type DrillFrame, useDrillMaybe } from './drill-context';
 import GraphModal from './GraphModal';
 import JsonView from './JsonView';
+import { useScope } from './path-context';
 import ViewSwitcher from './ViewSwitcher';
-import CustomView from './CustomView';
 
 interface Props {
   schema: Schema;
@@ -115,13 +128,19 @@ export default function TraversalBuilder({ schema }: Props) {
             >
               <option value="">Any type</option>
               {schema.nodeTypes.map((nt) => (
-                <option key={nt.type} value={nt.type}>{nt.type}</option>
+                <option key={nt.type} value={nt.type}>
+                  {nt.type}
+                </option>
               ))}
             </select>
           </div>
         </div>
 
-        <TraversalPanel schema={schema} startUid={startUid} startNodeType={startNodeType || undefined} />
+        <TraversalPanel
+          schema={schema}
+          startUid={startUid}
+          startNodeType={startNodeType || undefined}
+        />
       </div>
     </div>
   );
@@ -138,8 +157,14 @@ interface TraversalPanelProps {
 }
 
 /** Reusable traversal panel — used standalone and embedded in NodeDetail */
-export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, config }: TraversalPanelProps) {
-  const { scopePath, scopedPath } = useScope();
+export function TraversalPanel({
+  schema,
+  startUid,
+  startNodeType,
+  viewRegistry,
+  config,
+}: TraversalPanelProps) {
+  const { scopePath } = useScope();
   // Initialize first hop with a sensible default based on startNodeType
   const initialAxbType = useMemo(() => {
     if (startNodeType) {
@@ -239,7 +264,9 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
       {startNodeType && (
         <div className="mb-4 flex items-center gap-2">
           <span className="text-xs text-slate-500">Starting from</span>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium ${getTypeBadgeColor(startNodeType)}`}>
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium ${getTypeBadgeColor(startNodeType)}`}
+          >
             {startNodeType}
           </span>
           <span className="text-xs text-slate-400 font-mono">{startUid}</span>
@@ -267,16 +294,22 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
 
                   {/* Source type badge */}
                   {sourceType ? (
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 ${getTypeBadgeColor(sourceType)}`}>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 ${getTypeBadgeColor(sourceType)}`}
+                    >
                       {sourceType}
                     </span>
                   ) : (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-700 text-slate-500 shrink-0">?</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-700 text-slate-500 shrink-0">
+                      ?
+                    </span>
                   )}
 
                   <select
                     value={hop.direction}
-                    onChange={(e) => updateHop(i, { direction: e.target.value as 'forward' | 'reverse' })}
+                    onChange={(e) =>
+                      updateHop(i, { direction: e.target.value as 'forward' | 'reverse' })
+                    }
                     className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
                   >
                     <option value="forward">Forward</option>
@@ -289,7 +322,9 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
                     className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 flex-1 max-w-xs"
                   >
                     {axbTypes.map((ab) => (
-                      <option key={ab} value={ab}>{ab}</option>
+                      <option key={ab} value={ab}>
+                        {ab}
+                      </option>
                     ))}
                   </select>
 
@@ -297,11 +332,15 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
 
                   {/* Target type badge */}
                   {targetType ? (
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 ${getTypeBadgeColor(targetType)}`}>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0 ${getTypeBadgeColor(targetType)}`}
+                    >
                       {targetType}
                     </span>
                   ) : (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-700 text-slate-500 shrink-0">?</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-700 text-slate-500 shrink-0">
+                      ?
+                    </span>
                   )}
 
                   <div className="flex items-center gap-1.5">
@@ -322,9 +361,24 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
                     className={`p-1 transition-colors ${isAdvOpen ? 'text-indigo-400' : 'text-slate-600 hover:text-slate-400'}`}
                     title="Advanced options"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
                     </svg>
                   </button>
 
@@ -334,8 +388,18 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
                       className="text-slate-600 hover:text-red-400 transition-colors p-1"
                       title="Remove hop"
                     >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      <svg
+                        className="w-3.5 h-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M6 18L18 6M6 6l12 12"
+                        />
                       </svg>
                     </button>
                   )}
@@ -343,12 +407,7 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
 
                 {/* Advanced options panel */}
                 {isAdvOpen && (
-                  <AdvancedHopOptions
-                    hop={hop}
-                    index={i}
-                    fields={fields}
-                    updateHop={updateHop}
-                  />
+                  <AdvancedHopOptions hop={hop} index={i} fields={fields} updateHop={updateHop} />
                 )}
               </div>
             );
@@ -397,9 +456,7 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
         <p className="text-xs text-slate-500 mb-1">Query Preview</p>
         <div className="flex items-center gap-1.5 text-sm font-mono flex-wrap">
           <span className="text-indigo-400">{startUid || '?'}</span>
-          {startNodeType && (
-            <span className="text-slate-500 text-xs">({startNodeType})</span>
-          )}
+          {startNodeType && <span className="text-slate-500 text-xs">({startNodeType})</span>}
           {hops.map((hop, i) => {
             const target = typeFlow[i]?.targetType;
             return (
@@ -434,7 +491,12 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
         ) : (
           <>
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
             </svg>
             Run Traversal
           </>
@@ -451,7 +513,13 @@ export function TraversalPanel({ schema, startUid, startNodeType, viewRegistry, 
       {/* Results */}
       {result && (
         <div className="mt-5">
-          <TraversalResults result={result} startUid={startUid} schema={schema} viewRegistry={viewRegistry} config={config} />
+          <TraversalResults
+            result={result}
+            startUid={startUid}
+            schema={schema}
+            viewRegistry={viewRegistry}
+            config={config}
+          />
         </div>
       )}
     </>
@@ -499,14 +567,18 @@ function AdvancedHopOptions({
             value={hop.orderBy?.field || ''}
             onChange={(e) =>
               updateHop(index, {
-                orderBy: e.target.value ? { field: e.target.value, direction: hop.orderBy?.direction ?? 'asc' } : undefined,
+                orderBy: e.target.value
+                  ? { field: e.target.value, direction: hop.orderBy?.direction ?? 'asc' }
+                  : undefined,
               })
             }
             className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
           >
             <option value="">None</option>
             {fields.map((f) => (
-              <option key={f.name} value={f.name}>{f.name}</option>
+              <option key={f.name} value={f.name}>
+                {f.name}
+              </option>
             ))}
           </select>
         ) : (
@@ -515,7 +587,9 @@ function AdvancedHopOptions({
             value={hop.orderBy?.field || ''}
             onChange={(e) =>
               updateHop(index, {
-                orderBy: e.target.value ? { field: e.target.value, direction: hop.orderBy?.direction ?? 'asc' } : undefined,
+                orderBy: e.target.value
+                  ? { field: e.target.value, direction: hop.orderBy?.direction ?? 'asc' }
+                  : undefined,
               })
             }
             placeholder="field name"
@@ -558,7 +632,9 @@ function AdvancedHopOptions({
                 className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500"
               >
                 {fields.map((f) => (
-                  <option key={f.name} value={f.name}>{f.name}</option>
+                  <option key={f.name} value={f.name}>
+                    {f.name}
+                  </option>
                 ))}
               </select>
             ) : (
@@ -587,10 +663,14 @@ function AdvancedHopOptions({
               value={String(clause.value)}
               onChange={(e) => {
                 const num = Number(e.target.value);
-                const value = e.target.value === 'true' ? true
-                  : e.target.value === 'false' ? false
-                  : !isNaN(num) && e.target.value !== '' ? num
-                  : e.target.value;
+                const value =
+                  e.target.value === 'true'
+                    ? true
+                    : e.target.value === 'false'
+                      ? false
+                      : !isNaN(num) && e.target.value !== ''
+                        ? num
+                        : e.target.value;
                 updateWhere(wi, { value });
               }}
               placeholder="value"
@@ -601,7 +681,12 @@ function AdvancedHopOptions({
               className="text-slate-600 hover:text-red-400 transition-colors p-0.5"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -649,7 +734,7 @@ function reconstructPath(
     uid: direction === 'forward' ? edge.bUid : edge.aUid,
     nodeType: direction === 'forward' ? edge.bType : edge.aType,
     edgeType: edge.axbType,
-    direction: direction === 'forward' ? 'out' as const : 'in' as const,
+    direction: direction === 'forward' ? ('out' as const) : ('in' as const),
   }));
 
   // Add the final frame (the node the user clicked)
@@ -752,9 +837,7 @@ function TraversalResults({
               <span className="text-slate-600 text-xs">
                 ({hop.direction}, {hop.edges.length} edges from {hop.sourceCount} sources)
               </span>
-              {hop.truncated && (
-                <span className="text-amber-400 text-[10px]">truncated</span>
-              )}
+              {hop.truncated && <span className="text-amber-400 text-[10px]">truncated</span>}
               {hop.edges.length > 0 && (
                 <button
                   onClick={() => handleExplore(i)}
@@ -773,18 +856,17 @@ function TraversalResults({
                   allHops={result.hops}
                   hopIndex={i}
                   edgeViews={viewRegistry?.edges[edge.axbType]?.views ?? []}
-                  nodeViews={viewRegistry?.nodes[hop.direction === 'forward' ? edge.bType : edge.aType]?.views ?? []}
+                  nodeViews={
+                    viewRegistry?.nodes[hop.direction === 'forward' ? edge.bType : edge.aType]
+                      ?.views ?? []
+                  }
                   config={config}
                 />
               ))}
               {hop.edges.length > 20 && (
-                <p className="text-xs text-slate-500 pl-2">
-                  ... and {hop.edges.length - 20} more
-                </p>
+                <p className="text-xs text-slate-500 pl-2">... and {hop.edges.length - 20} more</p>
               )}
-              {hop.edges.length === 0 && (
-                <p className="text-xs text-slate-500">No edges found</p>
-              )}
+              {hop.edges.length === 0 && <p className="text-xs text-slate-500">No edges found</p>}
             </div>
           </div>
         ))}
@@ -911,19 +993,21 @@ function HopEdgeRow({
     <div className="bg-slate-800/50 rounded-lg">
       {/* Source line */}
       <div className="px-3 pt-2 pb-1 flex items-center gap-2 text-xs text-slate-500">
-        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(sourceType)}`}>
+        <span
+          className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(sourceType)}`}
+        >
           {sourceType}
         </span>
         <span className="font-mono text-slate-400">{sourceUid}</span>
-        <span className="text-slate-600">
-          {direction === 'forward' ? '\u2192' : '\u2190'}
-        </span>
+        <span className="text-slate-600">{direction === 'forward' ? '\u2192' : '\u2190'}</span>
         <span className="text-slate-600 font-mono text-[10px]">{edge.axbType}</span>
       </div>
 
       {/* Target line with actions */}
       <div className="px-3 pb-2 flex items-center gap-3">
-        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(targetType)}`}>
+        <span
+          className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(targetType)}`}
+        >
           {targetType}
         </span>
         {drill ? (
@@ -983,7 +1067,11 @@ function HopEdgeRow({
         <div className="px-3 pb-2">
           {edgeViews.length > 0 && (
             <div className="mb-2">
-              <ViewSwitcher views={edgeViews} activeView={edgeViewMode} onSwitch={setEdgeViewMode} />
+              <ViewSwitcher
+                views={edgeViews}
+                activeView={edgeViewMode}
+                onSwitch={setEdgeViewMode}
+              />
             </div>
           )}
           {edgeViewMode === 'json' ? (
@@ -991,7 +1079,11 @@ function HopEdgeRow({
               <JsonView data={data} defaultExpanded />
             </div>
           ) : (
-            <CustomView tagName={edgeViewMode} data={data as Record<string, unknown>} onError={() => setEdgeViewMode('json')} />
+            <CustomView
+              tagName={edgeViewMode}
+              data={data as Record<string, unknown>}
+              onError={() => setEdgeViewMode('json')}
+            />
           )}
         </div>
       )}
@@ -1008,7 +1100,11 @@ function HopEdgeRow({
                   Node Data
                 </span>
                 {nodeViews.length > 0 && (
-                  <ViewSwitcher views={nodeViews} activeView={nodeViewMode} onSwitch={setNodeViewMode} />
+                  <ViewSwitcher
+                    views={nodeViews}
+                    activeView={nodeViewMode}
+                    onSwitch={setNodeViewMode}
+                  />
                 )}
               </div>
               {nodeViewMode === 'json' ? (
@@ -1016,7 +1112,11 @@ function HopEdgeRow({
                   <JsonView data={nodeData.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={nodeViewMode} data={nodeData.data as Record<string, unknown>} onError={() => setNodeViewMode('json')} />
+                <CustomView
+                  tagName={nodeViewMode}
+                  data={nodeData.data as Record<string, unknown>}
+                  onError={() => setNodeViewMode('json')}
+                />
               )}
             </div>
           )}

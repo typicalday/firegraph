@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { Schema, ViewRegistryData, AppConfig } from '../types';
-import { useDrill, DrillOverrideContext, type DrillFrame, type Lane } from './drill-context';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import type { AppConfig, Schema, ViewRegistryData } from '../types';
+import { type DrillFrame, DrillOverrideContext, type Lane, useDrill } from './drill-context';
 import DrillBreadcrumb from './DrillBreadcrumb';
-import { NodeDetailContent } from './NodeDetail';
 import { useFocusMaybe } from './focus-context';
+import { NodeDetailContent } from './NodeDetail';
 
 interface Props {
   schema: Schema;
@@ -39,11 +40,18 @@ function prefixMatchLength(lane: DrillFrame[], desired: DrillFrame[]): number {
  */
 export default function DrillStack({ schema, viewRegistry, config, onDataChanged }: Props) {
   const {
-    lanes, activeLaneId, activeLane, activeIndex,
+    lanes,
+    activeLaneId,
+    activeIndex,
     previewLaneId,
-    previewFrame, clearPreview,
-    extendLane, extendPath, forkAndDrill, createLane,
-    switchLane, popTo: ctxPopTo,
+    previewFrame,
+    clearPreview,
+    extendLane,
+    extendPath,
+    forkAndDrill,
+    createLane,
+    switchLane,
+    popTo: ctxPopTo,
   } = useDrill();
 
   const focus = useFocusMaybe();
@@ -293,7 +301,17 @@ export default function DrillStack({ schema, viewRegistry, config, onDataChanged
 
       setPeek(null);
     },
-    [vLane, visualLaneId, visualIndex, lanes, activeLaneId, extendPath, createLane, switchLane, ctxPopTo],
+    [
+      vLane,
+      visualLaneId,
+      visualIndex,
+      lanes,
+      activeLaneId,
+      extendPath,
+      createLane,
+      switchLane,
+      ctxPopTo,
+    ],
   );
 
   const scopedPopTo = useCallback(

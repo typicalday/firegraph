@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { createPipelineQueryAdapter } from '../../src/internal/pipeline-adapter.js';
 
 /**
@@ -8,11 +9,23 @@ import { createPipelineQueryAdapter } from '../../src/internal/pipeline-adapter.
 function createMockDb() {
   const calls: { method: string; args: unknown[] }[] = [];
   const resultData = [
-    { aType: 'tour', aUid: 'u1', axbType: 'is', bType: 'tour', bUid: 'u1', data: { name: 'Tour A' } },
-    { aType: 'tour', aUid: 'u2', axbType: 'is', bType: 'tour', bUid: 'u2', data: { name: 'Tour B' } },
+    {
+      aType: 'tour',
+      aUid: 'u1',
+      axbType: 'is',
+      bType: 'tour',
+      bUid: 'u1',
+      data: { name: 'Tour A' },
+    },
+    {
+      aType: 'tour',
+      aUid: 'u2',
+      axbType: 'is',
+      bType: 'tour',
+      bUid: 'u2',
+      data: { name: 'Tour B' },
+    },
   ];
-
-  const chain: Record<string, (...args: unknown[]) => unknown> = {};
 
   const pipelineObj = new Proxy(
     {},
@@ -20,7 +33,7 @@ function createMockDb() {
       get(_target, prop: string) {
         if (prop === 'execute') {
           return async () => ({
-            results: resultData.map(d => ({ data: () => d })),
+            results: resultData.map((d) => ({ data: () => d })),
           });
         }
         // All other methods return the chain for fluent chaining
@@ -44,9 +57,7 @@ describe('createPipelineQueryAdapter', () => {
     const { db, calls, resultData } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    const results = await adapter.query([
-      { field: 'axbType', op: '==', value: 'is' },
-    ]);
+    const results = await adapter.query([{ field: 'axbType', op: '==', value: 'is' }]);
 
     expect(results).toHaveLength(2);
     expect(results[0]).toEqual(resultData[0]);
@@ -79,12 +90,11 @@ describe('createPipelineQueryAdapter', () => {
     const { db, calls } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    await adapter.query(
-      [{ field: 'axbType', op: '==', value: 'is' }],
-      { orderBy: { field: 'data.name', direction: 'asc' } },
-    );
+    await adapter.query([{ field: 'axbType', op: '==', value: 'is' }], {
+      orderBy: { field: 'data.name', direction: 'asc' },
+    });
 
-    const methodNames = calls.map(c => c.method);
+    const methodNames = calls.map((c) => c.method);
     expect(methodNames).toContain('sort');
   });
 
@@ -92,12 +102,9 @@ describe('createPipelineQueryAdapter', () => {
     const { db, calls } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    await adapter.query(
-      [{ field: 'axbType', op: '==', value: 'is' }],
-      { limit: 10 },
-    );
+    await adapter.query([{ field: 'axbType', op: '==', value: 'is' }], { limit: 10 });
 
-    const limitCall = calls.find(c => c.method === 'limit');
+    const limitCall = calls.find((c) => c.method === 'limit');
     expect(limitCall).toBeDefined();
     expect(limitCall!.args[0]).toBe(10);
   });
@@ -106,12 +113,12 @@ describe('createPipelineQueryAdapter', () => {
     const { db, calls } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    await adapter.query(
-      [{ field: 'axbType', op: '==', value: 'is' }],
-      { orderBy: { field: 'data.price', direction: 'desc' }, limit: 5 },
-    );
+    await adapter.query([{ field: 'axbType', op: '==', value: 'is' }], {
+      orderBy: { field: 'data.price', direction: 'desc' },
+      limit: 5,
+    });
 
-    const methodNames = calls.map(c => c.method);
+    const methodNames = calls.map((c) => c.method);
     expect(methodNames).toContain('sort');
     expect(methodNames).toContain('limit');
     // sort should come before limit
@@ -150,9 +157,7 @@ describe('createPipelineQueryAdapter', () => {
     } as any;
 
     const adapter = createPipelineQueryAdapter(db, 'graph');
-    const results = await adapter.query([
-      { field: 'axbType', op: '==', value: 'nonexistent' },
-    ]);
+    const results = await adapter.query([{ field: 'axbType', op: '==', value: 'nonexistent' }]);
 
     expect(results).toEqual([]);
   });
@@ -165,7 +170,7 @@ describe('createPipelineQueryAdapter', () => {
 
     // Should have collection but no where
     expect(calls[0].method).toBe('collection');
-    const methodNames = calls.map(c => c.method);
+    const methodNames = calls.map((c) => c.method);
     expect(methodNames).not.toContain('where');
     expect(results).toHaveLength(2);
   });
@@ -174,23 +179,21 @@ describe('createPipelineQueryAdapter', () => {
     const { db, calls } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    await adapter.query(
-      [{ field: 'axbType', op: '==', value: 'is' }],
-      { orderBy: { field: 'data.price', direction: 'desc' } },
-    );
+    await adapter.query([{ field: 'axbType', op: '==', value: 'is' }], {
+      orderBy: { field: 'data.price', direction: 'desc' },
+    });
 
-    expect(calls.find(c => c.method === 'sort')).toBeDefined();
+    expect(calls.find((c) => c.method === 'sort')).toBeDefined();
   });
 
   it('defaults to ascending sort when no direction specified', async () => {
     const { db, calls } = createMockDb();
     const adapter = createPipelineQueryAdapter(db, 'graph');
 
-    await adapter.query(
-      [{ field: 'axbType', op: '==', value: 'is' }],
-      { orderBy: { field: 'data.name' } },
-    );
+    await adapter.query([{ field: 'axbType', op: '==', value: 'is' }], {
+      orderBy: { field: 'data.name' },
+    });
 
-    expect(calls.find(c => c.method === 'sort')).toBeDefined();
+    expect(calls.find((c) => c.method === 'sort')).toBeDefined();
   });
 });

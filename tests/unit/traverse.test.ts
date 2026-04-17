@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createTraversal, _resetCrossGraphWarning } from '../../src/traverse.js';
-import { createRegistry } from '../../src/registry.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { TraversalError } from '../../src/errors.js';
-import type { GraphReader, StoredGraphRecord, FindEdgesParams } from '../../src/types.js';
+import { createRegistry } from '../../src/registry.js';
+import { _resetCrossGraphWarning, createTraversal } from '../../src/traverse.js';
+import type { FindEdgesParams, GraphReader, StoredGraphRecord } from '../../src/types.js';
 
 function makeEdge(overrides: Partial<StoredGraphRecord>): StoredGraphRecord {
   return {
@@ -42,10 +43,7 @@ describe('createTraversal', () => {
 
     it('accumulates multiple hops via chaining', async () => {
       const reader = createMockReader(async () => []);
-      const builder = createTraversal(reader, 'start')
-        .follow('relA')
-        .follow('relB')
-        .follow('relC');
+      const builder = createTraversal(reader, 'start').follow('relA').follow('relB').follow('relC');
 
       const result = await builder.run();
       expect(result.hops).toHaveLength(3);
@@ -57,9 +55,7 @@ describe('createTraversal', () => {
       );
       const reader = createMockReader(async () => edges);
 
-      const result = await createTraversal(reader, 'start')
-        .follow('rel')
-        .run();
+      await createTraversal(reader, 'start').follow('rel').run();
 
       // Default limit=10 is applied at Firestore level (via params.limit)
       // The reader was called with limit=10
@@ -70,9 +66,7 @@ describe('createTraversal', () => {
     it('direction defaults to forward', async () => {
       const reader = createMockReader(async () => []);
 
-      await createTraversal(reader, 'start')
-        .follow('rel')
-        .run();
+      await createTraversal(reader, 'start').follow('rel').run();
 
       const call = (reader.findEdges as any).mock.calls[0][0] as FindEdgesParams;
       expect(call.aUid).toBe('start');
@@ -91,9 +85,7 @@ describe('createTraversal', () => {
         return [];
       });
 
-      const result = await createTraversal(reader, 'tour1')
-        .follow('hasDeparture')
-        .run();
+      const result = await createTraversal(reader, 'tour1').follow('hasDeparture').run();
 
       expect(result.nodes).toHaveLength(2);
       expect(result.totalReads).toBe(1);
@@ -104,9 +96,7 @@ describe('createTraversal', () => {
     });
 
     it('returns edges from reverse hop', async () => {
-      const edges = [
-        makeEdge({ aUid: 'dep1', bUid: 'rider1', axbType: 'hasRider' }),
-      ];
+      const edges = [makeEdge({ aUid: 'dep1', bUid: 'rider1', axbType: 'hasRider' })];
       const reader = createMockReader(async (params) => {
         if (params.bUid === 'rider1' && params.axbType === 'hasRider') return edges;
         return [];
@@ -180,7 +170,9 @@ describe('createTraversal', () => {
           );
         }
         if (params.axbType === 'hasRider') {
-          return [makeEdge({ aUid: params.aUid!, bUid: `rider-${params.aUid}`, axbType: 'hasRider' })];
+          return [
+            makeEdge({ aUid: params.aUid!, bUid: `rider-${params.aUid}`, axbType: 'hasRider' }),
+          ];
         }
         return [];
       });
@@ -201,9 +193,7 @@ describe('createTraversal', () => {
         return [makeEdge({ bUid: `n${callCount}` })];
       });
 
-      await createTraversal(reader, 'start')
-        .follow('rel')
-        .run({ maxReads: 1 });
+      await createTraversal(reader, 'start').follow('rel').run({ maxReads: 1 });
 
       expect(callCount).toBe(1);
     });
@@ -213,9 +203,7 @@ describe('createTraversal', () => {
     it('passes custom limit to findEdges params', async () => {
       const reader = createMockReader(async () => []);
 
-      await createTraversal(reader, 'start')
-        .follow('rel', { limit: 3 })
-        .run();
+      await createTraversal(reader, 'start').follow('rel', { limit: 3 }).run();
 
       const call = (reader.findEdges as any).mock.calls[0][0] as FindEdgesParams;
       expect(call.limit).toBe(3);
@@ -259,9 +247,7 @@ describe('createTraversal', () => {
     it('passes bType in forward direction', async () => {
       const reader = createMockReader(async () => []);
 
-      await createTraversal(reader, 'start')
-        .follow('rel', { bType: 'departure' })
-        .run();
+      await createTraversal(reader, 'start').follow('rel', { bType: 'departure' }).run();
 
       const call = (reader.findEdges as any).mock.calls[0][0] as FindEdgesParams;
       expect(call.bType).toBe('departure');
@@ -294,10 +280,7 @@ describe('createTraversal', () => {
         return [];
       });
 
-      const result = await createTraversal(reader, 'start')
-        .follow('rel1')
-        .follow('rel2')
-        .run();
+      const result = await createTraversal(reader, 'start').follow('rel1').follow('rel2').run();
 
       // Should only query once for 'shared' in second hop despite duplicates
       expect(result.hops[1].sourceCount).toBe(1);
@@ -340,9 +323,7 @@ describe('createTraversal', () => {
 
     it('falls back to local query when reader lacks subgraph()', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const edges = [
-        makeEdge({ aUid: 'task1', bUid: 'agent1', axbType: 'assignedTo' }),
-      ];
+      const edges = [makeEdge({ aUid: 'task1', bUid: 'agent1', axbType: 'assignedTo' })];
       const reader = createMockReader(async (params) => {
         if (params.aUid === 'task1' && params.axbType === 'assignedTo') return edges;
         return [];
@@ -353,9 +334,7 @@ describe('createTraversal', () => {
       ]);
 
       // Plain reader (no subgraph method) — should still work, just queries locally
-      const result = await createTraversal(reader, 'task1', registry)
-        .follow('assignedTo')
-        .run();
+      const result = await createTraversal(reader, 'task1', registry).follow('assignedTo').run();
 
       expect(result.nodes).toHaveLength(1);
       expect(result.totalReads).toBe(1);
@@ -383,9 +362,7 @@ describe('createTraversal', () => {
         { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
       ]);
 
-      await createTraversal(reader, 'task1', registry)
-        .follow('assignedTo')
-        .run();
+      await createTraversal(reader, 'task1', registry).follow('assignedTo').run();
 
       expect(warnSpy).toHaveBeenCalledOnce();
       expect(warnSpy.mock.calls[0][0]).toContain('assignedTo');
@@ -399,9 +376,7 @@ describe('createTraversal', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const reader = createMockReader(async () => []);
 
-      await createTraversal(reader, 'start')
-        .follow('rel', { targetGraph: 'sub' })
-        .run();
+      await createTraversal(reader, 'start').follow('rel', { targetGraph: 'sub' }).run();
 
       expect(warnSpy).toHaveBeenCalledOnce();
       expect(warnSpy.mock.calls[0][0]).toContain('sub');
@@ -413,13 +388,9 @@ describe('createTraversal', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const reader = createMockReader(async () => []);
 
-      await createTraversal(reader, 'start')
-        .follow('rel', { targetGraph: 'sub' })
-        .run();
+      await createTraversal(reader, 'start').follow('rel', { targetGraph: 'sub' }).run();
 
-      await createTraversal(reader, 'start')
-        .follow('rel', { targetGraph: 'sub' })
-        .run();
+      await createTraversal(reader, 'start').follow('rel', { targetGraph: 'sub' }).run();
 
       expect(warnSpy).toHaveBeenCalledOnce();
 
@@ -462,10 +433,26 @@ describe('createTraversal', () => {
     it('carries forward subgraph reader to subsequent hops without targetGraph', async () => {
       const subgraphReader = createMockReader(async (params) => {
         if (params.axbType === 'hasStep') {
-          return [makeEdge({ aUid: params.aUid!, bUid: 'step1', axbType: 'hasStep', aType: 'task', bType: 'step' })];
+          return [
+            makeEdge({
+              aUid: params.aUid!,
+              bUid: 'step1',
+              axbType: 'hasStep',
+              aType: 'task',
+              bType: 'step',
+            }),
+          ];
         }
         if (params.axbType === 'hasDetail') {
-          return [makeEdge({ aUid: params.aUid!, bUid: 'detail1', axbType: 'hasDetail', aType: 'step', bType: 'detail' })];
+          return [
+            makeEdge({
+              aUid: params.aUid!,
+              bUid: 'detail1',
+              axbType: 'hasDetail',
+              aType: 'step',
+              bType: 'detail',
+            }),
+          ];
         }
         return [];
       });
@@ -483,8 +470,8 @@ describe('createTraversal', () => {
       };
 
       const result = await createTraversal(mockClient, 'task1')
-        .follow('hasStep', { targetGraph: 'workflow' })  // crosses into subgraph
-        .follow('hasDetail')                                // should stay in subgraph
+        .follow('hasStep', { targetGraph: 'workflow' }) // crosses into subgraph
+        .follow('hasDetail') // should stay in subgraph
         .run();
 
       // Hop 1 crosses into subgraph — subgraph() called
@@ -531,8 +518,8 @@ describe('createTraversal', () => {
       };
 
       const result = await createTraversal(mockClient, 'task1')
-        .follow('hasStep', { targetGraph: 'workflow' })  // crosses into workflow
-        .follow('assignedTo', { targetGraph: 'team' })   // crosses into team (relative to root)
+        .follow('hasStep', { targetGraph: 'workflow' }) // crosses into workflow
+        .follow('assignedTo', { targetGraph: 'team' }) // crosses into team (relative to root)
         .run();
 
       // First hop: subgraph('task1', 'workflow')
@@ -554,10 +541,7 @@ describe('createTraversal', () => {
         return [];
       });
 
-      const result = await createTraversal(rootReader, 'start')
-        .follow('rel1')
-        .follow('rel2')
-        .run();
+      const result = await createTraversal(rootReader, 'start').follow('rel1').follow('rel2').run();
 
       // All queries go to root reader
       expect(rootReader.findEdges).toHaveBeenCalledTimes(2);
@@ -573,7 +557,9 @@ describe('createTraversal', () => {
           );
         }
         if (params.axbType === 'hasDetail') {
-          return [makeEdge({ aUid: params.aUid!, bUid: `detail-${params.aUid}`, axbType: 'hasDetail' })];
+          return [
+            makeEdge({ aUid: params.aUid!, bUid: `detail-${params.aUid}`, axbType: 'hasDetail' }),
+          ];
         }
         return [];
       });
@@ -668,10 +654,7 @@ describe('createTraversal', () => {
         return [];
       });
 
-      await createTraversal(reader, 'start')
-        .follow('rel1')
-        .follow('rel2')
-        .run({ concurrency: 2 });
+      await createTraversal(reader, 'start').follow('rel1').follow('rel2').run({ concurrency: 2 });
 
       expect(maxConcurrent).toBeLessThanOrEqual(2);
     });

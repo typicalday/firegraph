@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Schema, ViewRegistryData, EntityViewMeta } from '../types';
+
+import type { EntityViewMeta, Schema, ViewRegistryData } from '../types';
 import CustomView from './CustomView';
 
 interface Props {
@@ -7,13 +8,14 @@ interface Props {
   schema: Schema;
 }
 
-export default function ViewGallery({ viewRegistry, schema }: Props) {
+export default function ViewGallery({ viewRegistry, schema: _schema }: Props) {
   if (!viewRegistry || !viewRegistry.hasViews) {
     return (
       <div className="p-6 max-w-6xl mx-auto">
         <h1 className="text-xl font-bold mb-2">Views</h1>
         <p className="text-sm text-slate-400">
-          No views configured. Use <code className="text-slate-300">--views &lt;path&gt;</code> to load a views file.
+          No views configured. Use <code className="text-slate-300">--views &lt;path&gt;</code> to
+          load a views file.
         </p>
       </div>
     );
@@ -33,9 +35,7 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold mb-1">View Gallery</h1>
-        <p className="text-sm text-slate-400">
-          Preview all registered views with sample data
-        </p>
+        <p className="text-sm text-slate-400">Preview all registered views with sample data</p>
       </div>
 
       {/* Node Views */}
@@ -46,12 +46,7 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
           </h2>
           <div className="space-y-6">
             {nodeEntries.map(([entityType, meta]) => (
-              <EntityViewSection
-                key={entityType}
-                entityType={entityType}
-                meta={meta}
-                kind="node"
-              />
+              <EntityViewSection key={entityType} entityType={entityType} meta={meta} kind="node" />
             ))}
           </div>
         </section>
@@ -65,12 +60,7 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
           </h2>
           <div className="space-y-6">
             {edgeEntries.map(([axbType, meta]) => (
-              <EntityViewSection
-                key={axbType}
-                entityType={axbType}
-                meta={meta}
-                kind="edge"
-              />
+              <EntityViewSection key={axbType} entityType={axbType} meta={meta} kind="edge" />
             ))}
           </div>
         </section>
@@ -84,12 +74,7 @@ export default function ViewGallery({ viewRegistry, schema }: Props) {
           </h2>
           <div className="space-y-6">
             {collectionEntries.map(([name, meta]) => (
-              <EntityViewSection
-                key={name}
-                entityType={name}
-                meta={meta}
-                kind="collection"
-              />
+              <EntityViewSection key={name} entityType={name} meta={meta} kind="collection" />
             ))}
           </div>
         </section>
@@ -157,21 +142,23 @@ function EntityViewSection({
       )}
 
       {/* Views grid */}
-      <div className={`grid gap-4 ${meta.views.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+      <div
+        className={`grid gap-4 ${meta.views.length === 1 ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}
+      >
         {meta.views.map((view) => (
-            <div key={view.tagName} className="bg-slate-950 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-xs font-semibold text-slate-300">{view.viewName}</span>
-                {view.description && (
-                  <span className="text-[10px] text-slate-500">{view.description}</span>
-                )}
-                <span className="ml-auto text-[10px] text-slate-600 font-mono">
-                  &lt;{view.tagName}&gt;
-                </span>
-              </div>
-              <CustomView tagName={view.tagName} data={parsedData} />
+          <div key={view.tagName} className="bg-slate-950 rounded-lg p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-semibold text-slate-300">{view.viewName}</span>
+              {view.description && (
+                <span className="text-[10px] text-slate-500">{view.description}</span>
+              )}
+              <span className="ml-auto text-[10px] text-slate-600 font-mono">
+                &lt;{view.tagName}&gt;
+              </span>
             </div>
-          ))}
+            <CustomView tagName={view.tagName} data={parsedData} />
+          </div>
+        ))}
       </div>
     </div>
   );

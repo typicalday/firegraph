@@ -5,8 +5,9 @@
  * Only handles query() — doc-level operations (get/set/update/delete) stay
  * on the standard FirestoreAdapter.
  */
-import type { Firestore } from '@google-cloud/firestore';
-import type { StoredGraphRecord, QueryFilter, QueryOptions } from '../types.js';
+import type { Firestore, Pipelines } from '@google-cloud/firestore';
+
+import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 
 /**
  * Minimal interface for the Pipeline query adapter.
@@ -20,9 +21,9 @@ export interface PipelineQueryAdapter {
  * Lazily loaded Pipelines module. We use dynamic import so that standard-mode
  * users (and the emulator) don't pull in pipeline-related code at module load.
  */
-let _Pipelines: typeof import('@google-cloud/firestore').Pipelines | null = null;
+let _Pipelines: typeof Pipelines | null = null;
 
-async function getPipelines(): Promise<typeof import('@google-cloud/firestore').Pipelines> {
+async function getPipelines(): Promise<typeof Pipelines> {
   if (!_Pipelines) {
     const mod = await import('@google-cloud/firestore');
     _Pipelines = mod.Pipelines;
@@ -30,8 +31,8 @@ async function getPipelines(): Promise<typeof import('@google-cloud/firestore').
   return _Pipelines;
 }
 
-type PipelinesType = typeof import('@google-cloud/firestore').Pipelines;
-type BooleanExpr = import('@google-cloud/firestore').Pipelines.BooleanExpression;
+type PipelinesType = typeof Pipelines;
+type BooleanExpr = Pipelines.BooleanExpression;
 
 /**
  * Maps a QueryFilter to a Pipeline BooleanExpression.
@@ -39,10 +40,7 @@ type BooleanExpr = import('@google-cloud/firestore').Pipelines.BooleanExpression
  * Uses the string-based overloads (e.g. `equal(fieldName, value)`) which
  * accept `unknown` values, avoiding type issues with `constant()` overloads.
  */
-function buildFilterExpression(
-  P: PipelinesType,
-  filter: QueryFilter,
-): BooleanExpr {
+function buildFilterExpression(P: PipelinesType, filter: QueryFilter): BooleanExpr {
   const { field: fieldName, op, value } = filter;
 
   switch (op) {
@@ -86,16 +84,14 @@ export function createPipelineQueryAdapter(
       if (filters.length === 1) {
         pipeline = pipeline.where(buildFilterExpression(P, filters[0]));
       } else if (filters.length > 1) {
-        const [first, second, ...rest] = filters.map(f => buildFilterExpression(P, f));
+        const [first, second, ...rest] = filters.map((f) => buildFilterExpression(P, f));
         pipeline = pipeline.where(P.and(first, second, ...rest));
       }
 
       // Apply sort
       if (options?.orderBy) {
         const f = P.field(options.orderBy.field);
-        const ordering = options.orderBy.direction === 'desc'
-          ? f.descending()
-          : f.ascending();
+        const ordering = options.orderBy.direction === 'desc' ? f.descending() : f.ascending();
         pipeline = pipeline.sort(ordering);
       }
 
@@ -105,7 +101,7 @@ export function createPipelineQueryAdapter(
       }
 
       const snap = await pipeline.execute();
-      return snap.results.map(r => r.data() as StoredGraphRecord);
+      return snap.results.map((r) => r.data() as StoredGraphRecord);
     },
   };
 }

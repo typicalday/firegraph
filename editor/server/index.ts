@@ -1,30 +1,31 @@
-import express from 'express';
+import { Firestore } from '@google-cloud/firestore';
+import * as trpcExpress from '@trpc/server/adapters/express';
 import cors from 'cors';
+import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Firestore } from '@google-cloud/firestore';
-import { createGraphClient } from '../../src/index.js';
-import type { GraphClient, GraphRegistry, DiscoveryResult, QueryMode } from '../../src/types.js';
-import { createRegistry } from '../../src/registry.js';
-import { introspectRegistry } from './schema-introspect.js';
-import type { SchemaMetadata } from './schema-introspect.js';
-import { bundleEntityViews } from './views-bundler.js';
-import type { ViewRegistry, EntityViewMeta } from '../../src/views.js';
-import type { ViewBundle } from './views-bundler.js';
-import { loadConfig } from './config-loader.js';
-import type { LoadedConfig } from './config-loader.js';
-import { validateSchemaViews } from './schema-views-validator.js';
-import type { SchemaViewWarning } from './schema-views-validator.js';
-import { buildViewRegistryFromDiscovery, mergeViewDefaults } from './entities-loader.js';
+
 import { discoverEntities } from '../../src/discover.js';
-import { discoverCollections, buildCollectionViewRegistry } from './collections-loader.js';
-import type { DiscoveredCollection } from './collections-loader.js';
-import * as trpcExpress from '@trpc/server/adapters/express';
-import { appRouter, createContext } from './trpc.js';
+import { createGraphClient } from '../../src/index.js';
+import { createRegistry } from '../../src/registry.js';
+import type { GraphClient, GraphRegistry, QueryMode, RegistryEntry } from '../../src/types.js';
+import type { EntityViewMeta, ViewRegistry } from '../../src/views.js';
 import { detectClaude, registerChatRoutes } from './chat.js';
-import { loadDynamicTypes } from './dynamic-loader.js';
+import type { DiscoveredCollection } from './collections-loader.js';
+import { buildCollectionViewRegistry, discoverCollections } from './collections-loader.js';
+import type { LoadedConfig } from './config-loader.js';
+import { loadConfig } from './config-loader.js';
 import type { DynamicTypeMetadata } from './dynamic-loader.js';
-import { generateDynamicViewsBundle, getDynamicViewTags, validateTemplate } from './dynamic-views-generator.js';
+import { loadDynamicTypes } from './dynamic-loader.js';
+import { generateDynamicViewsBundle, validateTemplate } from './dynamic-views-generator.js';
+import { buildViewRegistryFromDiscovery, mergeViewDefaults } from './entities-loader.js';
+import type { SchemaMetadata } from './schema-introspect.js';
+import { introspectRegistry } from './schema-introspect.js';
+import type { SchemaViewWarning } from './schema-views-validator.js';
+import { validateSchemaViews } from './schema-views-validator.js';
+import { appRouter, createContext } from './trpc.js';
+import type { ViewBundle } from './views-bundler.js';
+import { bundleEntityViews } from './views-bundler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,7 +70,8 @@ function parseArgs(): CliArgs {
     else if (arg.startsWith('--port=')) port = parseInt(arg.split('=')[1], 10);
     else if (arg === '--port' && args[i + 1]) port = parseInt(args[++i], 10);
     else if (arg.startsWith('--emulator=')) emulator = arg.split('=')[1];
-    else if (arg === '--emulator' && args[i + 1] && !args[i + 1].startsWith('--')) emulator = args[++i];
+    else if (arg === '--emulator' && args[i + 1] && !args[i + 1].startsWith('--'))
+      emulator = args[++i];
     else if (arg === '--emulator') emulator = '127.0.0.1:8080';
     else if (arg.startsWith('--query-mode=')) {
       const val = arg.split('=')[1];
@@ -77,13 +79,14 @@ function parseArgs(): CliArgs {
     } else if (arg === '--query-mode' && args[i + 1]) {
       const val = args[++i];
       if (val === 'pipeline' || val === 'standard') queryMode = val;
-    }
-    else if (arg === '--readonly') readonly = true;
-    else if (arg === '--registry-mode=dynamic' || arg === '--registry-mode' && args[i + 1] === 'dynamic') {
+    } else if (arg === '--readonly') readonly = true;
+    else if (
+      arg === '--registry-mode=dynamic' ||
+      (arg === '--registry-mode' && args[i + 1] === 'dynamic')
+    ) {
       registryMode = 'dynamic';
       if (arg === '--registry-mode') i++; // consume the 'dynamic' arg
-    }
-    else if (arg.startsWith('--meta-collection=')) metaCollection = arg.split('=')[1];
+    } else if (arg.startsWith('--meta-collection=')) metaCollection = arg.split('=')[1];
     else if (arg === '--meta-collection' && args[i + 1]) metaCollection = args[++i];
   }
 
@@ -93,7 +96,18 @@ function parseArgs(): CliArgs {
   collection = collection || process.env.FIREGRAPH_COLLECTION;
   if (!port && process.env.PORT) port = parseInt(process.env.PORT, 10);
 
-  return { configPath, entitiesPath, project, collection, port, emulator, queryMode, readonly, registryMode, metaCollection };
+  return {
+    configPath,
+    entitiesPath,
+    project,
+    collection,
+    port,
+    emulator,
+    queryMode,
+    readonly,
+    registryMode,
+    metaCollection,
+  };
 }
 
 const cliArgs = parseArgs();
@@ -143,7 +157,7 @@ const state: EditorState = {
 };
 
 /** Static entries from filesystem discovery (kept for hybrid merge). */
-let staticEntries: ReadonlyArray<import('../../src/types.js').RegistryEntry> = [];
+let staticEntries: ReadonlyArray<RegistryEntry> = [];
 let staticNodeNames: Set<string> = new Set();
 let staticEdgeNames: Set<string> = new Set();
 /** Names of types loaded from dynamic registry. */
@@ -252,7 +266,7 @@ async function reloadDynamicSchema(): Promise<ReloadResult> {
 
   // 2. Filter: filesystem types take precedence on conflict
   const shadowed: string[] = [];
-  const filteredEntries = dynamic.entries.filter(entry => {
+  const filteredEntries = dynamic.entries.filter((entry) => {
     if (entry.axbType === 'is') {
       // Node type
       if (staticNodeNames.has(entry.aType)) {
@@ -272,11 +286,9 @@ async function reloadDynamicSchema(): Promise<ReloadResult> {
   });
 
   // 3. Track dynamic names (after filtering)
-  dynamicNodeNames = new Set(
-    filteredEntries.filter(e => e.axbType === 'is').map(e => e.aType),
-  );
+  dynamicNodeNames = new Set(filteredEntries.filter((e) => e.axbType === 'is').map((e) => e.aType));
   dynamicEdgeNames = new Set(
-    filteredEntries.filter(e => e.axbType !== 'is').map(e => e.axbType),
+    filteredEntries.filter((e) => e.axbType !== 'is').map((e) => e.axbType),
   );
 
   // 4. Merge: static entries + filtered dynamic entries
@@ -311,7 +323,7 @@ async function reloadDynamicSchema(): Promise<ReloadResult> {
   for (const [name, meta] of Object.entries(dynamic.dynamicTypeMeta.edges)) {
     if (!meta.viewTemplate) continue;
     // Find any entry with this axbType
-    const entry = state.registry.entries().find(e => e.axbType === name);
+    const entry = state.registry.entries().find((e) => e.axbType === name);
     const warnings = validateTemplate(meta.viewTemplate, entry?.jsonSchema);
     for (const w of warnings) {
       console.log(`    [template-warn] ${name}: ${w}`);
@@ -351,12 +363,8 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
   // Build registry from discovery
   const filesystemRegistry = createRegistry(discovery);
   staticEntries = filesystemRegistry.entries();
-  staticNodeNames = new Set(
-    staticEntries.filter(e => e.axbType === 'is').map(e => e.aType),
-  );
-  staticEdgeNames = new Set(
-    staticEntries.filter(e => e.axbType !== 'is').map(e => e.axbType),
-  );
+  staticNodeNames = new Set(staticEntries.filter((e) => e.axbType === 'is').map((e) => e.aType));
+  staticEdgeNames = new Set(staticEntries.filter((e) => e.axbType !== 'is').map((e) => e.axbType));
 
   state.registry = filesystemRegistry;
   state.schemaMetadata = introspectRegistry(state.registry);
@@ -367,8 +375,14 @@ async function initEntitiesMode(fileConfig: LoadedConfig) {
   // Build view registry from per-entity view files
   state.viewRegistry = await buildViewRegistryFromDiscovery(discovery);
   if (state.viewRegistry) {
-    const nodeViewCount = Object.values(state.viewRegistry.nodes).reduce((sum, m) => sum + m.views.length, 0);
-    const edgeViewCount = Object.values(state.viewRegistry.edges).reduce((sum, m) => sum + m.views.length, 0);
+    const nodeViewCount = Object.values(state.viewRegistry.nodes).reduce(
+      (sum, m) => sum + m.views.length,
+      0,
+    );
+    const edgeViewCount = Object.values(state.viewRegistry.edges).reduce(
+      (sum, m) => sum + m.views.length,
+      0,
+    );
     console.log(`  Views loaded: ${nodeViewCount} node views, ${edgeViewCount} edge views`);
   }
 
@@ -406,7 +420,10 @@ function crossValidate() {
       }
     }
   } catch (err) {
-    console.error('  Warning: schema/views validation failed:', err instanceof Error ? err.message : String(err));
+    console.error(
+      '  Warning: schema/views validation failed:',
+      err instanceof Error ? err.message : String(err),
+    );
     state.schemaViewWarnings = [];
   }
 }
@@ -508,9 +525,13 @@ async function start() {
         console.log(`  Defaults:   ${nodeDefaults} node types, ${edgeDefaults} edge types`);
       }
     }
-    const effectiveQueryMode = resolvedEmulator ? 'standard (emulator)' : (resolvedQueryMode ?? 'pipeline');
+    const effectiveQueryMode = resolvedEmulator
+      ? 'standard (emulator)'
+      : (resolvedQueryMode ?? 'pipeline');
     console.log(`  Queries:    ${effectiveQueryMode}`);
-    console.log(`  Chat:       ${resolvedChatEnabled ? `enabled (model: ${resolvedChatModel})` : 'disabled (claude CLI not found)'}`);
+    console.log(
+      `  Chat:       ${resolvedChatEnabled ? `enabled (model: ${resolvedChatModel})` : 'disabled (claude CLI not found)'}`,
+    );
     if (resolvedRegistryMode) {
       const metaCol = resolvedRegistryMode.collection ?? resolvedCollection;
       console.log(`  Registry:   dynamic (meta: ${metaCol})`);
@@ -526,7 +547,9 @@ async function start() {
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`\n  Error: Port ${resolvedPort} is already in use.`);
-      console.error(`  Kill the existing process or use --port=<number> to pick a different port.\n`);
+      console.error(
+        `  Kill the existing process or use --port=<number> to pick a different port.\n`,
+      );
       process.exit(1);
     }
     throw err;

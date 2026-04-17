@@ -29,12 +29,21 @@
  * ```
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
-import type { DiscoveredEntity, DiscoveryResult, EdgeTopology, MigrationStep, MigrationWriteBack } from './types.js';
+
+import type * as jitiNS from 'jiti';
+
 import type { ViewResolverConfig } from './config.js';
 import { FiregraphError } from './errors.js';
+import type {
+  DiscoveredEntity,
+  DiscoveryResult,
+  EdgeTopology,
+  MigrationStep,
+  MigrationWriteBack,
+} from './types.js';
 
 export class DiscoveryError extends FiregraphError {
   constructor(message: string) {
@@ -52,9 +61,10 @@ function readJson(filePath: string): unknown {
     const raw = readFileSync(filePath, 'utf-8');
     return JSON.parse(raw);
   } catch (err: unknown) {
-    const msg = err instanceof SyntaxError
-      ? `Invalid JSON in ${filePath}: ${err.message}`
-      : `Cannot read ${filePath}: ${(err as Error).message}`;
+    const msg =
+      err instanceof SyntaxError
+        ? `Invalid JSON in ${filePath}: ${err.message}`
+        : `Cannot read ${filePath}: ${(err as Error).message}`;
     throw new DiscoveryError(msg);
   }
 }
@@ -101,7 +111,7 @@ function getJiti(): (id: string) => unknown {
   if (!_jiti) {
     const base = typeof __filename !== 'undefined' ? __filename : import.meta.url;
     const esmRequire = createRequire(base);
-    const { createJiti } = esmRequire('jiti') as typeof import('jiti');
+    const { createJiti } = esmRequire('jiti') as typeof jitiNS;
     _jiti = createJiti(base, { interopDefault: true });
   }
   return _jiti;
@@ -111,9 +121,10 @@ function loadSchemaModule(filePath: string, entityLabel: string): object {
   try {
     const jiti = getJiti();
     const mod = jiti(filePath) as { default?: unknown } | unknown;
-    const schema = (mod && typeof mod === 'object' && 'default' in mod)
-      ? (mod as { default: unknown }).default
-      : mod;
+    const schema =
+      mod && typeof mod === 'object' && 'default' in mod
+        ? (mod as { default: unknown }).default
+        : mod;
 
     if (!schema || typeof schema !== 'object') {
       throw new DiscoveryError(
@@ -161,9 +172,10 @@ function loadMigrations(filePath: string, entityLabel: string): MigrationStep[] 
   try {
     const jiti = getJiti();
     const mod = jiti(filePath) as { default?: unknown } | unknown;
-    const migrations = (mod && typeof mod === 'object' && 'default' in mod)
-      ? (mod as { default: unknown }).default
-      : mod;
+    const migrations =
+      mod && typeof mod === 'object' && 'default' in mod
+        ? (mod as { default: unknown }).default
+        : mod;
 
     if (!Array.isArray(migrations)) {
       throw new DiscoveryError(
@@ -186,7 +198,14 @@ function loadMigrations(filePath: string, entityLabel: string): MigrationStep[] 
 function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
   const schema = loadSchema(dir, `node type "${name}"`);
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; migrationWriteBack?: MigrationWriteBack }
+    | {
+        description?: string;
+        titleField?: string;
+        subtitleField?: string;
+        viewDefaults?: ViewResolverConfig;
+        allowedIn?: string[];
+        migrationWriteBack?: MigrationWriteBack;
+      }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
@@ -227,18 +246,22 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
 
   // Validate topology shape
   if (!topology.from) {
-    throw new DiscoveryError(
-      `edge.json for "${name}" is missing required "from" field`,
-    );
+    throw new DiscoveryError(`edge.json for "${name}" is missing required "from" field`);
   }
   if (!topology.to) {
-    throw new DiscoveryError(
-      `edge.json for "${name}" is missing required "to" field`,
-    );
+    throw new DiscoveryError(`edge.json for "${name}" is missing required "to" field`);
   }
 
   const meta = readJsonIfExists(join(dir, 'meta.json')) as
-    | { description?: string; titleField?: string; subtitleField?: string; viewDefaults?: ViewResolverConfig; allowedIn?: string[]; targetGraph?: string; migrationWriteBack?: MigrationWriteBack }
+    | {
+        description?: string;
+        titleField?: string;
+        subtitleField?: string;
+        viewDefaults?: ViewResolverConfig;
+        allowedIn?: string[];
+        targetGraph?: string;
+        migrationWriteBack?: MigrationWriteBack;
+      }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
     | Record<string, unknown>
@@ -261,7 +284,8 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
     viewsPath,
     sampleData,
     allowedIn: meta?.allowedIn,
-    targetGraph: topology.targetGraph ?? (meta as { targetGraph?: string } | undefined)?.targetGraph,
+    targetGraph:
+      topology.targetGraph ?? (meta as { targetGraph?: string } | undefined)?.targetGraph,
     migrations,
     migrationWriteBack: meta?.migrationWriteBack,
   };
