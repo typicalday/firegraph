@@ -5,7 +5,8 @@
  * of a DO. We mock that surface with in-memory bookkeeping to verify:
  *   - Method calls are routed to the right DO (stub identity == DO identity)
  *   - `.subgraph()` derives a new DO key per chain segment
- *   - Transactions and `findEdgesGlobal` throw UNSUPPORTED_OPERATION in phase 1
+ *   - Transactions throw UNSUPPORTED_OPERATION and `findEdgesGlobal` is left
+ *     undefined so the client raises the generic not-supported error early
  *   - `createBatch` accumulates ops and submits them in one `_fgBatch` call
  */
 
@@ -229,7 +230,7 @@ describe('DORPCBackend — subgraph routing', () => {
   });
 });
 
-describe('DORPCBackend — phase 1 unsupported paths', () => {
+describe('DORPCBackend — unsupported paths', () => {
   it('runTransaction throws UNSUPPORTED_OPERATION without running the callback', async () => {
     const backend = new DORPCBackend(makeNamespace().ns, { storageKey: 'main' });
     let ran = false;
@@ -242,15 +243,22 @@ describe('DORPCBackend — phase 1 unsupported paths', () => {
     expect(ran).toBe(false);
   });
 
-  it('findEdgesGlobal is deliberately undefined on the class in phase 1', () => {
-    // `StorageBackend.findEdgesGlobal?` is optional. Leaving it undefined
-    // makes the GraphClient's `if (!backend.findEdgesGlobal) throw …`
-    // short-circuit fire before any query planning or scan-safety checks,
-    // so callers consistently see `UNSUPPORTED_OPERATION` rather than
-    // `INVALID_QUERY` / `QuerySafetyError` depending on the shape of the
-    // request. Phase 2 will add the method.
+  it('leaves findEdgesGlobal undefined so the client emits UNSUPPORTED_OPERATION early', async () => {
+    // Leaving the method undefined is deliberate. The GraphClient checks
+    // for presence before running query planning and throws immediately when
+    // absent — the caller gets an accurate error without first hitting the
+    // misleading `QuerySafetyError` that a defined-but-throwing method
+    // would produce for scan-unsafe calls. The user-facing rationale lives
+    // in `createDOClient`'s "What's not supported" docstring section.
     const backend = new DORPCBackend(makeNamespace().ns, { storageKey: 'main' });
-    expect((backend as unknown as { findEdgesGlobal?: unknown }).findEdgesGlobal).toBeUndefined();
+    expect(backend.findEdgesGlobal).toBeUndefined();
+
+    // End-to-end: the client surfaces UNSUPPORTED_OPERATION through the
+    // missing-method branch of `GraphClientImpl.findEdgesGlobal`.
+    const client = createDOClient(makeNamespace().ns, 'main');
+    await expect(client.findEdgesGlobal({ aType: 'tour' })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+    });
   });
 });
 
@@ -306,7 +314,8 @@ describe('DORPCBackend — cascade + bulk + destroy', () => {
     const { ns, stubs } = makeNamespace();
     const backend = new DORPCBackend(ns, { storageKey: 'main' });
 
-    // `reader` argument is unused in phase 1 — satisfy the type with a stub.
+    // Registry-less backends don't consult the reader during cascade — they
+    // forward directly to the DO — so a minimal stub is enough.
     const reader = {} as Parameters<typeof backend.removeNodeCascade>[1];
     const res = await backend.removeNodeCascade('uid123', reader);
 
@@ -323,7 +332,7 @@ describe('DORPCBackend — cascade + bulk + destroy', () => {
     expect(stubs.get('main')!.calls.at(-1)!.method).toBe('_fgBulkRemoveEdges');
   });
 
-  it('destroy() forwards to _fgDestroy (phase-2 cascade hook)', async () => {
+  it('destroy() forwards to _fgDestroy (cross-DO cascade hook)', async () => {
     const { ns, stubs } = makeNamespace();
     const backend = new DORPCBackend(ns, { storageKey: 'main' });
     await backend.destroy();
@@ -360,9 +369,23 @@ describe('createDOClient', () => {
     );
   });
 
-  it('throws UNSUPPORTED_OPERATION when registryMode is provided (phase 2 feature)', () => {
+  it('returns a DynamicGraphClient when registryMode is provided', () => {
+    const client = createDOClient(makeNamespace().ns, 'main', {
+      registryMode: { mode: 'dynamic' },
+    });
+    // Narrowed overload: dynamic mode exposes `defineNodeType` / `defineEdgeType` /
+    // `reloadRegistry`. Non-null sanity checks are enough — full dynamic behavior
+    // is exercised end-to-end in the e2e suite.
+    expect(typeof client.defineNodeType).toBe('function');
+    expect(typeof client.defineEdgeType).toBe('function');
+    expect(typeof client.reloadRegistry).toBe('function');
+  });
+
+  it('rejects registryMode.collection with a slash', () => {
     expect(() =>
-      createDOClient(makeNamespace().ns, 'main', { registryMode: { mode: 'dynamic' } }),
-    ).toThrow(/not supported by the Cloudflare DO backend in phase 1/);
+      createDOClient(makeNamespace().ns, 'main', {
+        registryMode: { mode: 'dynamic', collection: 'bad/key' },
+      }),
+    ).toThrow(/registryMode\.collection must not contain "\/"/);
   });
 });

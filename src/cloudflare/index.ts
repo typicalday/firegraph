@@ -22,20 +22,21 @@
  * };
  * ```
  *
- * ## Phase 1 capability matrix
+ * ## Capability matrix
  *
- * | Feature                      | Status                                            |
- * | ---------------------------- | ------------------------------------------------- |
- * | CRUD (put/get/update/remove) | ✅                                                |
- * | Queries (`findEdges/Nodes`)  | ✅                                                |
- * | Batches (atomic)             | ✅                                                |
- * | Cascade (DO-local)           | ✅                                                |
- * | Bulk-remove-edges (DO-local) | ✅                                                |
- * | `.subgraph()` routing        | ✅ (auto-provisioned via `namespace.idFromName`)  |
- * | Interactive transactions     | ❌ throws `UNSUPPORTED_OPERATION`                 |
- * | `findEdgesGlobal()`          | ❌ throws `UNSUPPORTED_OPERATION`                 |
- * | Cross-subgraph cascade       | ❌ phase 2 (registry topology)                    |
- * | Dynamic registry             | ❌ phase 2                                        |
+ * | Feature                      | Status                                                   |
+ * | ---------------------------- | -------------------------------------------------------- |
+ * | CRUD (put/get/update/remove) | ✅                                                       |
+ * | Queries (`findEdges/Nodes`)  | ✅                                                       |
+ * | Batches (atomic)             | ✅                                                       |
+ * | Cascade (DO-local)           | ✅                                                       |
+ * | Cross-subgraph cascade       | ✅ via registry `getSubgraphTopology` fan-out            |
+ * | Bulk-remove-edges (DO-local) | ✅                                                       |
+ * | `.subgraph()` routing        | ✅ (auto-provisioned via `namespace.idFromName`)         |
+ * | Static registry              | ✅ (validation + migrations)                             |
+ * | Dynamic registry             | ✅ `registryMode: { mode: 'dynamic' }`; merged mode too  |
+ * | Interactive transactions     | ❌ throws `UNSUPPORTED_OPERATION` — use `batch()`        |
+ * | `findEdgesGlobal()`          | ❌ throws `UNSUPPORTED_OPERATION` — no cross-DO index    |
  */
 
 export type {

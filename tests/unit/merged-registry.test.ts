@@ -248,4 +248,72 @@ describe('createMergedRegistry', () => {
     expect(() => merged.validate('note', 'is', 'note', {}, 'foo/notes')).not.toThrow();
     expect(() => merged.validate('note', 'is', 'note', {}, 'tasks')).toThrow();
   });
+
+  // ---------------------------------------------------------------------------
+  // getSubgraphTopology
+  // ---------------------------------------------------------------------------
+
+  it('getSubgraphTopology unions base and extension subgraphs', () => {
+    const base = createRegistry([
+      { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const ext = createRegistry([
+      { aType: 'project', axbType: 'hasNote', bType: 'note', targetGraph: 'notes' },
+    ]);
+    const merged = createMergedRegistry(base, ext);
+    const topology = merged.getSubgraphTopology('project');
+    const segments = topology.map((e) => e.targetGraph).sort();
+    expect(segments).toEqual(['memories', 'notes']);
+  });
+
+  it('getSubgraphTopology dedupes extension entries colliding with base', () => {
+    // Same `targetGraph` declared in both — base wins, no duplicate. Dedupe
+    // is by `targetGraph` alone because the physical subgraph DO is
+    // addressed by (parentUid, targetGraph); axbType and bType don't enter
+    // the physical address.
+    const base = createRegistry([
+      { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const ext = createRegistry([
+      { aType: 'project', axbType: 'hasMemory', bType: 'other', targetGraph: 'memories' },
+    ]);
+    const merged = createMergedRegistry(base, ext);
+    const topology = merged.getSubgraphTopology('project');
+    expect(topology).toHaveLength(1);
+    expect(topology[0].bType).toBe('memory'); // base entry wins
+  });
+
+  it('getSubgraphTopology collapses extension entries with distinct axbType but same targetGraph', () => {
+    // Extension declares a different relation that still points into the
+    // base's subgraph segment. The merged topology must collapse them — the
+    // DO backend would otherwise destroy the same physical DO twice.
+    const base = createRegistry([
+      { aType: 'project', axbType: 'hasPrimary', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const ext = createRegistry([
+      { aType: 'project', axbType: 'hasBackup', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const merged = createMergedRegistry(base, ext);
+    const topology = merged.getSubgraphTopology('project');
+    expect(topology).toHaveLength(1);
+    expect(topology[0].axbType).toBe('hasPrimary'); // base entry wins
+  });
+
+  it('getSubgraphTopology returns base when extension has none for aType', () => {
+    const base = createRegistry([
+      { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const ext = createRegistry([]);
+    const merged = createMergedRegistry(base, ext);
+    expect(merged.getSubgraphTopology('project')).toHaveLength(1);
+  });
+
+  it('getSubgraphTopology returns extension when base has none for aType', () => {
+    const base = createRegistry([]);
+    const ext = createRegistry([
+      { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+    ]);
+    const merged = createMergedRegistry(base, ext);
+    expect(merged.getSubgraphTopology('project')).toHaveLength(1);
+  });
 });

@@ -79,6 +79,38 @@ export function createRegistry(input: RegistryEntry[] | DiscoveryResult): GraphR
     axbIndex.set(key, Object.freeze(arr));
   }
 
+  // Build aType → subgraph-topology index.
+  //
+  // For each source aType, collect edge entries whose `targetGraph` is set —
+  // these are the aType's direct subgraph children. Dedupe by `targetGraph`
+  // alone (not by axbType): the physical subgraph store is addressed by
+  // (parentUid, targetGraph) and the cascade caller only cares about which
+  // child subgraphs to tear down. Two distinct edge relations pointing into
+  // the same `targetGraph` would otherwise produce duplicate destroy calls
+  // on the same physical backend.
+  const topologyIndex = new Map<string, ReadonlyArray<RegistryEntry>>();
+  const topologyBuild = new Map<string, RegistryEntry[]>();
+  const topologySeen = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    if (!entry.targetGraph) continue;
+    let seen = topologySeen.get(entry.aType);
+    if (!seen) {
+      seen = new Set();
+      topologySeen.set(entry.aType, seen);
+    }
+    if (seen.has(entry.targetGraph)) continue;
+    seen.add(entry.targetGraph);
+    const existing = topologyBuild.get(entry.aType);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      topologyBuild.set(entry.aType, [entry]);
+    }
+  }
+  for (const [key, arr] of topologyBuild) {
+    topologyIndex.set(key, Object.freeze(arr));
+  }
+
   return {
     lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined {
       return map.get(tripleKey(aType, axbType, bType))?.entry;
@@ -86,6 +118,10 @@ export function createRegistry(input: RegistryEntry[] | DiscoveryResult): GraphR
 
     lookupByAxbType(axbType: string): ReadonlyArray<RegistryEntry> {
       return axbIndex.get(axbType) ?? [];
+    },
+
+    getSubgraphTopology(aType: string): ReadonlyArray<RegistryEntry> {
+      return topologyIndex.get(aType) ?? [];
     },
 
     validate(
@@ -157,6 +193,27 @@ export function createMergedRegistry(base: GraphRegistry, extension: GraphRegist
       const merged = [...baseResults];
       for (const entry of extResults) {
         if (!seen.has(tripleKeyFor(entry))) {
+          merged.push(entry);
+        }
+      }
+      return Object.freeze(merged);
+    },
+
+    getSubgraphTopology(aType: string): ReadonlyArray<RegistryEntry> {
+      const baseResults = base.getSubgraphTopology(aType);
+      const extResults = extension.getSubgraphTopology(aType);
+      if (extResults.length === 0) return baseResults;
+      if (baseResults.length === 0) return extResults;
+
+      // Merge, base wins on `targetGraph` collision. Extension entries only
+      // contribute new subgraph segments the base doesn't cover. Dedupe key
+      // matches the physical DO address — (parentUid, targetGraph) — so two
+      // different axbTypes pointing into the same segment collapse to one.
+      const seen = new Set(baseResults.map((e) => e.targetGraph));
+      const merged = [...baseResults];
+      for (const entry of extResults) {
+        if (!seen.has(entry.targetGraph)) {
+          seen.add(entry.targetGraph);
           merged.push(entry);
         }
       }

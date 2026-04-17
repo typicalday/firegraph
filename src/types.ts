@@ -381,6 +381,23 @@ export interface GraphRegistry {
   lookup(aType: string, axbType: string, bType: string): RegistryEntry | undefined;
   /** Return all entries matching the given axbType (edge relation name). */
   lookupByAxbType(axbType: string): ReadonlyArray<RegistryEntry>;
+  /**
+   * Return every edge entry originating from `aType` that has `targetGraph`
+   * set — i.e. the direct subgraph children of nodes of this type.
+   *
+   * Used by backends that need to enumerate a node's subgraph DOs without
+   * walking the graph. Each returned entry carries both `axbType` (the edge
+   * label that introduces the subgraph) and `targetGraph` (the subgraph
+   * segment name).
+   *
+   * Entries are deduplicated by `targetGraph` alone — the physical subgraph
+   * store is addressed by `(parentUid, targetGraph)`, so multiple edge
+   * relations (distinct `axbType` or `bType`) pointing into the same segment
+   * collapse to a single representative entry. The first-declared entry
+   * wins the collision. Callers only care about the subgraph name, not the
+   * originating relation or target node type.
+   */
+  getSubgraphTopology(aType: string): ReadonlyArray<RegistryEntry>;
   entries(): ReadonlyArray<RegistryEntry>;
 }
 

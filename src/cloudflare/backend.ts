@@ -12,11 +12,23 @@
  *
  * - There is no shared table and no `scope` column. Each DO owns its own
  *   flat SQLite database; isolation is physical.
- * - Transactions and `findEdgesGlobal` are phase-1 non-features and throw a
- *   clear `UNSUPPORTED_OPERATION` error. Phase 2 wires cross-subgraph
- *   fan-out against the registry topology.
- * - Cascade inside a single DO works today (see `FiregraphDO._fgRemoveNodeCascade`);
- *   cross-DO cascade (tearing down child-subgraph DOs) is phase 2.
+ * - Interactive transactions throw `UNSUPPORTED_OPERATION` — holding a
+ *   synchronous SQLite transaction across async RPC calls would block the
+ *   DO's single-threaded executor (see `transactionsUnsupported` below).
+ * - `findEdgesGlobal` is deliberately left undefined on this class. The
+ *   `GraphClient` surfaces the generic "not supported by current storage
+ *   backend" error before running any query planning, which is both
+ *   accurate and sidesteps the misleading `QuerySafetyError` that would
+ *   otherwise fire for scan-unsafe calls. `createDOClient`'s docstring
+ *   explains the design rationale (no collection-group index across DOs).
+ * - `removeNodeCascade` cascades across DOs: when a registry accessor is
+ *   wired, the backend walks `registry.getSubgraphTopology(aType)` for the
+ *   node being removed and destroys every descendant subgraph DO before
+ *   deleting the node itself. Pass `{ deleteSubcollections: false }` to
+ *   disable the cross-DO fan-out (parent node is still removed, child DOs
+ *   are left intact — matching the Firestore/SQLite backends' semantic).
+ *   Without an accessor (e.g. registry-less clients) it cascades within
+ *   the current DO only.
  */
 
 import { FiregraphError } from '../errors.js';
@@ -27,12 +39,14 @@ import type {
   UpdatePayload,
   WritableRecord,
 } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
 import type {
   BulkOptions,
   BulkResult,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
+  GraphRegistry,
   QueryFilter,
   QueryOptions,
   StoredGraphRecord,
@@ -101,20 +115,21 @@ function validateSegment(value: string, label: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Transaction backend — phase 1 throws
+// Transaction backend — always throws
 // ---------------------------------------------------------------------------
 
 /**
- * Interactive transactions across DO RPC require holding a synchronous
- * SQLite transaction open across multiple async RPC calls, which blocks the
- * DO's single-threaded executor for the duration. Phase 1 defers that
- * complexity by refusing `runTransaction()`. Callers should restructure
- * read-then-conditional-write logic as an explicit `read → decide → batch`
- * sequence, or use `batch()` for atomic multi-write patterns.
+ * Interactive transactions across DO RPC would require holding a synchronous
+ * SQLite transaction open across multiple async RPC round-trips, which blocks
+ * the DO's single-threaded executor for the duration. That's incompatible
+ * with the runtime's fairness model, so this backend refuses `runTransaction`
+ * outright. Callers should either restructure read-then-conditional-write
+ * logic as an explicit `read → decide → batch` sequence, or use `batch()`
+ * for atomic multi-write patterns.
  */
 function transactionsUnsupported(): FiregraphError {
   return new FiregraphError(
-    'Interactive transactions are not supported by the Cloudflare DO backend in phase 1. ' +
+    'Interactive transactions are not supported by the Cloudflare DO backend. ' +
       'Use `batch()` for atomic multi-write commits, or restructure the read-then-conditional-write ' +
       'as an explicit read → decide → batch sequence.',
     'UNSUPPORTED_OPERATION',
@@ -169,6 +184,19 @@ export interface DORPCBackendOptions {
    * `createDOClient` when the backend is first created.
    */
   storageKey: string;
+  /**
+   * Live registry accessor used by `removeNodeCascade` to consult the
+   * subgraph topology and fan out `_fgDestroy` calls to child subgraph DOs.
+   *
+   * A function (not a snapshot) so that dynamic-registry clients see the
+   * latest definitions after `reloadRegistry()`. Wired by `createDOClient`
+   * via a forward reference to the constructed `GraphClient`. When
+   * `undefined`, cross-DO cascade is disabled and `removeNodeCascade`
+   * cascades within this DO only (matching the routing-backend semantic
+   * documented in routing.md).
+   * @internal
+   */
+  registryAccessor?: () => GraphRegistry | undefined;
 }
 
 export class DORPCBackend implements StorageBackend {
@@ -177,6 +205,7 @@ export class DORPCBackend implements StorageBackend {
   /** @internal */
   readonly storageKey: string;
   private readonly namespace: FiregraphNamespace;
+  private readonly registryAccessor?: () => GraphRegistry | undefined;
   private cachedStub: FiregraphStub | null = null;
 
   constructor(namespace: FiregraphNamespace, options: DORPCBackendOptions) {
@@ -184,6 +213,7 @@ export class DORPCBackend implements StorageBackend {
     this.collectionPath = options.table ?? 'firegraph';
     this.scopePath = options.scopePath ?? '';
     this.storageKey = options.storageKey;
+    this.registryAccessor = options.registryAccessor;
   }
 
   private get stub(): FiregraphStub {
@@ -245,6 +275,9 @@ export class DORPCBackend implements StorageBackend {
       table: this.collectionPath,
       scopePath: newScopePath,
       storageKey: newStorageKey,
+      // Subgraph backends share the same live registry accessor so a cascade
+      // invoked on a subgraph client still fans out correctly.
+      registryAccessor: this.registryAccessor,
     });
   }
 
@@ -252,15 +285,40 @@ export class DORPCBackend implements StorageBackend {
 
   async removeNodeCascade(
     uid: string,
-    _reader: GraphReader,
-    _options?: BulkOptions,
+    reader: GraphReader,
+    options?: BulkOptions,
   ): Promise<CascadeResult> {
-    // Phase 1: cascade is DO-local. The `reader` argument is unused here
-    // because the DO discovers edges directly against its own SQLite. In
-    // phase 2 the client wrapper will consult the registry topology to
-    // enumerate subgraph-child DOs and destroy each via `_fgDestroy()`.
-    void _reader;
-    void _options;
+    // Cross-DO cascade. When a registry is wired and the caller wants
+    // subcollections (the default, `deleteSubcollections !== false`), walk
+    // the subgraph topology for this node's type and wipe every descendant
+    // DO before deleting the node itself. This mirrors the Firestore and
+    // SQLite backends, which honor the same flag to recurse into nested
+    // subgraphs. Without an accessor we fall back to DO-local cascade only
+    // (matches the routing-backend semantic — each physical backend cascades
+    // within its own scope).
+    //
+    // We need the node's aType to know what subgraphs to look for. That
+    // means a `getNode` round-trip before touching any child DO; the reader
+    // is the client that owns this backend, so the round-trip hits *this*
+    // DO and stays cheap. If the node doesn't exist there's nothing to
+    // cascade across — skip straight to the local cascade, which will
+    // report `nodeDeleted: false`.
+    const shouldDeleteSubgraphs = options?.deleteSubcollections !== false;
+    const registry = this.registryAccessor?.();
+    if (shouldDeleteSubgraphs && registry) {
+      const node = await reader.getNode(uid);
+      if (node) {
+        const topology = registry.getSubgraphTopology(node.aType);
+        for (const entry of topology) {
+          // `getSubgraphTopology` only returns entries with a `targetGraph`.
+          // The non-null assertion encodes that invariant — a missing value
+          // here is a registry-construction bug, not a runtime data issue.
+          const target = entry.targetGraph!;
+          const childBackend = this.subgraph(uid, target) as DORPCBackend;
+          await childBackend.destroyRecursively(registry);
+        }
+      }
+    }
     return this.stub._fgRemoveNodeCascade(uid);
   }
 
@@ -273,23 +331,58 @@ export class DORPCBackend implements StorageBackend {
     return this.stub._fgBulkRemoveEdges(params, options);
   }
 
-  // --- Cross-scope (phase 2) ---
+  // --- Cross-scope queries ---
   //
-  // `findEdgesGlobal` is deliberately NOT defined on this class in phase 1.
-  // The `StorageBackend` interface has it as optional, so the GraphClient's
-  // short-circuit (`if (!this.backend.findEdgesGlobal) throw …`) fires
-  // before any query planning or scan-safety checks run. Phase 2 will add
-  // the method and fan out via registry topology.
+  // `findEdgesGlobal` is deliberately NOT defined on this class. The
+  // GraphClient checks for its presence before running query planning and
+  // throws `UNSUPPORTED_OPERATION` when absent, giving the caller an
+  // immediate, accurate error. Defining the method with a throwing body
+  // would only surface the same error AFTER `checkQuerySafety` had already
+  // fired — and for scan-unsafe calls that results in a misleading
+  // `QuerySafetyError` ("add filters like aUid+axbType") when no filter
+  // combination would actually make the call work on this backend. See the
+  // "What's not supported" section in `createDOClient` for the design
+  // rationale (no collection-group index across DOs).
 
-  // --- Phase-2 hook: destroy this DO's storage ---
+  // --- Destroy helpers ---
 
   /**
-   * Wipe this DO's storage. Used by the phase-2 cascade when the client
-   * topologically enumerates subgraph-child DOs and tears each down. Exposed
-   * on the concrete class (not `StorageBackend`) so generic backend code
-   * doesn't reach for it.
+   * Wipe this DO's storage. The DO itself can't be deleted — its ID
+   * persists forever — but its rows can be emptied, which is what the
+   * cascade walk does on every descendant subgraph DO.
+   *
+   * Exposed on the concrete class (not `StorageBackend`) so generic
+   * backend code doesn't reach for it.
    */
   async destroy(): Promise<void> {
     await this.stub._fgDestroy();
+  }
+
+  /**
+   * Tear down every descendant subgraph DO, then wipe this DO's own rows.
+   *
+   * Invoked by cross-DO cascade: for each node in this DO we enumerate the
+   * subgraph topology and recurse into child DOs depth-first before
+   * wiping the current DO. The current DO's own rows are destroyed last so
+   * that a partial failure mid-recursion leaves the caller's reader able
+   * to discover what's still present.
+   *
+   * @internal
+   */
+  async destroyRecursively(registry: GraphRegistry): Promise<void> {
+    // Enumerate every node (self-loop) in this DO. We only need nodes —
+    // edges don't own subgraph children, only nodes do.
+    const nodes = await this.query([{ field: 'axbType', op: '==', value: NODE_RELATION }]);
+    for (const node of nodes) {
+      const topology = registry.getSubgraphTopology(node.aType);
+      for (const entry of topology) {
+        // `getSubgraphTopology` only returns entries with a `targetGraph` —
+        // see the matching assertion in `removeNodeCascade` above.
+        const target = entry.targetGraph!;
+        const childBackend = this.subgraph(node.aUid, target) as DORPCBackend;
+        await childBackend.destroyRecursively(registry);
+      }
+    }
+    await this.destroy();
   }
 }

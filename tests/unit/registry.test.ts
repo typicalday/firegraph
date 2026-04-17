@@ -476,4 +476,99 @@ describe('createRegistry', () => {
     // v in data should be REJECTED by additionalProperties: false
     expect(() => registry.validate('tour', 'is', 'tour', { title: 'test', v: 1 })).toThrow();
   });
+
+  // ---------------------------------------------------------------------------
+  // getSubgraphTopology — cross-subgraph cascade fan-out
+  // ---------------------------------------------------------------------------
+
+  describe('getSubgraphTopology', () => {
+    it('returns empty for an aType with no subgraph edges', () => {
+      const registry = createRegistry([
+        { aType: 'tour', axbType: 'is', bType: 'tour' },
+        { aType: 'tour', axbType: 'likes', bType: 'tour' },
+      ]);
+      expect(registry.getSubgraphTopology('tour')).toEqual([]);
+    });
+
+    it('returns empty for an unknown aType', () => {
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+      ]);
+      expect(registry.getSubgraphTopology('never-registered')).toEqual([]);
+    });
+
+    it('returns entries with targetGraph for the given aType', () => {
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'is', bType: 'project' },
+        { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+        { aType: 'project', axbType: 'hasNote', bType: 'note', targetGraph: 'notes' },
+        // Different aType — must not leak in
+        { aType: 'user', axbType: 'hasTask', bType: 'task', targetGraph: 'tasks' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(topology).toHaveLength(2);
+      const segments = topology.map((e) => e.targetGraph).sort();
+      expect(segments).toEqual(['memories', 'notes']);
+    });
+
+    it('excludes edges without targetGraph', () => {
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+        // Same source, no targetGraph — lives in the same DO as the parent
+        { aType: 'project', axbType: 'mentions', bType: 'tag' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(topology).toHaveLength(1);
+      expect(topology[0].axbType).toBe('hasMemory');
+      expect(topology[0].targetGraph).toBe('memories');
+    });
+
+    it('dedupes by targetGraph across distinct bTypes', () => {
+      // Same edge relation pointing into same subgraph, but with two different
+      // bTypes. Cascade only cares about the subgraph name, so only one entry
+      // should survive.
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasChild', bType: 'memory', targetGraph: 'children' },
+        { aType: 'project', axbType: 'hasChild', bType: 'note', targetGraph: 'children' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(topology).toHaveLength(1);
+      expect(topology[0].targetGraph).toBe('children');
+    });
+
+    it('dedupes by targetGraph across distinct axbTypes (physical DO addressing)', () => {
+      // The subgraph DO is addressed by (parentUid, targetGraph) alone, so
+      // two distinct edge relations both pointing at the same `targetGraph`
+      // resolve to the same physical DO. Cascade would otherwise issue two
+      // destroy calls against the same backend. First entry wins.
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasPrimary', bType: 'memory', targetGraph: 'memories' },
+        { aType: 'project', axbType: 'hasBackup', bType: 'memory', targetGraph: 'memories' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(topology).toHaveLength(1);
+      expect(topology[0].targetGraph).toBe('memories');
+      // First-declared entry wins the dedupe.
+      expect(topology[0].axbType).toBe('hasPrimary');
+    });
+
+    it('keeps distinct entries for the same axbType into different subgraphs', () => {
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasChild', bType: 'memory', targetGraph: 'memories' },
+        { aType: 'project', axbType: 'hasChild', bType: 'note', targetGraph: 'notes' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(topology).toHaveLength(2);
+      const segments = topology.map((e) => e.targetGraph).sort();
+      expect(segments).toEqual(['memories', 'notes']);
+    });
+
+    it('returns a frozen array', () => {
+      const registry = createRegistry([
+        { aType: 'project', axbType: 'hasMemory', bType: 'memory', targetGraph: 'memories' },
+      ]);
+      const topology = registry.getSubgraphTopology('project');
+      expect(Object.isFrozen(topology)).toBe(true);
+    });
+  });
 });

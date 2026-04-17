@@ -111,6 +111,22 @@ export class GraphClientImpl implements DynamicGraphClient {
     return this.backend;
   }
 
+  /**
+   * Snapshot of the currently-effective registry. Returns the merged view
+   * used for domain-type validation and migration — in dynamic mode this is
+   * `dynamicRegistry ?? staticRegistry ?? bootstrapRegistry`, so callers see
+   * updates after `reloadRegistry()` without having to re-resolve anything.
+   *
+   * Exposed for backends that need topology access during bulk operations
+   * (e.g. the Cloudflare DO backend's cross-DO cascade). Not part of the
+   * public `GraphClient` surface.
+   *
+   * @internal
+   */
+  getRegistrySnapshot(): GraphRegistry | undefined {
+    return this.getCombinedRegistry();
+  }
+
   // ---------------------------------------------------------------------------
   // Registry routing
   // ---------------------------------------------------------------------------

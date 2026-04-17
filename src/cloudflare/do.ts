@@ -245,11 +245,11 @@ export class FiregraphDO {
   // ---------------------------------------------------------------------------
   // RPC: cascade + bulk (local DO only)
   //
-  // Phase 1: these cascade *within this DO*. Subgraph DOs (nested under this
-  // node) are not torn down here — the client-side cascade in phase 2 will
-  // consult the registry topology to discover subgraph DOs and fan out
-  // explicit destroy calls to each. Without that topology the DO has no way
-  // to enumerate its children.
+  // These cascade *within this DO*. Subgraph DOs (nested under this node) are
+  // not reachable from here — the client-side `DORPCBackend.removeNodeCascade`
+  // consults the registry topology to discover descendant subgraph DOs and
+  // fans out explicit `_fgDestroy` calls to each before invoking this method.
+  // Without that topology the DO has no way to enumerate its children.
   // ---------------------------------------------------------------------------
 
   async _fgRemoveNodeCascade(uid: string): Promise<CascadeResult> {
