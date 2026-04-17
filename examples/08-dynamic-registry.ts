@@ -14,12 +14,13 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/08-dynamic-registry.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import {
   createGraphClient,
-  generateId,
-  ValidationError,
-  RegistryViolationError,
   DynamicRegistryError,
+  generateId,
+  RegistryViolationError,
+  ValidationError,
 } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -40,25 +41,33 @@ async function main() {
   // 2. Define node types — stored as meta-nodes in the graph
   // ═══════════════════════════════════════════════════════════════
 
-  await g.defineNodeType('tour', {
-    type: 'object',
-    required: ['name', 'difficulty'],
-    properties: {
-      name: { type: 'string', minLength: 1 },
-      difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+  await g.defineNodeType(
+    'tour',
+    {
+      type: 'object',
+      required: ['name', 'difficulty'],
+      properties: {
+        name: { type: 'string', minLength: 1 },
+        difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+      },
+      additionalProperties: false,
     },
-    additionalProperties: false,
-  }, 'A guided cycling tour');
+    'A guided cycling tour',
+  );
 
-  await g.defineNodeType('departure', {
-    type: 'object',
-    required: ['date', 'maxCapacity'],
-    properties: {
-      date: { type: 'string' },
-      maxCapacity: { type: 'integer', minimum: 1 },
+  await g.defineNodeType(
+    'departure',
+    {
+      type: 'object',
+      required: ['date', 'maxCapacity'],
+      properties: {
+        date: { type: 'string' },
+        maxCapacity: { type: 'integer', minimum: 1 },
+      },
+      additionalProperties: false,
     },
-    additionalProperties: false,
-  }, 'A scheduled departure date');
+    'A scheduled departure date',
+  );
 
   console.log('Defined node types: tour, departure');
 
@@ -125,7 +134,7 @@ async function main() {
 
   try {
     await g.putNode('tour', generateId(), {
-      name: '',              // fails minLength: 1
+      name: '', // fails minLength: 1
       difficulty: 'extreme', // fails enum
     });
   } catch (err) {
@@ -157,20 +166,25 @@ async function main() {
   // Dynamic migrations are stored as source code strings (no imports allowed).
   // They are compiled at reloadRegistry() time via a configurable sandbox.
   // Version is derived automatically as max(toVersion) from the migrations array.
-  await g.defineNodeType('waypoint', {
-    type: 'object',
-    required: ['name'],
-    properties: {
-      name: { type: 'string', minLength: 1 },
-      altitude: { type: 'number' },
+  await g.defineNodeType(
+    'waypoint',
+    {
+      type: 'object',
+      required: ['name'],
+      properties: {
+        name: { type: 'string', minLength: 1 },
+        altitude: { type: 'number' },
+      },
+      additionalProperties: false,
     },
-    additionalProperties: false,
-  }, 'A waypoint on a tour route', {
-    migrations: [
-      { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, altitude: d.altitude ?? 0 })' },
-    ],
-    migrationWriteBack: 'eager',
-  });
+    'A waypoint on a tour route',
+    {
+      migrations: [
+        { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, altitude: d.altitude ?? 0 })' },
+      ],
+      migrationWriteBack: 'eager',
+    },
+  );
 
   await g.reloadRegistry();
   console.log('Defined waypoint type with schema versioning');

@@ -4,14 +4,11 @@
  * Validates that multi-hop traversal works correctly when the underlying
  * client uses pipeline mode for queries. Mirrors tests/integration/traverse.test.ts.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  createPipelineClient,
-  uniqueCollectionPath,
-  cleanupCollection,
-} from './setup.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import { createTraversal } from '../../src/traverse.js';
 import type { GraphClient } from '../../src/types.js';
+import { cleanupCollection, createPipelineClient, uniqueCollectionPath } from './setup.js';
 
 describe('pipeline traversal', () => {
   const collPath = uniqueCollectionPath();
@@ -49,9 +46,7 @@ describe('pipeline traversal', () => {
 
   describe('single hop', () => {
     it('Tour → departures returns correct edges', async () => {
-      const result = await createTraversal(g, 'tour1')
-        .follow('hasDeparture')
-        .run();
+      const result = await createTraversal(g, 'tour1').follow('hasDeparture').run();
 
       expect(result.nodes).toHaveLength(3);
       expect(result.nodes.every((e) => e.axbType === 'hasDeparture')).toBe(true);
@@ -99,9 +94,7 @@ describe('pipeline traversal', () => {
 
   describe('per-hop limit', () => {
     it('limit=2 on first hop returns max 2 departures', async () => {
-      const result = await createTraversal(g, 'tour1')
-        .follow('hasDeparture', { limit: 2 })
-        .run();
+      const result = await createTraversal(g, 'tour1').follow('hasDeparture', { limit: 2 }).run();
 
       expect(result.nodes).toHaveLength(2);
     });
@@ -150,9 +143,7 @@ describe('pipeline traversal', () => {
 
   describe('empty results', () => {
     it('traversal from nonexistent node returns empty', async () => {
-      const result = await createTraversal(g, 'nonexistent-uid')
-        .follow('hasDeparture')
-        .run();
+      const result = await createTraversal(g, 'nonexistent-uid').follow('hasDeparture').run();
 
       expect(result.nodes).toHaveLength(0);
       expect(result.totalReads).toBe(1);
@@ -163,10 +154,7 @@ describe('pipeline traversal', () => {
   describe('transaction support', () => {
     it('traversal works inside runTransaction (uses standard queries)', async () => {
       const result = await g.runTransaction(async (tx) => {
-        return createTraversal(tx, 'tour1')
-          .follow('hasDeparture')
-          .follow('hasRider')
-          .run();
+        return createTraversal(tx, 'tour1').follow('hasDeparture').follow('hasRider').run();
       });
 
       expect(result.nodes.length).toBeGreaterThanOrEqual(4);
@@ -335,9 +323,9 @@ describe('pipeline traversal', () => {
 
       // Simpler: forward from tour1 to deps, then reverse from dep1 to get tour1 back
       const result = await createTraversal(g, 'rider1')
-        .follow('hasRider', { direction: 'reverse' })  // rider1 → dep1
-        .follow('hasDeparture', { direction: 'reverse' })  // dep1 → tour1
-        .follow('hasDeparture')  // tour1 → dep1, dep2, dep3
+        .follow('hasRider', { direction: 'reverse' }) // rider1 → dep1
+        .follow('hasDeparture', { direction: 'reverse' }) // dep1 → tour1
+        .follow('hasDeparture') // tour1 → dep1, dep2, dep3
         .run();
 
       expect(result.nodes).toHaveLength(3);
@@ -351,9 +339,9 @@ describe('pipeline traversal', () => {
       // Three-hop forward chain isn't possible with current fixture (only 2 edge types)
       // So test: tour1 → deps (forward) → riders (forward) → back to deps (reverse hasRider)
       const result = await createTraversal(g, 'tour1')
-        .follow('hasDeparture')  // → dep1, dep2, dep3
-        .follow('hasRider')      // → rider1, rider2, rider3, rider4
-        .follow('hasRider', { direction: 'reverse' })  // → back to deps that have these riders
+        .follow('hasDeparture') // → dep1, dep2, dep3
+        .follow('hasRider') // → rider1, rider2, rider3, rider4
+        .follow('hasRider', { direction: 'reverse' }) // → back to deps that have these riders
         .run();
 
       expect(result.hops).toHaveLength(3);
@@ -541,8 +529,8 @@ describe('pipeline traversal (extended fixture)', () => {
   it('three-hop fully reverse: member → team → dept → org', async () => {
     const result = await createTraversal(g, 'member1')
       .follow('hasMember', { direction: 'reverse' }) // → team1
-      .follow('hasTeam', { direction: 'reverse' })    // → dept1, dept2
-      .follow('hasDept', { direction: 'reverse' })     // → org1
+      .follow('hasTeam', { direction: 'reverse' }) // → dept1, dept2
+      .follow('hasDept', { direction: 'reverse' }) // → org1
       .run({ returnIntermediates: true });
 
     expect(result.hops).toHaveLength(3);

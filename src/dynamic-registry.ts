@@ -1,14 +1,15 @@
 import { createHash } from 'node:crypto';
+
+import { NODE_RELATION } from './internal/constants.js';
 import { createRegistry } from './registry.js';
 import { compileMigrations, precompileSource } from './sandbox.js';
-import { NODE_RELATION } from './internal/constants.js';
 import type {
+  EdgeTypeData,
   GraphReader,
   GraphRegistry,
   MigrationExecutor,
-  RegistryEntry,
   NodeTypeData,
-  EdgeTypeData,
+  RegistryEntry,
 } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -133,9 +134,7 @@ export function createBootstrapRegistry(): GraphRegistry {
  * Format: 21-char base64url substring of SHA-256(`metaType:name`).
  */
 export function generateDeterministicUid(metaType: string, name: string): string {
-  const hash = createHash('sha256')
-    .update(`${metaType}:${name}`)
-    .digest('base64url');
+  const hash = createHash('sha256').update(`${metaType}:${name}`).digest('base64url');
   return hash.slice(0, 21);
 }
 

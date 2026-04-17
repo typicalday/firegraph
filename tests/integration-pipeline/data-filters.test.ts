@@ -5,13 +5,10 @@
  * data.* field filters WITHOUT requiring composite indexes. This is the
  * primary value proposition of pipeline mode.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  createPipelineClient,
-  uniqueCollectionPath,
-  cleanupCollection,
-} from './setup.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import type { GraphClient } from '../../src/types.js';
+import { cleanupCollection, createPipelineClient, uniqueCollectionPath } from './setup.js';
 
 describe('pipeline data filters (no composite index needed)', () => {
   const collPath = uniqueCollectionPath();
@@ -21,13 +18,37 @@ describe('pipeline data filters (no composite index needed)', () => {
     g = createPipelineClient(collPath);
 
     // Create test data
-    await g.putNode('tour', 'tourA', { name: 'Dolomites Classic', difficulty: 'hard', price: 5000, region: 'europe' });
-    await g.putNode('tour', 'tourB', { name: 'Alps Easy', difficulty: 'easy', price: 2000, region: 'europe' });
-    await g.putNode('tour', 'tourC', { name: 'Colorado Trail', difficulty: 'medium', price: 3500, region: 'americas' });
+    await g.putNode('tour', 'tourA', {
+      name: 'Dolomites Classic',
+      difficulty: 'hard',
+      price: 5000,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tourB', {
+      name: 'Alps Easy',
+      difficulty: 'easy',
+      price: 2000,
+      region: 'europe',
+    });
+    await g.putNode('tour', 'tourC', {
+      name: 'Colorado Trail',
+      difficulty: 'medium',
+      price: 3500,
+      region: 'americas',
+    });
 
-    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'dep1', { guide: 'Marco', season: 'summer' });
-    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'dep2', { guide: 'Luca', season: 'winter' });
-    await g.putEdge('tour', 'tourB', 'hasDeparture', 'departure', 'dep1', { guide: 'Marco', season: 'summer' });
+    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'dep1', {
+      guide: 'Marco',
+      season: 'summer',
+    });
+    await g.putEdge('tour', 'tourA', 'hasDeparture', 'departure', 'dep2', {
+      guide: 'Luca',
+      season: 'winter',
+    });
+    await g.putEdge('tour', 'tourB', 'hasDeparture', 'departure', 'dep1', {
+      guide: 'Marco',
+      season: 'summer',
+    });
 
     await g.putEdge('rider', 'r1', 'bookedFor', 'departure', 'dep1', { price: 5000, paid: true });
     await g.putEdge('rider', 'r2', 'bookedFor', 'departure', 'dep1', { price: 4500, paid: true });

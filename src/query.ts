@@ -1,7 +1,7 @@
-import { NODE_RELATION, DEFAULT_QUERY_LIMIT, BUILTIN_FIELDS } from './internal/constants.js';
 import { computeEdgeDocId } from './docid.js';
 import { InvalidQueryError } from './errors.js';
-import type { FindEdgesParams, FindNodesParams, QueryPlan, QueryFilter } from './types.js';
+import { BUILTIN_FIELDS, DEFAULT_QUERY_LIMIT, NODE_RELATION } from './internal/constants.js';
+import type { FindEdgesParams, FindNodesParams, QueryFilter, QueryPlan } from './types.js';
 
 export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
   const { aType, aUid, axbType, bType, bUid, limit, orderBy } = params;
@@ -20,8 +20,11 @@ export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
 
   if (params.where) {
     for (const clause of params.where) {
-      const field = BUILTIN_FIELDS.has(clause.field) ? clause.field
-        : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+      const field = BUILTIN_FIELDS.has(clause.field)
+        ? clause.field
+        : clause.field.startsWith('data.')
+          ? clause.field
+          : `data.${clause.field}`;
       filters.push({ field, op: clause.op, value: clause.value });
     }
   }
@@ -33,7 +36,7 @@ export function buildEdgeQueryPlan(params: FindEdgesParams): QueryPlan {
   // limit: undefined → apply DEFAULT_QUERY_LIMIT
   // limit: 0         → no limit (unlimited, used by internal bulk operations)
   // limit: N         → use N
-  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : (limit || undefined);
+  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : limit || undefined;
   return { strategy: 'query', filters, options: { limit: effectiveLimit, orderBy } };
 }
 
@@ -47,12 +50,15 @@ export function buildNodeQueryPlan(params: FindNodesParams): QueryPlan {
 
   if (params.where) {
     for (const clause of params.where) {
-      const field = BUILTIN_FIELDS.has(clause.field) ? clause.field
-        : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+      const field = BUILTIN_FIELDS.has(clause.field)
+        ? clause.field
+        : clause.field.startsWith('data.')
+          ? clause.field
+          : `data.${clause.field}`;
       filters.push({ field, op: clause.op, value: clause.value });
     }
   }
 
-  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : (limit || undefined);
+  const effectiveLimit = limit === undefined ? DEFAULT_QUERY_LIMIT : limit || undefined;
   return { strategy: 'query', filters, options: { limit: effectiveLimit, orderBy } };
 }

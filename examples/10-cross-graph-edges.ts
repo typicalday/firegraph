@@ -9,13 +9,14 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/10-cross-graph-edges.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import {
   createGraphClient,
   createRegistry,
   createTraversal,
   generateId,
-  resolveAncestorCollection,
   isAncestorUid,
+  resolveAncestorCollection,
 } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -58,7 +59,13 @@ const linkSchema = {
 const registry = createRegistry([
   { aType: 'task', axbType: 'is', bType: 'task', jsonSchema: taskSchema },
   { aType: 'agent', axbType: 'is', bType: 'agent', jsonSchema: agentSchema },
-  { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow', jsonSchema: linkSchema },
+  {
+    aType: 'task',
+    axbType: 'assignedTo',
+    bType: 'agent',
+    targetGraph: 'workflow',
+    jsonSchema: linkSchema,
+  },
   { aType: 'agent', axbType: 'mentors', bType: 'agent', jsonSchema: linkSchema },
 ]);
 
@@ -111,9 +118,7 @@ async function main() {
 
   console.log('-- Forward traversal: task -> agents --');
 
-  const assigned = await createTraversal(g, task1, registry)
-    .follow('assignedTo')
-    .run();
+  const assigned = await createTraversal(g, task1, registry).follow('assignedTo').run();
 
   console.log(`Task "${task1}" has ${assigned.nodes.length} assigned agents:`);
   for (const edge of assigned.nodes) {
@@ -151,7 +156,7 @@ async function main() {
   // You can override the registry's targetGraph on a per-hop basis.
   // Useful when the same edge type exists in different subgraphs.
   const result = await createTraversal(g, task1)
-    .follow('assignedTo', { targetGraph: 'workflow' })  // explicit, no registry needed
+    .follow('assignedTo', { targetGraph: 'workflow' }) // explicit, no registry needed
     .run();
 
   console.log(`Explicit hop: found ${result.nodes.length} agents`);
@@ -166,8 +171,8 @@ async function main() {
   const workflowPath = `examples/cross-graph/graph/${task1}/workflow`;
 
   // Check if a UID is an ancestor in the path
-  console.log(`Is task1 an ancestor? ${isAncestorUid(workflowPath, task1)}`);   // true
-  console.log(`Is alice an ancestor? ${isAncestorUid(workflowPath, alice)}`);    // false
+  console.log(`Is task1 an ancestor? ${isAncestorUid(workflowPath, task1)}`); // true
+  console.log(`Is alice an ancestor? ${isAncestorUid(workflowPath, alice)}`); // false
 
   // Resolve which collection contains an ancestor
   const ancestorCollection = resolveAncestorCollection(workflowPath, task1);
@@ -201,14 +206,16 @@ async function main() {
   console.log('-- Cascade delete --');
 
   const deleteResult = await g.removeNodeCascade(task2);
-  console.log(`Deleted task2: nodeDeleted=${deleteResult.nodeDeleted}, total=${deleteResult.deleted}`);
+  console.log(
+    `Deleted task2: nodeDeleted=${deleteResult.nodeDeleted}, total=${deleteResult.deleted}`,
+  );
 
   // Verify the workflow subgraph is gone
   const remainingAgents = await wf2.findNodes({ aType: 'agent', allowCollectionScan: true });
   console.log(`Agents remaining in task2 workflow: ${remainingAgents.length}`); // 0
 
   const remainingEdges = await wf2.findEdges({ axbType: 'assignedTo', allowCollectionScan: true });
-  console.log(`Edges remaining in task2 workflow: ${remainingEdges.length}`);   // 0
+  console.log(`Edges remaining in task2 workflow: ${remainingEdges.length}`); // 0
 
   console.log();
   console.log('Done!');

@@ -1,9 +1,9 @@
-import { RegistryViolationError, RegistryScopeError, ValidationError } from './errors.js';
+import { RegistryScopeError, RegistryViolationError, ValidationError } from './errors.js';
+import { NODE_RELATION } from './internal/constants.js';
 import { compileSchema } from './json-schema.js';
 import { validateMigrationChain } from './migration.js';
 import { matchScopeAny } from './scope.js';
-import { NODE_RELATION } from './internal/constants.js';
-import type { GraphRegistry, RegistryEntry, DiscoveryResult } from './types.js';
+import type { DiscoveryResult, GraphRegistry, RegistryEntry } from './types.js';
 
 function tripleKey(aType: string, axbType: string, bType: string): string {
   return `${aType}:${axbType}:${bType}`;
@@ -29,9 +29,7 @@ function tripleKeyFor(e: RegistryEntry): string {
  * const registry = createRegistry(discovered);
  * ```
  */
-export function createRegistry(
-  input: RegistryEntry[] | DiscoveryResult,
-): GraphRegistry {
+export function createRegistry(input: RegistryEntry[] | DiscoveryResult): GraphRegistry {
   const map = new Map<string, { entry: RegistryEntry; validate?: (data: unknown) => void }>();
 
   let entries: RegistryEntry[];
@@ -90,7 +88,13 @@ export function createRegistry(
       return axbIndex.get(axbType) ?? [];
     },
 
-    validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void {
+    validate(
+      aType: string,
+      axbType: string,
+      bType: string,
+      data: unknown,
+      scopePath?: string,
+    ): void {
       const rec = map.get(tripleKey(aType, axbType, bType));
 
       if (!rec) {
@@ -133,10 +137,7 @@ export function createRegistry(
  * The `lookupByAxbType()` method merges results from both registries,
  * deduplicating by triple key with base entries winning.
  */
-export function createMergedRegistry(
-  base: GraphRegistry,
-  extension: GraphRegistry,
-): GraphRegistry {
+export function createMergedRegistry(base: GraphRegistry, extension: GraphRegistry): GraphRegistry {
   // Build a set of triple keys from the base registry for fast collision checks.
   const baseKeys = new Set(base.entries().map(tripleKeyFor));
 
@@ -162,7 +163,13 @@ export function createMergedRegistry(
       return Object.freeze(merged);
     },
 
-    validate(aType: string, axbType: string, bType: string, data: unknown, scopePath?: string): void {
+    validate(
+      aType: string,
+      axbType: string,
+      bType: string,
+      data: unknown,
+      scopePath?: string,
+    ): void {
       if (baseKeys.has(tripleKey(aType, axbType, bType))) {
         return base.validate(aType, axbType, bType, data, scopePath);
       }

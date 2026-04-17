@@ -1,6 +1,7 @@
+import crypto from 'crypto';
 import { build, type Plugin } from 'esbuild';
 import path from 'path';
-import crypto from 'crypto';
+
 import type { DiscoveryResult } from '../../src/types.js';
 
 export interface ViewBundle {
@@ -273,19 +274,25 @@ export async function bundleEntityViews(
   nodeViews.forEach(({ name, absPath }, i) => {
     const varName = `nodeViews_${i}`;
     imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
-    nodeEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+    nodeEntries.push(
+      `    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`,
+    );
   });
 
   edgeViews.forEach(({ name, absPath }, i) => {
     const varName = `edgeViews_${i}`;
     imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
-    edgeEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+    edgeEntries.push(
+      `    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`,
+    );
   });
 
   colViews.forEach(({ name, absPath }, i) => {
     const varName = `colViews_${i}`;
     imports.push(`import ${varName} from '${absPath.replace(/\\/g, '/')}';`);
-    colEntries.push(`    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`);
+    colEntries.push(
+      `    '${name}': { views: Array.isArray(${varName}) ? ${varName} : ${varName}.default || [] }`,
+    );
   });
 
   const syntheticEntry = `

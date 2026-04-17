@@ -1,5 +1,6 @@
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+
 import { importJiti } from './jiti-import.js';
 
 /**
@@ -17,13 +18,21 @@ export interface LoadedConfig {
     port?: number;
     readonly?: boolean;
   };
-  chat?: false | {
-    model?: string;
-    maxConcurrency?: number;
-  };
+  chat?:
+    | false
+    | {
+        model?: string;
+        maxConcurrency?: number;
+      };
   viewDefaults?: {
-    nodes?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
-    edges?: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>;
+    nodes?: Record<
+      string,
+      { default?: string; listing?: string; detail?: string; inline?: string }
+    >;
+    edges?: Record<
+      string,
+      { default?: string; listing?: string; detail?: string; inline?: string }
+    >;
   };
   /** Dynamic registry mode — load type definitions from Firestore meta-nodes. */
   registryMode?: {
@@ -34,11 +43,7 @@ export interface LoadedConfig {
 }
 
 /** Config file names to search for, in priority order. */
-const CONFIG_FILES = [
-  'firegraph.config.ts',
-  'firegraph.config.js',
-  'firegraph.config.mjs',
-];
+const CONFIG_FILES = ['firegraph.config.ts', 'firegraph.config.js', 'firegraph.config.mjs'];
 
 /**
  * Discover the config file path.

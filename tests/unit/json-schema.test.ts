@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { compileSchema, jsonSchemaToFieldMeta } from '../../src/json-schema.js';
+import { describe, expect, it } from 'vitest';
+
 import { ValidationError } from '../../src/errors.js';
+import { compileSchema, jsonSchemaToFieldMeta } from '../../src/json-schema.js';
 
 describe('compileSchema', () => {
   it('validates valid data without throwing', () => {

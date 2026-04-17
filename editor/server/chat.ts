@@ -6,12 +6,13 @@
  * conversations are maintained via `--resume <session_id>`.
  */
 
-import { spawn, execSync, type ChildProcess } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { type ChildProcess, execSync, spawn } from 'child_process';
 import { randomBytes } from 'crypto';
 import type { Express, Request, Response } from 'express';
+import { mkdirSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
 import type { SchemaMetadata } from './schema-introspect.js';
 
 // ---------------------------------------------------------------------------
@@ -188,15 +189,21 @@ function spawnChat(
   const systemPromptFile = ensureSystemPrompt(deps.schemaMetadata);
 
   const args = [
-    '-p', prompt,
-    '--model', deps.model,
-    '--output-format', 'stream-json',
+    '-p',
+    prompt,
+    '--model',
+    deps.model,
+    '--output-format',
+    'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--append-system-prompt-file', systemPromptFile,
-    '--allowedTools', 'Bash(npx firegraph query *)',
+    '--append-system-prompt-file',
+    systemPromptFile,
+    '--allowedTools',
+    'Bash(npx firegraph query *)',
     '--dangerously-skip-permissions',
-    '--max-turns', '15',
+    '--max-turns',
+    '15',
   ];
 
   // Resume existing session for multi-turn
@@ -258,7 +265,6 @@ function spawnChat(
 
         if (event.type === 'system' && event.subtype === 'init' && event.session_id) {
           broadcastSse(requestId, 'session', { sessionId: event.session_id });
-
         } else if (event.type === 'stream_event') {
           const se = event.event;
           if (!se) continue;
@@ -271,18 +277,15 @@ function spawnChat(
               name: se.content_block.name as string,
               inputChunks: [],
             });
-
           } else if (se.type === 'content_block_delta') {
             if (se.delta?.type === 'text_delta' && se.delta?.text) {
               // Incremental text — stream to browser
               broadcastSse(requestId, 'chunk', { text: se.delta.text });
-
             } else if (se.delta?.type === 'input_json_delta') {
               // Tool input streaming — accumulate
               const tc = active.activeToolCalls.get(se.index as number);
               if (tc) tc.inputChunks.push(se.delta.partial_json ?? '');
             }
-
           } else if (se.type === 'content_block_stop') {
             // If this was a tool call, finalize input and extract command
             const tc = active.activeToolCalls.get(se.index as number);
@@ -301,10 +304,11 @@ function spawnChat(
             }
           }
           // message_start, message_delta, message_stop — no action needed
-
         } else if (event.type === 'user') {
           // Tool result — contains the output of the tool execution
-          const content = event.message?.content as { type: string; tool_use_id: string; content: string; is_error: boolean }[] | undefined;
+          const content = event.message?.content as
+            | { type: string; tool_use_id: string; content: string; is_error: boolean }[]
+            | undefined;
           if (!content) continue;
 
           for (const block of content) {
@@ -320,7 +324,6 @@ function spawnChat(
               broadcastSse(requestId, 'artifact', artifact);
             }
           }
-
         }
         // type:"assistant" → skip (text already streamed via deltas, tool_use captured via stream events)
         // type:"result" → skip (we use process close event instead)
@@ -385,7 +388,14 @@ function cleanup(requestId: string) {
 // Artifact Helpers
 // ---------------------------------------------------------------------------
 
-type ArtifactKind = 'node-detail' | 'nodes-list' | 'edges-list' | 'traverse' | 'search' | 'schema' | 'unknown';
+type ArtifactKind =
+  | 'node-detail'
+  | 'nodes-list'
+  | 'edges-list'
+  | 'traverse'
+  | 'search'
+  | 'schema'
+  | 'unknown';
 
 function isFiregraphQuery(command: string): boolean {
   return /npx\s+firegraph\s+query\b/.test(command);
@@ -395,13 +405,20 @@ function classifyCommand(command: string): ArtifactKind {
   const match = command.match(/npx\s+firegraph\s+query\s+(\S+)/);
   if (!match) return 'unknown';
   switch (match[1]) {
-    case 'get':        return 'node-detail';
-    case 'find-nodes': return 'nodes-list';
-    case 'find-edges': return 'edges-list';
-    case 'traverse':   return 'traverse';
-    case 'search':     return 'search';
-    case 'schema':     return 'schema';
-    default:           return 'unknown';
+    case 'get':
+      return 'node-detail';
+    case 'find-nodes':
+      return 'nodes-list';
+    case 'find-edges':
+      return 'edges-list';
+    case 'traverse':
+      return 'traverse';
+    case 'search':
+      return 'search';
+    case 'schema':
+      return 'schema';
+    default:
+      return 'unknown';
   }
 }
 
@@ -429,7 +446,6 @@ function parseToolResult(
 // ---------------------------------------------------------------------------
 
 export function registerChatRoutes(app: Express, deps: ChatDeps): void {
-
   // POST /api/chat — start a new chat request
   app.post('/api/chat', (req: Request, res: Response) => {
     const { prompt, context, sessionId } = req.body as {
@@ -476,7 +492,7 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+      Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     });
     res.write(': connected\n\n');
@@ -503,5 +519,4 @@ export function registerChatRoutes(app: Express, deps: ChatDeps): void {
       maxConcurrency: deps.maxConcurrency,
     });
   });
-
 }

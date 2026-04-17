@@ -1,10 +1,11 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
-import type { Schema, RegistryEntryMeta, ViewRegistryData, AppConfig } from '../types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+
 import { trpc } from '../trpc';
+import type { AppConfig, RegistryEntryMeta, Schema, ViewRegistryData } from '../types';
 import { getTypeBadgeColor, scopeInput } from '../utils';
-import SchemaForm from './SchemaForm';
 import NodeListCore from './NodeListCore';
 import { useScope } from './path-context';
+import SchemaForm from './SchemaForm';
 
 type TargetMode = 'create' | 'existing' | 'manual';
 
@@ -83,17 +84,21 @@ export default function EdgeEditor({
   );
 
   // Compute edge endpoints for edge-exists check
-  const edgeAUid = defaultUid && committedUid
-    ? (direction === 'out' ? defaultUid : committedUid)
-    : '';
-  const edgeBUid = defaultUid && committedUid
-    ? (direction === 'out' ? committedUid : defaultUid)
-    : '';
+  const edgeAUid =
+    defaultUid && committedUid ? (direction === 'out' ? defaultUid : committedUid) : '';
+  const edgeBUid =
+    defaultUid && committedUid ? (direction === 'out' ? committedUid : defaultUid) : '';
   const edgeAxbType = currentSchema?.axbType ?? '';
 
   const edgeCheck = trpc.checkEdge.useQuery(
     { aUid: edgeAUid, axbType: edgeAxbType, bUid: edgeBUid, ...scopeInput(scopePath) },
-    { enabled: !!edgeAUid && !!edgeBUid && !!edgeAxbType && (targetMode === 'existing' || targetMode === 'manual') },
+    {
+      enabled:
+        !!edgeAUid &&
+        !!edgeBUid &&
+        !!edgeAxbType &&
+        (targetMode === 'existing' || targetMode === 'manual'),
+    },
   );
 
   // Commit UID when picking from the list
@@ -146,7 +151,7 @@ export default function EdgeEditor({
     const aType = currentSchema.aType;
     const axbType = currentSchema.axbType;
     const bType = currentSchema.bType;
-    const newNodeSide = direction === 'out' ? 'b' as const : 'a' as const;
+    const newNodeSide = direction === 'out' ? ('b' as const) : ('a' as const);
 
     if (targetMode === 'create') {
       createEdgeWithNodeMutation.mutate({
@@ -249,12 +254,14 @@ export default function EdgeEditor({
               key={mode}
               onClick={() => setTargetMode(mode)}
               className={`pb-2 text-xs transition-colors relative ${
-                targetMode === mode
-                  ? 'text-slate-200'
-                  : 'text-slate-500 hover:text-slate-300'
+                targetMode === mode ? 'text-slate-200' : 'text-slate-500 hover:text-slate-300'
               }`}
             >
-              {mode === 'create' ? 'Create new' : mode === 'existing' ? 'Select existing' : 'Enter UID'}
+              {mode === 'create'
+                ? 'Create new'
+                : mode === 'existing'
+                  ? 'Select existing'
+                  : 'Enter UID'}
               {targetMode === mode && (
                 <span className="absolute bottom-0 left-0 right-0 h-px bg-indigo-500" />
               )}
@@ -266,7 +273,9 @@ export default function EdgeEditor({
         {targetMode === 'create' && targetType && (
           <div>
             <div className="mb-3">
-              <label className="block text-[11px] text-slate-500 mb-1">UID (optional, auto-generated if empty)</label>
+              <label className="block text-[11px] text-slate-500 mb-1">
+                UID (optional, auto-generated if empty)
+              </label>
               <input
                 type="text"
                 value={nodeUidOverride}
@@ -276,7 +285,8 @@ export default function EdgeEditor({
               />
               {nodeUidOverride && (
                 <p className="mt-1.5 text-xs text-amber-400">
-                  Custom UIDs can cause Firestore hotspots. Recommended to leave empty for auto-generated IDs.
+                  Custom UIDs can cause Firestore hotspots. Recommended to leave empty for
+                  auto-generated IDs.
                 </p>
               )}
             </div>
@@ -285,7 +295,11 @@ export default function EdgeEditor({
                 <label className="block text-[11px] text-slate-500 mb-2 uppercase tracking-wider font-semibold">
                   {targetType} Data
                 </label>
-                <SchemaForm fields={targetNodeSchema.fields} values={nodeFormValues} onChange={setNodeFormValues} />
+                <SchemaForm
+                  fields={targetNodeSchema.fields}
+                  values={nodeFormValues}
+                  onChange={setNodeFormValues}
+                />
               </div>
             ) : (
               <div>
@@ -293,7 +307,11 @@ export default function EdgeEditor({
                 <textarea
                   value={JSON.stringify(nodeFormValues, null, 2)}
                   onChange={(e) => {
-                    try { setNodeFormValues(JSON.parse(e.target.value)); } catch { /* let user type */ }
+                    try {
+                      setNodeFormValues(JSON.parse(e.target.value));
+                    } catch {
+                      /* let user type */
+                    }
                   }}
                   rows={4}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -309,18 +327,23 @@ export default function EdgeEditor({
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[11px] text-slate-500">Selected:</span>
                 <span className="font-mono text-sm text-indigo-400">{targetUid}</span>
-                <ValidationBadge checking={!!nodeChecking} valid={!!nodeValid} invalid={!!nodeInvalid} />
+                <ValidationBadge
+                  checking={!!nodeChecking}
+                  valid={!!nodeValid}
+                  invalid={!!nodeInvalid}
+                />
                 <button
-                  onClick={() => { setTargetUid(''); setCommittedUid(''); }}
+                  onClick={() => {
+                    setTargetUid('');
+                    setCommittedUid('');
+                  }}
                   className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
                 >
                   clear
                 </button>
               </div>
             )}
-            {targetUid && edgeExists && (
-              <EdgeExistsWarning />
-            )}
+            {targetUid && edgeExists && <EdgeExistsWarning />}
             {!targetUid && (
               <NodeListCore
                 type={targetType}
@@ -352,21 +375,21 @@ export default function EdgeEditor({
                 placeholder={`e.g., ${targetLabel}1 (Enter to validate)`}
                 className="flex-1 max-w-sm bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
               />
-              <ValidationBadge checking={!!nodeChecking} valid={!!nodeValid} invalid={!!nodeInvalid} />
+              <ValidationBadge
+                checking={!!nodeChecking}
+                valid={!!nodeValid}
+                invalid={!!nodeInvalid}
+              />
             </div>
             {nodeInvalid && (
-              <p className="mt-1.5 text-xs text-red-400">
-                No node found with UID "{committedUid}"
-              </p>
+              <p className="mt-1.5 text-xs text-red-400">No node found with UID "{committedUid}"</p>
             )}
             {nodeValid && nodeCheck.data?.node && nodeCheck.data.node.aType !== targetType && (
               <p className="mt-1.5 text-xs text-amber-400">
                 Node exists but is type "{nodeCheck.data.node.aType}" (expected "{targetType}")
               </p>
             )}
-            {edgeExists && (
-              <EdgeExistsWarning />
-            )}
+            {edgeExists && <EdgeExistsWarning />}
           </div>
         )}
       </div>
@@ -374,8 +397,14 @@ export default function EdgeEditor({
       {/* Edge data form */}
       {currentSchema && currentSchema.fields.length > 0 && (
         <div className="mb-5">
-          <label className="block text-xs text-slate-500 mb-2 uppercase tracking-wider font-semibold">Edge Data</label>
-          <SchemaForm fields={currentSchema.fields} values={edgeFormValues} onChange={setEdgeFormValues} />
+          <label className="block text-xs text-slate-500 mb-2 uppercase tracking-wider font-semibold">
+            Edge Data
+          </label>
+          <SchemaForm
+            fields={currentSchema.fields}
+            values={edgeFormValues}
+            onChange={setEdgeFormValues}
+          />
         </div>
       )}
 
@@ -393,7 +422,9 @@ export default function EdgeEditor({
           disabled={!canSubmit}
           className="px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          {loading && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          {loading && (
+            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          )}
           {targetMode === 'create'
             ? `Create ${targetLabel} + Edge`
             : edgeExists
@@ -424,19 +455,36 @@ function ValidationBadge({
   invalid: boolean;
 }) {
   if (checking) {
-    return <div className="w-3.5 h-3.5 border-2 border-slate-500 border-t-transparent rounded-full animate-spin shrink-0" />;
+    return (
+      <div className="w-3.5 h-3.5 border-2 border-slate-500 border-t-transparent rounded-full animate-spin shrink-0" />
+    );
   }
   if (valid) {
     return (
-      <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg
+        className="w-4 h-4 text-emerald-400 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
       </svg>
     );
   }
   if (invalid) {
     return (
-      <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+      <svg
+        className="w-4 h-4 text-red-400 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M6 18L18 6M6 6l12 12"
+        />
       </svg>
     );
   }
@@ -447,7 +495,12 @@ function EdgeExistsWarning() {
   return (
     <div className="flex items-center gap-1.5 mt-1.5 mb-2 text-xs text-amber-400">
       <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
       </svg>
       Edge already exists — submitting will update it
     </div>

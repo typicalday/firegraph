@@ -1,6 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import http from 'node:http';
 import { EventEmitter } from 'node:events';
+import http from 'node:http';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { QueryClient, QueryClientError } from '../../../src/query-client/client.js';
 
 // Mock config to avoid filesystem reads
@@ -20,8 +22,14 @@ function createMockResponse(body: string): EventEmitter & { statusCode: number }
   return res;
 }
 
-function createMockRequest(): EventEmitter & { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> } {
-  const req = new EventEmitter() as EventEmitter & { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
+function createMockRequest(): EventEmitter & {
+  write: ReturnType<typeof vi.fn>;
+  end: ReturnType<typeof vi.fn>;
+} {
+  const req = new EventEmitter() as EventEmitter & {
+    write: ReturnType<typeof vi.fn>;
+    end: ReturnType<typeof vi.fn>;
+  };
   req.write = vi.fn();
   req.end = vi.fn();
   return req;
@@ -132,17 +140,33 @@ describe('QueryClient', () => {
     it('rejects empty uid', async () => {
       const client = new QueryClient({ port: 3884 });
       await expect(client.getNodeDetail({ uid: '' })).rejects.toThrow(QueryClientError);
-      await expect(client.getNodeDetail({ uid: '' })).rejects.toThrow('uid must be a non-empty string');
+      await expect(client.getNodeDetail({ uid: '' })).rejects.toThrow(
+        'uid must be a non-empty string',
+      );
     });
 
     it('summarizes node and edges from server response', async () => {
       mockGetResponse({
         node: { aType: 'task', aUid: 'task1', data: { title: 'Test' } },
         outEdges: [
-          { aType: 'task', aUid: 'task1', axbType: 'hasStep', bType: 'step', bUid: 'step1', data: { order: 1 } },
+          {
+            aType: 'task',
+            aUid: 'task1',
+            axbType: 'hasStep',
+            bType: 'step',
+            bUid: 'step1',
+            data: { order: 1 },
+          },
         ],
         inEdges: [
-          { aType: 'user', aUid: 'u1', axbType: 'assigned', bType: 'task', bUid: 'task1', data: {} },
+          {
+            aType: 'user',
+            aUid: 'u1',
+            axbType: 'assigned',
+            bType: 'task',
+            bUid: 'task1',
+            data: {},
+          },
         ],
       });
 
@@ -151,7 +175,14 @@ describe('QueryClient', () => {
 
       expect(result.node).toEqual({ type: 'task', uid: 'task1', data: { title: 'Test' } });
       expect(result.outEdges).toEqual([
-        { fromType: 'task', fromUid: 'task1', relation: 'hasStep', toType: 'step', toUid: 'step1', data: { order: 1 } },
+        {
+          fromType: 'task',
+          fromUid: 'task1',
+          relation: 'hasStep',
+          toType: 'step',
+          toUid: 'step1',
+          data: { order: 1 },
+        },
       ]);
       // Edge with empty data should omit data field
       expect(result.inEdges).toEqual([
@@ -177,7 +208,9 @@ describe('QueryClient', () => {
 
       const calledUrl = httpGetSpy.mock.calls[0][0] as string;
       expect(calledUrl).toContain('getNodeDetail');
-      expect(calledUrl).toContain(encodeURIComponent(JSON.stringify({ uid: 'test:uid/with spaces' })));
+      expect(calledUrl).toContain(
+        encodeURIComponent(JSON.stringify({ uid: 'test:uid/with spaces' })),
+      );
     });
   });
 
@@ -230,16 +263,16 @@ describe('QueryClient', () => {
 
     it('rejects float limit', async () => {
       const client = new QueryClient({ port: 3884 });
-      await expect(
-        client.getNodes({ type: 'task', limit: 3.5 }),
-      ).rejects.toThrow('limit must be an integer');
+      await expect(client.getNodes({ type: 'task', limit: 3.5 })).rejects.toThrow(
+        'limit must be an integer',
+      );
     });
 
     it('rejects invalid sortDir', async () => {
       const client = new QueryClient({ port: 3884 });
-      await expect(
-        client.getNodes({ type: 'task', sortDir: 'up' as 'asc' }),
-      ).rejects.toThrow("sortDir must be 'asc' or 'desc'");
+      await expect(client.getNodes({ type: 'task', sortDir: 'up' as 'asc' })).rejects.toThrow(
+        "sortDir must be 'asc' or 'desc'",
+      );
     });
 
     it('passes through sortBy and sortDir to the wire', async () => {
@@ -265,7 +298,14 @@ describe('QueryClient', () => {
     it('summarizes edges from server response', async () => {
       mockGetResponse({
         edges: [
-          { aType: 'user', aUid: 'u1', axbType: 'hasTask', bType: 'task', bUid: 't1', data: { role: 'owner' } },
+          {
+            aType: 'user',
+            aUid: 'u1',
+            axbType: 'hasTask',
+            bType: 'task',
+            bUid: 't1',
+            data: { role: 'owner' },
+          },
           { aType: 'user', aUid: 'u1', axbType: 'hasTask', bType: 'task', bUid: 't2', data: {} },
         ],
         hasMore: false,
@@ -275,7 +315,14 @@ describe('QueryClient', () => {
       const result = await client.getEdges({ aUid: 'u1' });
 
       expect(result.edges).toEqual([
-        { fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't1', data: { role: 'owner' } },
+        {
+          fromType: 'user',
+          fromUid: 'u1',
+          relation: 'hasTask',
+          toType: 'task',
+          toUid: 't1',
+          data: { role: 'owner' },
+        },
         { fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't2' },
       ]);
       expect(result.edges[1]).not.toHaveProperty('data');
@@ -285,7 +332,13 @@ describe('QueryClient', () => {
     it('sends all filter fields over the wire', async () => {
       mockGetResponse({ edges: [], hasMore: false });
       const client = new QueryClient({ port: 3884 });
-      await client.getEdges({ aType: 'user', aUid: 'u1', axbType: 'hasTask', bType: 'task', bUid: 't1' });
+      await client.getEdges({
+        aType: 'user',
+        aUid: 'u1',
+        axbType: 'hasTask',
+        bType: 'task',
+        bUid: 't1',
+      });
 
       const input = getQueryInput();
       expect(input.aType).toBe('user');
@@ -315,7 +368,9 @@ describe('QueryClient', () => {
   describe('traverse', () => {
     it('rejects empty startUid', async () => {
       const client = new QueryClient({ port: 3884 });
-      const err = await client.traverse({ startUid: '', hops: [{ axbType: 'x' }] }).catch((e: QueryClientError) => e);
+      const err = await client
+        .traverse({ startUid: '', hops: [{ axbType: 'x' }] })
+        .catch((e: QueryClientError) => e);
       expect(err).toBeInstanceOf(QueryClientError);
       expect(err.code).toBe('VALIDATION_ERROR');
       expect(err.message).toContain('startUid');
@@ -323,14 +378,18 @@ describe('QueryClient', () => {
 
     it('rejects empty hops array', async () => {
       const client = new QueryClient({ port: 3884 });
-      const err = await client.traverse({ startUid: 'a', hops: [] }).catch((e: QueryClientError) => e);
+      const err = await client
+        .traverse({ startUid: 'a', hops: [] })
+        .catch((e: QueryClientError) => e);
       expect(err).toBeInstanceOf(QueryClientError);
       expect(err.message).toContain('at least one hop');
     });
 
     it('rejects hop with empty axbType', async () => {
       const client = new QueryClient({ port: 3884 });
-      const err = await client.traverse({ startUid: 'a', hops: [{ axbType: '' }] }).catch((e: QueryClientError) => e);
+      const err = await client
+        .traverse({ startUid: 'a', hops: [{ axbType: '' }] })
+        .catch((e: QueryClientError) => e);
       expect(err.message).toContain('hops[0].axbType');
     });
 
@@ -396,8 +455,22 @@ describe('QueryClient', () => {
             direction: 'forward',
             depth: 1,
             edges: [
-              { aType: 'user', aUid: 'u1', axbType: 'hasTask', bType: 'task', bUid: 't1', data: { priority: 'high' } },
-              { aType: 'user', aUid: 'u1', axbType: 'hasTask', bType: 'task', bUid: 't2', data: {} },
+              {
+                aType: 'user',
+                aUid: 'u1',
+                axbType: 'hasTask',
+                bType: 'task',
+                bUid: 't1',
+                data: { priority: 'high' },
+              },
+              {
+                aType: 'user',
+                aUid: 'u1',
+                axbType: 'hasTask',
+                bType: 'task',
+                bUid: 't2',
+                data: {},
+              },
             ],
             truncated: false,
           },
@@ -434,11 +507,20 @@ describe('QueryClient', () => {
       expect(result.hops[0].depth).toBe(1);
       expect(result.hops[0].edgeCount).toBe(2);
       expect(result.hops[0].edges[0]).toEqual({
-        fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't1', data: { priority: 'high' },
+        fromType: 'user',
+        fromUid: 'u1',
+        relation: 'hasTask',
+        toType: 'task',
+        toUid: 't1',
+        data: { priority: 'high' },
       });
       // Empty data omitted
       expect(result.hops[0].edges[1]).toEqual({
-        fromType: 'user', fromUid: 'u1', relation: 'hasTask', toType: 'task', toUid: 't2',
+        fromType: 'user',
+        fromUid: 'u1',
+        relation: 'hasTask',
+        toType: 'task',
+        toUid: 't2',
       });
       expect(result.hops[0].edges[1]).not.toHaveProperty('data');
       expect(result.hops[0].truncated).toBe(false);
@@ -503,11 +585,16 @@ describe('QueryClient', () => {
 
       expect(result.results).toHaveLength(2);
       expect(result.results[0]).toEqual({
-        type: 'user', uid: 'u1', data: { name: 'John' }, matchType: 'uid',
+        type: 'user',
+        uid: 'u1',
+        data: { name: 'John' },
+        matchType: 'uid',
       });
       // empty data omitted, matchType mapped
       expect(result.results[1]).toEqual({
-        type: 'task', uid: 't1', matchType: 'data',
+        type: 'task',
+        uid: 't1',
+        matchType: 'data',
       });
       expect(result.results[1]).not.toHaveProperty('data');
     });

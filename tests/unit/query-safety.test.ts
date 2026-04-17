@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { analyzeQuerySafety } from '../../src/query-safety.js';
 import type { QueryFilter } from '../../src/types.js';
 
@@ -62,9 +63,7 @@ describe('analyzeQuerySafety', () => {
   // ---------------------------------------------------------------------------
 
   it('marks lone aUid as unsafe', () => {
-    const filters: QueryFilter[] = [
-      { field: 'aUid', op: '==', value: 'abc' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'aUid', op: '==', value: 'abc' }];
     const result = analyzeQuerySafety(filters);
     expect(result.safe).toBe(false);
     expect(result.reason).toBeDefined();
@@ -72,33 +71,25 @@ describe('analyzeQuerySafety', () => {
   });
 
   it('marks lone bUid as unsafe', () => {
-    const filters: QueryFilter[] = [
-      { field: 'bUid', op: '==', value: 'xyz' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'bUid', op: '==', value: 'xyz' }];
     const result = analyzeQuerySafety(filters);
     expect(result.safe).toBe(false);
   });
 
   it('marks lone axbType as unsafe', () => {
-    const filters: QueryFilter[] = [
-      { field: 'axbType', op: '==', value: 'hasDep' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'axbType', op: '==', value: 'hasDep' }];
     const result = analyzeQuerySafety(filters);
     expect(result.safe).toBe(false);
   });
 
   it('marks lone aType as unsafe', () => {
-    const filters: QueryFilter[] = [
-      { field: 'aType', op: '==', value: 'tour' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
     const result = analyzeQuerySafety(filters);
     expect(result.safe).toBe(false);
   });
 
   it('marks data-only filters as unsafe', () => {
-    const filters: QueryFilter[] = [
-      { field: 'data.status', op: '==', value: 'active' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'data.status', op: '==', value: 'active' }];
     const result = analyzeQuerySafety(filters);
     expect(result.safe).toBe(false);
     expect(result.reason).toContain('data.*');
@@ -139,9 +130,7 @@ describe('analyzeQuerySafety', () => {
   });
 
   it('includes safe patterns in the reason message', () => {
-    const filters: QueryFilter[] = [
-      { field: 'aType', op: '==', value: 'tour' },
-    ];
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
     const result = analyzeQuerySafety(filters);
     expect(result.reason).toContain('aUid + axbType');
     expect(result.reason).toContain('allowCollectionScan');

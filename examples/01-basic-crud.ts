@@ -5,6 +5,7 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/01-basic-crud.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import { createGraphClient, createRegistry, generateId } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -64,13 +65,43 @@ const bookingEdgeSchema = {
 
 const registry = createRegistry([
   // Nodes
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchema,
+    description: 'Tour entity',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    jsonSchema: departureSchema,
+    description: 'Departure entity',
+  },
+  {
+    aType: 'rider',
+    axbType: 'is',
+    bType: 'rider',
+    jsonSchema: riderSchema,
+    description: 'Rider entity',
+  },
 
   // Edges
-  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure date' },
-  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: bookingEdgeSchema, description: 'Departure has a booked rider' },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has a departure date',
+  },
+  {
+    aType: 'departure',
+    axbType: 'hasRider',
+    bType: 'rider',
+    jsonSchema: bookingEdgeSchema,
+    description: 'Departure has a booked rider',
+  },
 ]);
 
 const g = createGraphClient(db, 'examples/crud/graph', { registry });

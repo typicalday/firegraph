@@ -11,12 +11,8 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/06-real-world-booking.ts
  */
 import { Firestore } from '@google-cloud/firestore';
-import {
-  createGraphClient,
-  createRegistry,
-  createTraversal,
-  generateId,
-} from '../src/index.js';
+
+import { createGraphClient, createRegistry, createTraversal, generateId } from '../src/index.js';
 import type { GraphClient, GraphTransaction } from '../src/types.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -74,11 +70,41 @@ const riderEdgeSchema = {
 // ── Registry ────────────────────────────────────────────────────
 
 const registry = createRegistry([
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
-  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
-  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: riderEdgeSchema,   description: 'Departure has a rider' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchema,
+    description: 'Tour entity',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    jsonSchema: departureSchema,
+    description: 'Departure entity',
+  },
+  {
+    aType: 'rider',
+    axbType: 'is',
+    bType: 'rider',
+    jsonSchema: riderSchema,
+    description: 'Rider entity',
+  },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has a departure',
+  },
+  {
+    aType: 'departure',
+    axbType: 'hasRider',
+    bType: 'rider',
+    jsonSchema: riderEdgeSchema,
+    description: 'Departure has a rider',
+  },
 ]);
 
 const g = createGraphClient(db, 'examples/booking/graph', { registry });
@@ -164,11 +190,11 @@ async function main() {
 
   const bookings = [
     { dep: dolJul, rider: jamie, label: 'Jamie → Dolomites Jul' },
-    { dep: dolJul, rider: sam,   label: 'Sam → Dolomites Jul' },
+    { dep: dolJul, rider: sam, label: 'Sam → Dolomites Jul' },
     { dep: dolJul, rider: priya, label: 'Priya → Dolomites Jul' },
     { dep: dolAug, rider: jamie, label: 'Jamie → Dolomites Aug' },
-    { dep: dolAug, rider: luca,  label: 'Luca → Dolomites Aug' },
-    { dep: alpSep, rider: sam,   label: 'Sam → Alps Sep' },
+    { dep: dolAug, rider: luca, label: 'Luca → Dolomites Aug' },
+    { dep: alpSep, rider: sam, label: 'Sam → Alps Sep' },
     { dep: alpSep, rider: priya, label: 'Priya → Alps Sep' },
   ];
 
@@ -240,7 +266,9 @@ async function main() {
     .follow('hasRider')
     .run({ maxReads: 2 });
 
-  console.log(`Budget-limited (maxReads=2): ${budgeted.totalReads} reads, truncated=${budgeted.truncated}`);
+  console.log(
+    `Budget-limited (maxReads=2): ${budgeted.totalReads} reads, truncated=${budgeted.truncated}`,
+  );
 }
 
 main().catch(console.error);

@@ -27,8 +27,9 @@
  * Example:
  *   PIPELINE_TEST_PROJECT=my-project PIPELINE_TEST_DATABASE=my-db pnpm vitest run tests/pipeline/
  */
-import { Firestore, Pipelines } from '@google-cloud/firestore';
 import { randomUUID } from 'node:crypto';
+
+import { Firestore, Pipelines } from '@google-cloud/firestore';
 
 const PROJECT_ID = process.env.PIPELINE_TEST_PROJECT;
 const DATABASE_ID = process.env.PIPELINE_TEST_DATABASE;
@@ -36,15 +37,15 @@ const DATABASE_ID = process.env.PIPELINE_TEST_DATABASE;
 if (!PROJECT_ID || !DATABASE_ID) {
   throw new Error(
     'PIPELINE_TEST_PROJECT and PIPELINE_TEST_DATABASE environment variables are required.\n\n' +
-    'Pipeline tests require a real Firestore Enterprise database because ' +
-    'the Firestore emulator does not support Pipeline operations.\n\n' +
-    'Usage:\n' +
-    '  PIPELINE_TEST_PROJECT=<project> PIPELINE_TEST_DATABASE=<db-id> pnpm vitest run tests/pipeline/\n\n' +
-    'The database must be Firestore Enterprise edition. Create one with:\n' +
-    '  gcloud firestore databases create --database=<db-id> --location=<region> \\\n' +
-    '    --type=firestore-native --edition=enterprise --project=<project>\n\n' +
-    'Make sure you have ADC configured:\n' +
-    '  gcloud auth application-default login',
+      'Pipeline tests require a real Firestore Enterprise database because ' +
+      'the Firestore emulator does not support Pipeline operations.\n\n' +
+      'Usage:\n' +
+      '  PIPELINE_TEST_PROJECT=<project> PIPELINE_TEST_DATABASE=<db-id> pnpm vitest run tests/pipeline/\n\n' +
+      'The database must be Firestore Enterprise edition. Create one with:\n' +
+      '  gcloud firestore databases create --database=<db-id> --location=<region> \\\n' +
+      '    --type=firestore-native --edition=enterprise --project=<project>\n\n' +
+      'Make sure you have ADC configured:\n' +
+      '  gcloud auth application-default login',
   );
 }
 

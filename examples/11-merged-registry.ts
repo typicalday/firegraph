@@ -9,11 +9,12 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/11-merged-registry.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import {
   createGraphClient,
   createRegistry,
-  generateId,
   DynamicRegistryError,
+  generateId,
 } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -54,7 +55,13 @@ async function main() {
   const staticRegistry = createRegistry([
     { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema },
-    { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema, inverseLabel: 'departureOf' },
+    {
+      aType: 'tour',
+      axbType: 'hasDeparture',
+      bType: 'departure',
+      jsonSchema: edgeSchema,
+      inverseLabel: 'departureOf',
+    },
   ]);
 
   // ═══════════════════════════════════════════════════════════════
@@ -62,8 +69,8 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════
 
   const g = createGraphClient(db, 'examples/merged-registry/graph', {
-    registry: staticRegistry,                  // core types (immutable)
-    registryMode: { mode: 'dynamic' },         // runtime extensions
+    registry: staticRegistry, // core types (immutable)
+    registryMode: { mode: 'dynamic' }, // runtime extensions
   });
 
   console.log('Created merged-mode client');
@@ -89,16 +96,20 @@ async function main() {
   // 4. Add new types at runtime via the dynamic registry
   // ═══════════════════════════════════════════════════════════════
 
-  await g.defineNodeType('milestone', {
-    type: 'object',
-    required: ['title'],
-    properties: {
-      title: { type: 'string', minLength: 1 },
-      date: { type: 'string' },
-      status: { type: 'string', enum: ['planned', 'reached'] },
+  await g.defineNodeType(
+    'milestone',
+    {
+      type: 'object',
+      required: ['title'],
+      properties: {
+        title: { type: 'string', minLength: 1 },
+        date: { type: 'string' },
+        status: { type: 'string', enum: ['planned', 'reached'] },
+      },
+      additionalProperties: false,
     },
-    additionalProperties: false,
-  }, 'A project milestone');
+    'A project milestone',
+  );
 
   await g.defineEdgeType(
     'hasMilestone',

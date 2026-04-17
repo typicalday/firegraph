@@ -17,13 +17,9 @@
  * Run against the emulator:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/12-schema-migrations.ts
  */
-import { Firestore, Timestamp, GeoPoint } from '@google-cloud/firestore';
-import {
-  createGraphClient,
-  createRegistry,
-  generateId,
-  SERIALIZATION_TAG,
-} from '../src/index.js';
+import { Firestore, GeoPoint, Timestamp } from '@google-cloud/firestore';
+
+import { createGraphClient, createRegistry, generateId, SERIALIZATION_TAG } from '../src/index.js';
 import type { MigrationStep } from '../src/types.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -42,7 +38,7 @@ async function main() {
 
   // Verify: no version stamp on a bare client
   const legacy = await bare.getNode(tourId);
-  console.log('  v:', legacy!.v);         // undefined
+  console.log('  v:', legacy!.v); // undefined
   console.log('  status:', legacy!.data.status); // undefined
   console.log();
 
@@ -87,8 +83,8 @@ async function main() {
       axbType: 'is',
       bType: 'tour',
       jsonSchema: tourSchemaV2,
-      migrations,                    // version derived as max(toVersion) = 2
-      migrationWriteBack: 'eager',   // persist migrated data back to Firestore
+      migrations, // version derived as max(toVersion) = 2
+      migrationWriteBack: 'eager', // persist migrated data back to Firestore
     },
   ]);
 
@@ -100,7 +96,7 @@ async function main() {
 
   const migrated = await g.getNode(tourId);
   console.log('After migration:');
-  console.log('  v:', migrated!.v);              // 2
+  console.log('  v:', migrated!.v); // 2
   console.log('  status:', migrated!.data.status); // 'draft' (added by v0->v1)
   console.log('  active:', migrated!.data.active); // true (added by v1->v2)
   console.log();
@@ -116,7 +112,7 @@ async function main() {
   // Reading with the bare client now shows the updated data
   const persisted = await bare.getNode(tourId);
   console.log('After write-back (raw Firestore):');
-  console.log('  v:', persisted!.v);              // 2
+  console.log('  v:', persisted!.v); // 2
   console.log('  status:', persisted!.data.status); // 'draft'
   console.log('  active:', persisted!.data.active); // true
   console.log();
@@ -149,7 +145,7 @@ async function main() {
   await g.runTransaction(async (tx) => {
     const node = await tx.getNode(tourId2);
     console.log('Transaction read:');
-    console.log('  v:', node!.v);              // 2
+    console.log('  v:', node!.v); // 2
     console.log('  status:', node!.data.status); // 'draft'
     // In transactions, write-back happens inline within the same transaction
   });
@@ -184,9 +180,7 @@ async function main() {
     },
     'A task entity',
     {
-      migrations: [
-        { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, done: false })' },
-      ],
+      migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, done: false })' }],
     },
   );
 
@@ -199,7 +193,7 @@ async function main() {
 
   const task = await dynClient.getNode(taskId);
   console.log('Dynamic migration:');
-  console.log('  v:', task!.v);          // 1
+  console.log('  v:', task!.v); // 1
   console.log('  done:', task!.data.done); // false (added by migration)
 
   // ═══════════════════════════════════════════════════════════════
@@ -258,9 +252,9 @@ async function main() {
   // Read through the dynamic client — migration runs, types are preserved
   const event = await eventClient.getNode(eventId);
   console.log('Firestore type preservation:');
-  console.log('  name:', event!.data.name);             // 'Conference'
+  console.log('  name:', event!.data.name); // 'Conference'
   console.log('  createdAt type:', event!.data.createdAt?.constructor?.name); // 'Timestamp'
-  console.log('  location type:', event!.data.location?.constructor?.name);   // 'GeoPoint'
+  console.log('  location type:', event!.data.location?.constructor?.name); // 'GeoPoint'
   console.log('  updatedAt type:', event!.data.updatedAt?.constructor?.name); // 'Timestamp' (added by migration)
 
   console.log();

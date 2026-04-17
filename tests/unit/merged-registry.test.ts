@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { createRegistry, createMergedRegistry } from '../../src/registry.js';
+import { describe, expect, it } from 'vitest';
+
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
+import { createMergedRegistry, createRegistry } from '../../src/registry.js';
 
 const tourSchema = {
   type: 'object',
@@ -60,12 +61,8 @@ describe('createMergedRegistry', () => {
   });
 
   it('lookup returns undefined when neither registry has the triple', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
-    const ext = createRegistry([
-      { aType: 'milestone', axbType: 'is', bType: 'milestone' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
+    const ext = createRegistry([{ aType: 'milestone', axbType: 'is', bType: 'milestone' }]);
     const merged = createMergedRegistry(base, ext);
 
     expect(merged.lookup('booking', 'is', 'booking')).toBeUndefined();
@@ -102,16 +99,14 @@ describe('createMergedRegistry', () => {
     // Valid against extension schema
     expect(() => merged.validate('milestone', 'is', 'milestone', { title: 'Y' })).not.toThrow();
     // Invalid against extension schema
-    expect(() => merged.validate('milestone', 'is', 'milestone', { name: 'Y' })).toThrow(ValidationError);
+    expect(() => merged.validate('milestone', 'is', 'milestone', { name: 'Y' })).toThrow(
+      ValidationError,
+    );
   });
 
   it('validate throws RegistryViolationError for unregistered triples', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
-    const ext = createRegistry([
-      { aType: 'milestone', axbType: 'is', bType: 'milestone' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
+    const ext = createRegistry([{ aType: 'milestone', axbType: 'is', bType: 'milestone' }]);
     const merged = createMergedRegistry(base, ext);
 
     expect(() => merged.validate('booking', 'is', 'booking', {})).toThrow(RegistryViolationError);
@@ -163,9 +158,7 @@ describe('createMergedRegistry', () => {
   });
 
   it('entries returns base entries when extension is empty', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
     const ext = createRegistry([]);
     const merged = createMergedRegistry(base, ext);
 
@@ -177,12 +170,8 @@ describe('createMergedRegistry', () => {
   // ---------------------------------------------------------------------------
 
   it('lookupByAxbType merges results from both registries', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
-    ]);
-    const ext = createRegistry([
-      { aType: 'trek', axbType: 'hasDeparture', bType: 'departure' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+    const ext = createRegistry([{ aType: 'trek', axbType: 'hasDeparture', bType: 'departure' }]);
     const merged = createMergedRegistry(base, ext);
 
     const results = merged.lookupByAxbType('hasDeparture');
@@ -207,12 +196,8 @@ describe('createMergedRegistry', () => {
   });
 
   it('lookupByAxbType returns base-only results when extension has none', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
-    ]);
-    const ext = createRegistry([
-      { aType: 'milestone', axbType: 'is', bType: 'milestone' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+    const ext = createRegistry([{ aType: 'milestone', axbType: 'is', bType: 'milestone' }]);
     const merged = createMergedRegistry(base, ext);
 
     const results = merged.lookupByAxbType('hasDeparture');
@@ -221,12 +206,8 @@ describe('createMergedRegistry', () => {
   });
 
   it('lookupByAxbType returns extension-only results when base has none', () => {
-    const base = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
-    const ext = createRegistry([
-      { aType: 'milestone', axbType: 'hasMilestone', bType: 'task' },
-    ]);
+    const base = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
+    const ext = createRegistry([{ aType: 'milestone', axbType: 'hasMilestone', bType: 'task' }]);
     const merged = createMergedRegistry(base, ext);
 
     const results = merged.lookupByAxbType('hasMilestone');

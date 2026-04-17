@@ -1,9 +1,15 @@
-import { describe, it, expect } from 'vitest';
 import { Timestamp } from '@google-cloud/firestore';
-import { applyMigrationChain, validateMigrationChain, migrateRecord, migrateRecords } from '../../src/migration.js';
-import { createRegistry } from '../../src/registry.js';
+import { describe, expect, it } from 'vitest';
+
 import { MigrationError } from '../../src/errors.js';
-import type { StoredGraphRecord, MigrationStep } from '../../src/types.js';
+import {
+  applyMigrationChain,
+  migrateRecord,
+  migrateRecords,
+  validateMigrationChain,
+} from '../../src/migration.js';
+import { createRegistry } from '../../src/registry.js';
+import type { MigrationStep, StoredGraphRecord } from '../../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,9 +99,7 @@ describe('applyMigrationChain', () => {
       { fromVersion: 2, toVersion: 3, up: (d) => ({ ...d, c: true }) },
     ];
 
-    await expect(
-      applyMigrationChain({}, 0, 3, migrations),
-    ).rejects.toThrow(MigrationError);
+    await expect(applyMigrationChain({}, 0, 3, migrations)).rejects.toThrow(MigrationError);
   });
 
   it('throws MigrationError when migration function throws', async () => {
@@ -109,9 +113,7 @@ describe('applyMigrationChain', () => {
       },
     ];
 
-    await expect(
-      applyMigrationChain({}, 0, 1, migrations),
-    ).rejects.toThrow(MigrationError);
+    await expect(applyMigrationChain({}, 0, 1, migrations)).rejects.toThrow(MigrationError);
   });
 
   it('throws MigrationError when migration returns null', async () => {
@@ -119,9 +121,7 @@ describe('applyMigrationChain', () => {
       { fromVersion: 0, toVersion: 1, up: () => null as unknown as Record<string, unknown> },
     ];
 
-    await expect(
-      applyMigrationChain({}, 0, 1, migrations),
-    ).rejects.toThrow(MigrationError);
+    await expect(applyMigrationChain({}, 0, 1, migrations)).rejects.toThrow(MigrationError);
   });
 
   it('does not mutate original data', async () => {
@@ -174,9 +174,7 @@ describe('validateMigrationChain', () => {
   });
 
   it('throws MigrationError when chain starts above v0', () => {
-    const migrations: MigrationStep[] = [
-      { fromVersion: 1, toVersion: 2, up: (d) => d },
-    ];
+    const migrations: MigrationStep[] = [{ fromVersion: 1, toVersion: 2, up: (d) => d }];
 
     expect(() => validateMigrationChain(migrations, 'test')).toThrow(MigrationError);
     expect(() => validateMigrationChain(migrations, 'test')).toThrow(/gap/);
@@ -193,9 +191,7 @@ describe('validateMigrationChain', () => {
   });
 
   it('handles single-step chain correctly', () => {
-    const migrations: MigrationStep[] = [
-      { fromVersion: 0, toVersion: 1, up: (d) => d },
-    ];
+    const migrations: MigrationStep[] = [{ fromVersion: 0, toVersion: 1, up: (d) => d }];
 
     expect(() => validateMigrationChain(migrations, 'test')).not.toThrow();
   });
@@ -211,15 +207,11 @@ describe('validateMigrationChain', () => {
   });
 
   it('throws MigrationError when toVersion <= fromVersion', () => {
-    const same: MigrationStep[] = [
-      { fromVersion: 0, toVersion: 0, up: (d) => d },
-    ];
+    const same: MigrationStep[] = [{ fromVersion: 0, toVersion: 0, up: (d) => d }];
     expect(() => validateMigrationChain(same, 'test')).toThrow(MigrationError);
     expect(() => validateMigrationChain(same, 'test')).toThrow(/toVersion.*<=.*fromVersion/);
 
-    const backwards: MigrationStep[] = [
-      { fromVersion: 1, toVersion: 0, up: (d) => d },
-    ];
+    const backwards: MigrationStep[] = [{ fromVersion: 1, toVersion: 0, up: (d) => d }];
     expect(() => validateMigrationChain(backwards, 'test')).toThrow(MigrationError);
     expect(() => validateMigrationChain(backwards, 'test')).toThrow(/toVersion.*<=.*fromVersion/);
   });
@@ -363,9 +355,7 @@ describe('migrateRecords', () => {
       aType: 'task',
       axbType: 'is',
       bType: 'task',
-      migrations: [
-        { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, done: false }) },
-      ],
+      migrations: [{ fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, done: false }) }],
     },
   ]);
 

@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { buildEdgeQueryPlan, buildNodeQueryPlan } from '../../src/query.js';
+import { describe, expect, it } from 'vitest';
+
 import { InvalidQueryError } from '../../src/errors.js';
-import { NODE_RELATION, DEFAULT_QUERY_LIMIT } from '../../src/internal/constants.js';
+import { DEFAULT_QUERY_LIMIT, NODE_RELATION } from '../../src/internal/constants.js';
+import { buildEdgeQueryPlan, buildNodeQueryPlan } from '../../src/query.js';
 
 describe('buildEdgeQueryPlan', () => {
   it('returns strategy "get" when all three params provided', () => {

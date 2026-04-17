@@ -1,10 +1,11 @@
-import { Fragment, useMemo, type ReactNode } from 'react';
+import { Fragment, type ReactNode, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDrill, type DrillFrame, type Lane } from './drill-context';
-import { useScope } from './path-context';
-import { getTypeBadgeColor } from '../utils';
-import type { PeekPosition } from './DrillStack';
+
 import type { Schema } from '../types';
+import { getTypeBadgeColor } from '../utils';
+import { type DrillFrame, type Lane, useDrill } from './drill-context';
+import type { PeekPosition } from './DrillStack';
+import { useScope } from './path-context';
 
 interface Props {
   peek: PeekPosition | null;
@@ -60,7 +61,8 @@ function buildTrie(lanes: Lane[]): TrieNode | null {
  */
 export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   const navigate = useNavigate();
-  const { lanes, activeLaneId, activeIndex, previewLaneId, popTo, closeLane, switchLane } = useDrill();
+  const { lanes, activeLaneId, activeIndex, previewLaneId, popTo, closeLane, switchLane } =
+    useDrill();
   const { scopedPath } = useScope();
 
   const inverseLabelMap = useMemo(() => {
@@ -74,9 +76,7 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   // Strip preview frame from lanes so it never appears in the breadcrumb
   const visibleLanes = useMemo(() => {
     if (!previewLaneId) return lanes;
-    return lanes.map((l) =>
-      l.id === previewLaneId ? { ...l, frames: l.frames.slice(0, -1) } : l,
-    );
+    return lanes.map((l) => (l.id === previewLaneId ? { ...l, frames: l.frames.slice(0, -1) } : l));
   }, [lanes, previewLaneId]);
 
   const trie = useMemo(() => buildTrie(visibleLanes), [visibleLanes]);
@@ -146,7 +146,9 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
         }`}
       >
         {node.frame.nodeType && (
-          <span className={`px-1 py-px rounded text-[9px] font-mono ${getTypeBadgeColor(node.frame.nodeType)}`}>
+          <span
+            className={`px-1 py-px rounded text-[9px] font-mono ${getTypeBadgeColor(node.frame.nodeType)}`}
+          >
             {node.frame.nodeType}
           </span>
         )}
@@ -201,7 +203,10 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
         {/* Close button at leaf */}
         {tip.children.length === 0 && multiLane && (
           <button
-            onClick={(e) => { e.stopPropagation(); closeLane(tip.laneIds[0]); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              closeLane(tip.laneIds[0]);
+            }}
             className="ml-1 text-slate-600 hover:text-slate-400 transition-colors shrink-0 text-sm leading-none"
             title="Close this lane"
           >
@@ -213,9 +218,7 @@ export default function DrillBreadcrumb({ peek, onPeek, schema }: Props) {
   }
 
   return (
-    <nav
-      className="flex items-center px-4 py-2 bg-slate-900/80 border-b border-slate-800 overflow-x-auto overflow-y-auto max-h-32 text-xs"
-    >
+    <nav className="flex items-center px-4 py-2 bg-slate-900/80 border-b border-slate-800 overflow-x-auto overflow-y-auto max-h-32 text-xs">
       {renderSubtree(trie, true)}
     </nav>
   );

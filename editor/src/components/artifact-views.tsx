@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { NodeDataCard } from './NodeDetail';
-import JsonView from './JsonView';
-import { getTypeBadgeColor } from '../utils';
+
 import type { ChatArtifact } from '../artifact-types';
-import type { ViewRegistryData, AppConfig } from '../types';
+import type { AppConfig, ViewRegistryData } from '../types';
+import { getTypeBadgeColor } from '../utils';
+import JsonView from './JsonView';
+import { NodeDataCard } from './NodeDetail';
 
 // ---------------------------------------------------------------------------
 // Shared sub-types (matching query-client output shapes)
@@ -67,13 +68,26 @@ export function ArtifactContent({
 }) {
   switch (artifact.kind) {
     case 'node-detail':
-      return <NodeDetailView data={artifact.data as Record<string, unknown>} viewRegistry={viewRegistry} config={config} onNavigate={onNavigate} />;
+      return (
+        <NodeDetailView
+          data={artifact.data as Record<string, unknown>}
+          viewRegistry={viewRegistry}
+          config={config}
+          onNavigate={onNavigate}
+        />
+      );
     case 'nodes-list':
-      return <NodesListView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />;
+      return (
+        <NodesListView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />
+      );
     case 'edges-list':
-      return <EdgesListView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />;
+      return (
+        <EdgesListView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />
+      );
     case 'traverse':
-      return <TraverseView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />;
+      return (
+        <TraverseView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />
+      );
     case 'search':
       return <SearchView data={artifact.data as Record<string, unknown>} onNavigate={onNavigate} />;
     case 'schema':
@@ -155,7 +169,9 @@ function NodesListView({
       {nodes.map((node, i) => (
         <div key={i} className="bg-slate-900 rounded-lg border border-slate-800 px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(node.type)}`}>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(node.type)}`}
+            >
               {node.type}
             </span>
             <button
@@ -173,7 +189,9 @@ function NodesListView({
         </div>
       ))}
       {hasMore && (
-        <p className="text-[10px] text-slate-500 text-center py-1">Results truncated — use a higher limit to see more</p>
+        <p className="text-[10px] text-slate-500 text-center py-1">
+          Results truncated — use a higher limit to see more
+        </p>
       )}
     </div>
   );
@@ -197,7 +215,9 @@ function EdgesListView({
     <div className="space-y-1">
       <EdgeList edges={edges} onNavigate={onNavigate} />
       {hasMore && (
-        <p className="text-[10px] text-slate-500 text-center py-1">Results truncated — use a higher limit to see more</p>
+        <p className="text-[10px] text-slate-500 text-center py-1">
+          Results truncated — use a higher limit to see more
+        </p>
       )}
     </div>
   );
@@ -234,7 +254,9 @@ function TraverseView({
         >
           <EdgeList edges={hop.edges} onNavigate={onNavigate} />
           {hop.truncated && (
-            <p className="text-[10px] text-amber-500 mt-1">Truncated — increase limit to see more</p>
+            <p className="text-[10px] text-amber-500 mt-1">
+              Truncated — increase limit to see more
+            </p>
           )}
         </Section>
       ))}
@@ -267,7 +289,9 @@ function SearchView({
       {results.map((r, i) => (
         <div key={i} className="bg-slate-900 rounded-lg border border-slate-800 px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(r.type)}`}>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(r.type)}`}
+            >
               {r.type}
             </span>
             <button
@@ -297,14 +321,22 @@ function SearchView({
 
 function SchemaView({ data }: { data: Record<string, unknown> }) {
   const nodeTypes = (data.nodeTypes ?? []) as string[];
-  const edgeTypes = (data.edgeTypes ?? []) as { relation: string; from: string; to: string; inverseLabel: string | null }[];
+  const edgeTypes = (data.edgeTypes ?? []) as {
+    relation: string;
+    from: string;
+    to: string;
+    inverseLabel: string | null;
+  }[];
 
   return (
     <div className="space-y-4">
       <Section title={`Node Types (${nodeTypes.length})`}>
         <div className="flex flex-wrap gap-1.5">
           {nodeTypes.map((t) => (
-            <span key={t} className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(t)}`}>
+            <span
+              key={t}
+              className={`px-2 py-0.5 rounded text-xs font-mono ${getTypeBadgeColor(t)}`}
+            >
               {t}
             </span>
           ))}
@@ -315,11 +347,15 @@ function SchemaView({ data }: { data: Record<string, unknown> }) {
         <div className="space-y-1">
           {edgeTypes.map((e, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs font-mono">
-              <span className={`px-1 py-0.5 rounded text-[10px] ${getTypeBadgeColor(e.from)}`}>{e.from}</span>
+              <span className={`px-1 py-0.5 rounded text-[10px] ${getTypeBadgeColor(e.from)}`}>
+                {e.from}
+              </span>
               <span className="text-slate-500">--[</span>
               <span className="text-indigo-400">{e.relation}</span>
               <span className="text-slate-500">]--&gt;</span>
-              <span className={`px-1 py-0.5 rounded text-[10px] ${getTypeBadgeColor(e.to)}`}>{e.to}</span>
+              <span className={`px-1 py-0.5 rounded text-[10px] ${getTypeBadgeColor(e.to)}`}>
+                {e.to}
+              </span>
               {e.inverseLabel && (
                 <span className="text-[10px] text-slate-600 ml-1">({e.inverseLabel})</span>
               )}
@@ -351,9 +387,7 @@ function Section({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-200">{title}</h3>
-          {badge && (
-            <span className="text-[10px] text-slate-500">{badge}</span>
-          )}
+          {badge && <span className="text-[10px] text-slate-500">{badge}</span>}
         </div>
         {trailing}
       </div>
@@ -376,7 +410,9 @@ function EdgeList({
       {edges.map((edge, i) => (
         <div key={i}>
           <div className="flex items-center gap-1.5 py-1.5 text-xs">
-            <span className={`px-1 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(edge.fromType)}`}>
+            <span
+              className={`px-1 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(edge.fromType)}`}
+            >
               {edge.fromType}
             </span>
             <button
@@ -389,7 +425,9 @@ function EdgeList({
             <span className="text-slate-500 shrink-0">--[</span>
             <span className="text-indigo-400 shrink-0">{edge.relation}</span>
             <span className="text-slate-500 shrink-0">]--&gt;</span>
-            <span className={`px-1 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(edge.toType)}`}>
+            <span
+              className={`px-1 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(edge.toType)}`}
+            >
               {edge.toType}
             </span>
             <button

@@ -1,11 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import {
-  FiregraphError,
-  NodeNotFoundError,
   EdgeNotFoundError,
-  ValidationError,
-  RegistryViolationError,
+  FiregraphError,
   InvalidQueryError,
+  NodeNotFoundError,
+  RegistryViolationError,
+  ValidationError,
 } from '../../src/errors.js';
 
 describe('FiregraphError', () => {

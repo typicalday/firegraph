@@ -1,21 +1,22 @@
-import { Routes, Route, useParams } from 'react-router-dom';
 import { useCallback, useEffect, useRef } from 'react';
-import Layout from './components/Layout';
-import RootPage from './components/RootPage';
-import NodeBrowser from './components/NodeBrowser';
-import NodeDetail from './components/NodeDetail';
-import TraversalBuilder from './components/TraversalBuilder';
-import ViewGallery from './components/ViewGallery';
+import { Route, Routes, useParams } from 'react-router-dom';
+
+import { ArtifactProvider } from './components/artifact-context';
+import { ChatBarProvider } from './components/chat-bar-context';
+import { ChatProvider } from './components/chat-context';
 import CollectionBrowser from './components/CollectionBrowser';
 import CollectionDocDetail from './components/CollectionDocDetail';
 import { FocusProvider } from './components/focus-context';
-import { ChatProvider } from './components/chat-context';
-import { ArtifactProvider } from './components/artifact-context';
-import { ChatBarProvider } from './components/chat-bar-context';
+import Layout from './components/Layout';
+import NodeBrowser from './components/NodeBrowser';
+import NodeDetail from './components/NodeDetail';
 import { PathProvider, usePath } from './components/path-context';
 import { RecentsProvider } from './components/recents-context';
-import type { Schema, ViewRegistryData, AppConfig } from './types';
+import RootPage from './components/RootPage';
+import TraversalBuilder from './components/TraversalBuilder';
+import ViewGallery from './components/ViewGallery';
 import { trpc } from './trpc';
+import type { AppConfig, Schema, ViewRegistryData } from './types';
 
 export default function App() {
   const { data: schema, error: schemaError, isLoading: schemaLoading } = trpc.getSchema.useQuery();
@@ -86,10 +87,14 @@ export default function App() {
           <h2 className="text-red-400 text-lg font-semibold mb-2">Connection Error</h2>
           <p className="text-slate-300 text-sm mb-4">{error.message}</p>
           <p className="text-slate-500 text-xs mb-4">
-            Make sure you have ADC configured (run <code className="text-slate-300">gcloud auth application-default login</code>)
-            and the server is running with the correct --project, --collection, and --registry flags.
+            Make sure you have ADC configured (run{' '}
+            <code className="text-slate-300">gcloud auth application-default login</code>) and the
+            server is running with the correct --project, --collection, and --registry flags.
           </p>
-          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500 transition-colors">
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-500 transition-colors"
+          >
             Retry
           </button>
         </div>
@@ -97,7 +102,9 @@ export default function App() {
     );
   }
 
-  const viewRegistry = (viewsData as ViewRegistryData | undefined) ?? { nodes: {}, edges: {}, collections: {}, hasViews: false } as ViewRegistryData;
+  const viewRegistry =
+    (viewsData as ViewRegistryData | undefined) ??
+    ({ nodes: {}, edges: {}, collections: {}, hasViews: false } as ViewRegistryData);
 
   return (
     <FocusProvider>
@@ -105,12 +112,14 @@ export default function App() {
         <ArtifactProvider>
           <ChatBarProvider>
             <RecentsProvider>
-              <Layout schema={schema!} config={config!} viewRegistry={viewRegistry} warnings={warningsData?.warnings ?? []}>
+              <Layout
+                schema={schema!}
+                config={config!}
+                viewRegistry={viewRegistry}
+                warnings={warningsData?.warnings ?? []}
+              >
                 <Routes>
-                  <Route
-                    path="/"
-                    element={<RootPage schema={schema!} config={config!} />}
-                  />
+                  <Route path="/" element={<RootPage schema={schema!} config={config!} />} />
                   <Route
                     path="/:encodedPath/*"
                     element={
@@ -118,11 +127,7 @@ export default function App() {
                         graphCollection={config?.collection}
                         collections={schema?.collections}
                       >
-                        <PathShell
-                          schema={schema!}
-                          viewRegistry={viewRegistry}
-                          config={config!}
-                        />
+                        <PathShell schema={schema!} viewRegistry={viewRegistry} config={config!} />
                       </PathProvider>
                     }
                   />
@@ -182,14 +187,7 @@ function PathShell({ schema, viewRegistry, config }: ShellProps) {
     }
 
     // Default: graph landing (browse all node types)
-    return (
-      <NodeBrowser
-        schema={schema}
-        viewRegistry={viewRegistry}
-        config={config}
-        typeParam=""
-      />
-    );
+    return <NodeBrowser schema={schema} viewRegistry={viewRegistry} config={config} typeParam="" />;
   }
 
   // --- Collection context ---

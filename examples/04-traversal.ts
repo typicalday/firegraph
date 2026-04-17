@@ -5,25 +5,81 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/04-traversal.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import { createGraphClient, createRegistry, createTraversal } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
 
 // ── JSON Schema + Registry ──────────────────────────────────────
 
-const tourSchema = { type: 'object', required: ['name'], properties: { name: { type: 'string', minLength: 1 } }, additionalProperties: false };
-const departureSchema = { type: 'object', required: ['date'], properties: { date: { type: 'string' } }, additionalProperties: false };
-const riderSchema = { type: 'object', required: ['displayName'], properties: { displayName: { type: 'string', minLength: 1 } }, additionalProperties: false };
+const tourSchema = {
+  type: 'object',
+  required: ['name'],
+  properties: { name: { type: 'string', minLength: 1 } },
+  additionalProperties: false,
+};
+const departureSchema = {
+  type: 'object',
+  required: ['date'],
+  properties: { date: { type: 'string' } },
+  additionalProperties: false,
+};
+const riderSchema = {
+  type: 'object',
+  required: ['displayName'],
+  properties: { displayName: { type: 'string', minLength: 1 } },
+  additionalProperties: false,
+};
 
-const orderedEdgeSchema = { type: 'object', required: ['order'], properties: { order: { type: 'integer', minimum: 0 } }, additionalProperties: false };
-const riderEdgeSchema = { type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled'] } }, additionalProperties: false };
+const orderedEdgeSchema = {
+  type: 'object',
+  required: ['order'],
+  properties: { order: { type: 'integer', minimum: 0 } },
+  additionalProperties: false,
+};
+const riderEdgeSchema = {
+  type: 'object',
+  required: ['status'],
+  properties: { status: { type: 'string', enum: ['pending', 'confirmed', 'cancelled'] } },
+  additionalProperties: false,
+};
 
 const registry = createRegistry([
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider entity' },
-  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
-  { aType: 'departure', axbType: 'hasRider',     bType: 'rider',     jsonSchema: riderEdgeSchema,   description: 'Departure has a rider' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchema,
+    description: 'Tour entity',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    jsonSchema: departureSchema,
+    description: 'Departure entity',
+  },
+  {
+    aType: 'rider',
+    axbType: 'is',
+    bType: 'rider',
+    jsonSchema: riderSchema,
+    description: 'Rider entity',
+  },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has a departure',
+  },
+  {
+    aType: 'departure',
+    axbType: 'hasRider',
+    bType: 'rider',
+    jsonSchema: riderEdgeSchema,
+    description: 'Departure has a rider',
+  },
 ]);
 
 const g = createGraphClient(db, 'examples/traverse/graph', { registry });
@@ -63,7 +119,10 @@ async function main() {
 
   console.log('── All riders for tour1 ──');
   console.log('Riders found:', allRiders.nodes.length);
-  console.log('Rider UIDs:', allRiders.nodes.map((e) => e.bUid));
+  console.log(
+    'Rider UIDs:',
+    allRiders.nodes.map((e) => e.bUid),
+  );
   console.log('Total reads:', allRiders.totalReads);
   console.log();
 
@@ -79,7 +138,10 @@ async function main() {
 
   console.log('── Confirmed riders only ──');
   console.log('Confirmed:', confirmed.nodes.length);
-  console.log('UIDs:', confirmed.nodes.map((e) => e.bUid));
+  console.log(
+    'UIDs:',
+    confirmed.nodes.map((e) => e.bUid),
+  );
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
@@ -104,7 +166,10 @@ async function main() {
     .run();
 
   console.log('── Reverse: which tours does rider1 belong to? ──');
-  console.log('Tours:', riderTours.nodes.map((e) => e.aUid));
+  console.log(
+    'Tours:',
+    riderTours.nodes.map((e) => e.aUid),
+  );
   console.log();
 
   // ═══════════════════════════════════════════════════════════════

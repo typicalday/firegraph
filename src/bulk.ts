@@ -1,14 +1,15 @@
 import type { Firestore } from '@google-cloud/firestore';
+
 import { computeEdgeDocId, computeNodeDocId } from './docid.js';
 import { NODE_RELATION } from './internal/constants.js';
 import type {
-  StoredGraphRecord,
-  FindEdgesParams,
+  BulkBatchError,
   BulkOptions,
   BulkResult,
-  BulkBatchError,
   CascadeResult,
+  FindEdgesParams,
   GraphReader,
+  StoredGraphRecord,
 } from './types.js';
 
 const MAX_BATCH_SIZE = 500;
@@ -110,9 +111,10 @@ export async function bulkRemoveEdges(
   // Override default query limit for bulk deletion — we need all matching edges.
   // limit: 0 bypasses DEFAULT_QUERY_LIMIT; an explicit user limit is preserved.
   // allowCollectionScan: true — bulk deletion inherently implies scanning.
-  const effectiveParams = params.limit !== undefined
-    ? { ...params, allowCollectionScan: params.allowCollectionScan ?? true }
-    : { ...params, limit: 0, allowCollectionScan: params.allowCollectionScan ?? true };
+  const effectiveParams =
+    params.limit !== undefined
+      ? { ...params, allowCollectionScan: params.allowCollectionScan ?? true }
+      : { ...params, limit: 0, allowCollectionScan: params.allowCollectionScan ?? true };
   const edges = await reader.findEdges(effectiveParams);
   const docIds = edges.map((e) => computeEdgeDocId(e.aUid, e.axbType, e.bUid));
   return bulkDeleteDocIds(db, collectionPath, docIds, options);
@@ -224,7 +226,10 @@ export async function removeNodeCascade(
 
   if (shouldDeleteSubcollections) {
     subcollectionResult = await deleteSubcollectionsRecursive(
-      db, collectionPath, nodeDocId, options,
+      db,
+      collectionPath,
+      nodeDocId,
+      options,
     );
   }
 

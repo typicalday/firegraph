@@ -1,6 +1,15 @@
-import { createContext, useContext, useState, useRef, useCallback, useMemo, type ReactNode } from 'react';
-import type { DrillFrame } from './drill-context';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
 import type { GraphRecord } from '../types';
+import type { DrillFrame } from './drill-context';
 
 export interface FocusedNode {
   uid: string;
@@ -21,10 +30,12 @@ export interface FocusContextValue {
   setFocused: (node: FocusedNode | null) => void;
   onPeekNearby: (frame: DrillFrame) => void;
   onClearPeek: () => void;
-  registerCallbacks: (cbs: {
-    peek: (frame: DrillFrame) => void;
-    clearPeek: () => void;
-  } | null) => void;
+  registerCallbacks: (
+    cbs: {
+      peek: (frame: DrillFrame) => void;
+      clearPeek: () => void;
+    } | null,
+  ) => void;
   edgeResults: { out: EdgeResultsState; in: EdgeResultsState };
   setEdgeResults: (direction: 'out' | 'in', results: EdgeResultsState) => void;
 }
@@ -33,7 +44,10 @@ const FocusContext = createContext<FocusContextValue | null>(null);
 
 export function FocusProvider({ children }: { children: ReactNode }) {
   const [focused, setFocused] = useState<FocusedNode | null>(null);
-  const [edgeResults, setEdgeResultsState] = useState<{ out: EdgeResultsState; in: EdgeResultsState }>({
+  const [edgeResults, setEdgeResultsState] = useState<{
+    out: EdgeResultsState;
+    in: EdgeResultsState;
+  }>({
     out: EMPTY_EDGE_RESULTS,
     in: EMPTY_EDGE_RESULTS,
   });
@@ -42,12 +56,9 @@ export function FocusProvider({ children }: { children: ReactNode }) {
     clearPeek: () => void;
   } | null>(null);
 
-  const registerCallbacks = useCallback(
-    (cbs: typeof callbacksRef.current) => {
-      callbacksRef.current = cbs;
-    },
-    [],
-  );
+  const registerCallbacks = useCallback((cbs: typeof callbacksRef.current) => {
+    callbacksRef.current = cbs;
+  }, []);
 
   const onPeekNearby = useCallback((frame: DrillFrame) => {
     callbacksRef.current?.peek(frame);
@@ -62,8 +73,24 @@ export function FocusProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<FocusContextValue>(
-    () => ({ focused, setFocused, onPeekNearby, onClearPeek, registerCallbacks, edgeResults, setEdgeResults }),
-    [focused, setFocused, onPeekNearby, onClearPeek, registerCallbacks, edgeResults, setEdgeResults],
+    () => ({
+      focused,
+      setFocused,
+      onPeekNearby,
+      onClearPeek,
+      registerCallbacks,
+      edgeResults,
+      setEdgeResults,
+    }),
+    [
+      focused,
+      setFocused,
+      onPeekNearby,
+      onClearPeek,
+      registerCallbacks,
+      edgeResults,
+      setEdgeResults,
+    ],
   );
 
   return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;

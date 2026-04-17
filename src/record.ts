@@ -1,4 +1,5 @@
 import { FieldValue } from '@google-cloud/firestore';
+
 import { NODE_RELATION } from './internal/constants.js';
 import type { GraphRecord } from './types.js';
 

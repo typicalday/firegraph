@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
+import {
+  MigrationError,
+  RegistryScopeError,
+  RegistryViolationError,
+  ValidationError,
+} from '../../src/errors.js';
 import { createRegistry } from '../../src/registry.js';
-import { RegistryViolationError, RegistryScopeError, ValidationError, MigrationError } from '../../src/errors.js';
 
 const tourSchema = {
   type: 'object',
@@ -27,9 +33,7 @@ describe('createRegistry', () => {
   });
 
   it('lookup returns undefined for an unregistered triple', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
     const entry = registry.lookup('user', 'is', 'user');
     expect(entry).toBeUndefined();
   });
@@ -42,27 +46,19 @@ describe('createRegistry', () => {
   });
 
   it('validate throws RegistryViolationError for unregistered triple', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
-    expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(
-      RegistryViolationError,
-    );
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
+    expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(RegistryViolationError);
   });
 
   it('validate throws ValidationError for invalid data', () => {
     const registry = createRegistry([
       { aType: 'tour', axbType: 'is', bType: 'tour', jsonSchema: tourSchema },
     ]);
-    expect(() => registry.validate('tour', 'is', 'tour', { name: 123 })).toThrow(
-      ValidationError,
-    );
+    expect(() => registry.validate('tour', 'is', 'tour', { name: 123 })).toThrow(ValidationError);
   });
 
   it('validate passes when no jsonSchema is defined', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
     expect(() => registry.validate('tour', 'is', 'tour', { anything: 'goes' })).not.toThrow();
   });
 
@@ -72,7 +68,9 @@ describe('createRegistry', () => {
       { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeSchema },
     ]);
     expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).not.toThrow();
-    expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 0 })).not.toThrow();
+    expect(() =>
+      registry.validate('tour', 'hasDeparture', 'departure', { order: 0 }),
+    ).not.toThrow();
   });
 
   it('entries returns all registered entries', () => {
@@ -89,9 +87,7 @@ describe('createRegistry', () => {
   });
 
   it('entries returns a frozen array (defensive copy)', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
     const result = registry.entries();
     expect(Object.isFrozen(result)).toBe(true);
   });
@@ -129,15 +125,21 @@ describe('createRegistry', () => {
     const discovery = {
       nodes: new Map([
         ['tour', { kind: 'node' as const, name: 'tour', schema: tourSchema }],
-        ['departure', { kind: 'node' as const, name: 'departure', schema: { type: 'object', properties: {} } }],
+        [
+          'departure',
+          { kind: 'node' as const, name: 'departure', schema: { type: 'object', properties: {} } },
+        ],
       ]),
       edges: new Map([
-        ['hasDeparture', {
-          kind: 'edge' as const,
-          name: 'hasDeparture',
-          schema: edgeSchema,
-          topology: { from: 'tour', to: 'departure', inverseLabel: 'departureOf' },
-        }],
+        [
+          'hasDeparture',
+          {
+            kind: 'edge' as const,
+            name: 'hasDeparture',
+            schema: edgeSchema,
+            topology: { from: 'tour', to: 'departure', inverseLabel: 'departureOf' },
+          },
+        ],
       ]),
     };
     const registry = createRegistry(discovery);
@@ -153,8 +155,12 @@ describe('createRegistry', () => {
 
     // Validation works
     expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).not.toThrow();
-    expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 1 })).not.toThrow();
-    expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 'bad' })).toThrow(ValidationError);
+    expect(() =>
+      registry.validate('tour', 'hasDeparture', 'departure', { order: 1 }),
+    ).not.toThrow();
+    expect(() => registry.validate('tour', 'hasDeparture', 'departure', { order: 'bad' })).toThrow(
+      ValidationError,
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -193,9 +199,7 @@ describe('createRegistry', () => {
     expect(() => registry.validate('memory', 'is', 'memory', {}, 'tasks')).toThrow(
       RegistryScopeError,
     );
-    expect(() => registry.validate('memory', 'is', 'memory', {}, '')).toThrow(
-      RegistryScopeError,
-    );
+    expect(() => registry.validate('memory', 'is', 'memory', {}, '')).toThrow(RegistryScopeError);
   });
 
   it('validate passes when allowedIn is empty (allowed everywhere)', () => {
@@ -223,16 +227,27 @@ describe('createRegistry', () => {
   it('discoveryToEntries propagates allowedIn', () => {
     const discovery = {
       nodes: new Map([
-        ['memory', { kind: 'node' as const, name: 'memory', schema: { type: 'object' }, allowedIn: ['**/memories'] }],
+        [
+          'memory',
+          {
+            kind: 'node' as const,
+            name: 'memory',
+            schema: { type: 'object' },
+            allowedIn: ['**/memories'],
+          },
+        ],
       ]),
       edges: new Map([
-        ['recalls', {
-          kind: 'edge' as const,
-          name: 'recalls',
-          schema: { type: 'object', properties: {} },
-          topology: { from: 'memory', to: 'memory' },
-          allowedIn: ['**/memories'],
-        }],
+        [
+          'recalls',
+          {
+            kind: 'edge' as const,
+            name: 'recalls',
+            schema: { type: 'object', properties: {} },
+            topology: { from: 'memory', to: 'memory' },
+            allowedIn: ['**/memories'],
+          },
+        ],
       ]),
     };
     const registry = createRegistry(discovery);
@@ -248,7 +263,9 @@ describe('createRegistry', () => {
     expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents/memories')).not.toThrow();
 
     // Should fail at wrong scope
-    expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents')).toThrow(RegistryScopeError);
+    expect(() => registry.validate('memory', 'is', 'memory', {}, 'agents')).toThrow(
+      RegistryScopeError,
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -267,9 +284,7 @@ describe('createRegistry', () => {
   });
 
   it('lookupByAxbType returns empty array for unknown axbType', () => {
-    const registry = createRegistry([
-      { aType: 'tour', axbType: 'is', bType: 'tour' },
-    ]);
+    const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
     expect(registry.lookupByAxbType('nonexistent')).toEqual([]);
   });
 
@@ -300,12 +315,15 @@ describe('createRegistry', () => {
         ['agent', { kind: 'node' as const, name: 'agent', schema: { type: 'object' } }],
       ]),
       edges: new Map([
-        ['assignedTo', {
-          kind: 'edge' as const,
-          name: 'assignedTo',
-          schema: { type: 'object', properties: {} },
-          topology: { from: 'task', to: 'agent', targetGraph: 'workflow' },
-        }],
+        [
+          'assignedTo',
+          {
+            kind: 'edge' as const,
+            name: 'assignedTo',
+            schema: { type: 'object', properties: {} },
+            topology: { from: 'task', to: 'agent', targetGraph: 'workflow' },
+          },
+        ],
       ]),
     };
     const registry = createRegistry(discovery);
@@ -347,12 +365,15 @@ describe('createRegistry', () => {
         ['agent', { kind: 'node' as const, name: 'agent', schema: { type: 'object' } }],
       ]),
       edges: new Map([
-        ['assignedTo', {
-          kind: 'edge' as const,
-          name: 'assignedTo',
-          schema: { type: 'object', properties: {} },
-          topology: { from: 'task', to: 'agent', targetGraph: 'work/flow' },
-        }],
+        [
+          'assignedTo',
+          {
+            kind: 'edge' as const,
+            name: 'assignedTo',
+            schema: { type: 'object', properties: {} },
+            topology: { from: 'task', to: 'agent', targetGraph: 'work/flow' },
+          },
+        ],
       ]),
     };
     expect(() => createRegistry(discovery)).toThrow(ValidationError);
@@ -366,12 +387,15 @@ describe('createRegistry', () => {
         ['c', { kind: 'node' as const, name: 'c', schema: { type: 'object' } }],
       ]),
       edges: new Map([
-        ['connects', {
-          kind: 'edge' as const,
-          name: 'connects',
-          schema: { type: 'object', properties: {} },
-          topology: { from: ['a', 'b'], to: 'c' },
-        }],
+        [
+          'connects',
+          {
+            kind: 'edge' as const,
+            name: 'connects',
+            schema: { type: 'object', properties: {} },
+            topology: { from: ['a', 'b'], to: 'c' },
+          },
+        ],
       ]),
     };
     const registry = createRegistry(discovery);
@@ -447,13 +471,9 @@ describe('createRegistry', () => {
     ]);
 
     // v is now top-level metadata, not part of data — validation should pass without it
-    expect(() =>
-      registry.validate('tour', 'is', 'tour', { title: 'test' }),
-    ).not.toThrow();
+    expect(() => registry.validate('tour', 'is', 'tour', { title: 'test' })).not.toThrow();
 
     // v in data should be REJECTED by additionalProperties: false
-    expect(() =>
-      registry.validate('tour', 'is', 'tour', { title: 'test', v: 1 }),
-    ).toThrow();
+    expect(() => registry.validate('tour', 'is', 'tour', { title: 'test', v: 1 })).toThrow();
   });
 });

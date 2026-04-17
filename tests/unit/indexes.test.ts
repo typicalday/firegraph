@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { generateIndexConfig } from '../../src/indexes.js';
-import type { DiscoveryResult, DiscoveredEntity, RegistryEntry } from '../../src/types.js';
+import type { DiscoveredEntity, DiscoveryResult, RegistryEntry } from '../../src/types.js';
 
 describe('generateIndexConfig', () => {
   it('generates 4 base indexes with no entities', () => {
@@ -9,9 +10,7 @@ describe('generateIndexConfig', () => {
     expect(config.fieldOverrides).toEqual([]);
 
     // Verify all 4 base patterns
-    const fieldPaths = config.indexes.map(
-      (idx) => idx.fields.map((f) => f.fieldPath).join(', '),
-    );
+    const fieldPaths = config.indexes.map((idx) => idx.fields.map((f) => f.fieldPath).join(', '));
     expect(fieldPaths).toContain('aUid, axbType');
     expect(fieldPaths).toContain('axbType, bUid');
     expect(fieldPaths).toContain('aType, axbType');
@@ -28,17 +27,20 @@ describe('generateIndexConfig', () => {
   it('adds data-field indexes for node types', () => {
     const entities: DiscoveryResult = {
       nodes: new Map<string, DiscoveredEntity>([
-        ['task', {
-          kind: 'node',
-          name: 'task',
-          schema: {
-            type: 'object',
-            properties: {
-              title: { type: 'string' },
-              status: { type: 'string' },
+        [
+          'task',
+          {
+            kind: 'node',
+            name: 'task',
+            schema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                status: { type: 'string' },
+              },
             },
           },
-        }],
+        ],
       ]),
       edges: new Map(),
     };
@@ -47,8 +49,8 @@ describe('generateIndexConfig', () => {
     // 4 base + 2 data fields (title, status)
     expect(config.indexes).toHaveLength(6);
 
-    const dataIndexes = config.indexes.filter(
-      (idx) => idx.fields.some((f) => f.fieldPath.startsWith('data.')),
+    const dataIndexes = config.indexes.filter((idx) =>
+      idx.fields.some((f) => f.fieldPath.startsWith('data.')),
     );
     expect(dataIndexes).toHaveLength(2);
 
@@ -65,17 +67,20 @@ describe('generateIndexConfig', () => {
     const entities: DiscoveryResult = {
       nodes: new Map(),
       edges: new Map<string, DiscoveredEntity>([
-        ['hasStep', {
-          kind: 'edge',
-          name: 'hasStep',
-          schema: {
-            type: 'object',
-            properties: {
-              order: { type: 'number' },
+        [
+          'hasStep',
+          {
+            kind: 'edge',
+            name: 'hasStep',
+            schema: {
+              type: 'object',
+              properties: {
+                order: { type: 'number' },
+              },
             },
+            topology: { from: 'task', to: 'step' },
           },
-          topology: { from: 'task', to: 'step' },
-        }],
+        ],
       ]),
     };
 
@@ -83,8 +88,8 @@ describe('generateIndexConfig', () => {
     // 4 base + 1 data field (order)
     expect(config.indexes).toHaveLength(5);
 
-    const dataIndexes = config.indexes.filter(
-      (idx) => idx.fields.some((f) => f.fieldPath.startsWith('data.')),
+    const dataIndexes = config.indexes.filter((idx) =>
+      idx.fields.some((f) => f.fieldPath.startsWith('data.')),
     );
     expect(dataIndexes).toHaveLength(1);
 
@@ -99,11 +104,14 @@ describe('generateIndexConfig', () => {
   it('handles schemas without properties', () => {
     const entities: DiscoveryResult = {
       nodes: new Map<string, DiscoveredEntity>([
-        ['empty', {
-          kind: 'node',
-          name: 'empty',
-          schema: { type: 'object' },
-        }],
+        [
+          'empty',
+          {
+            kind: 'node',
+            name: 'empty',
+            schema: { type: 'object' },
+          },
+        ],
       ]),
       edges: new Map(),
     };
@@ -116,11 +124,14 @@ describe('generateIndexConfig', () => {
   it('handles non-object schemas', () => {
     const entities: DiscoveryResult = {
       nodes: new Map<string, DiscoveredEntity>([
-        ['weird', {
-          kind: 'node',
-          name: 'weird',
-          schema: { type: 'string' },
-        }],
+        [
+          'weird',
+          {
+            kind: 'node',
+            name: 'weird',
+            schema: { type: 'string' },
+          },
+        ],
       ]),
       edges: new Map(),
     };
@@ -159,9 +170,7 @@ describe('generateIndexConfig', () => {
       }
 
       // Verify the 4 patterns exist
-      const fieldPaths = cgIndexes.map(
-        (idx) => idx.fields.map((f) => f.fieldPath).join(', '),
-      );
+      const fieldPaths = cgIndexes.map((idx) => idx.fields.map((f) => f.fieldPath).join(', '));
       expect(fieldPaths).toContain('aUid, axbType');
       expect(fieldPaths).toContain('axbType, bUid');
       expect(fieldPaths).toContain('aType, axbType');
@@ -183,7 +192,12 @@ describe('generateIndexConfig', () => {
     it('generates separate collection group indexes for distinct targetGraph names', () => {
       const entries: RegistryEntry[] = [
         { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
-        { aType: 'project', axbType: 'hasMilestone', bType: 'milestone', targetGraph: 'milestones' },
+        {
+          aType: 'project',
+          axbType: 'hasMilestone',
+          bType: 'milestone',
+          targetGraph: 'milestones',
+        },
       ];
 
       const config = generateIndexConfig('graph', undefined, entries);
@@ -217,14 +231,17 @@ describe('generateIndexConfig', () => {
     it('combines entity data indexes with collection group indexes', () => {
       const entities: DiscoveryResult = {
         nodes: new Map<string, DiscoveredEntity>([
-          ['task', {
-            kind: 'node',
-            name: 'task',
-            schema: {
-              type: 'object',
-              properties: { title: { type: 'string' } },
+          [
+            'task',
+            {
+              kind: 'node',
+              name: 'task',
+              schema: {
+                type: 'object',
+                properties: { title: { type: 'string' } },
+              },
             },
-          }],
+          ],
         ]),
         edges: new Map(),
       };

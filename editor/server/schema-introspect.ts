@@ -1,6 +1,6 @@
-import type { GraphRegistry } from '../../src/types.js';
-import { jsonSchemaToFieldMeta } from '../../src/json-schema.js';
 import type { FieldMeta } from '../../src/json-schema.js';
+import { jsonSchemaToFieldMeta } from '../../src/json-schema.js';
+import type { GraphRegistry } from '../../src/types.js';
 
 export type { FieldMeta };
 
@@ -44,9 +44,7 @@ export function introspectRegistry(
   const edgeTypes: RegistryEntryMeta[] = [];
 
   for (const entry of entries) {
-    const fields = entry.jsonSchema
-      ? jsonSchemaToFieldMeta(entry.jsonSchema)
-      : [];
+    const fields = entry.jsonSchema ? jsonSchemaToFieldMeta(entry.jsonSchema) : [];
 
     const isNode = entry.axbType === 'is';
     const isDynamic = dynamicNames

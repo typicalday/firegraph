@@ -1,15 +1,15 @@
 import { TraversalError } from './errors.js';
 import type {
-  GraphReader,
-  GraphClient,
-  GraphRegistry,
-  StoredGraphRecord,
   FindEdgesParams,
+  GraphClient,
+  GraphReader,
+  GraphRegistry,
   HopDefinition,
-  TraversalOptions,
   HopResult,
-  TraversalResult,
+  StoredGraphRecord,
   TraversalBuilder,
+  TraversalOptions,
+  TraversalResult,
 } from './types.js';
 
 const DEFAULT_LIMIT = 10;
@@ -168,8 +168,8 @@ class TraversalBuilderImpl implements TraversalBuilder {
                 _crossGraphWarned = true;
                 console.warn(
                   `[firegraph] Traversal hop "${hop.axbType}" has targetGraph "${resolvedTargetGraph}" ` +
-                  'but the reader does not support subgraph(). Cross-graph hop will query the current ' +
-                  'collection instead. Pass a GraphClient to createTraversal() to enable cross-graph traversal.',
+                    'but the reader does not support subgraph(). Cross-graph hop will query the current ' +
+                    'collection instead. Pass a GraphClient to createTraversal() to enable cross-graph traversal.',
                 );
               }
             }

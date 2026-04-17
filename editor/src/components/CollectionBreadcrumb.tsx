@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+
 import type { CollectionDef } from '../types';
 import { fsUrl, resolveCollectionPath } from '../utils';
 
@@ -25,8 +26,18 @@ export default function CollectionBreadcrumb({ collectionDef, params, docId }: P
   return (
     <nav className="flex items-center gap-0.5 text-xs flex-wrap">
       {/* Firestore path icon */}
-      <svg className="w-3.5 h-3.5 text-amber-500/70 shrink-0 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+      <svg
+        className="w-3.5 h-3.5 text-amber-500/70 shrink-0 mr-1"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+        />
       </svg>
 
       {segments.map((seg, i) => {
@@ -40,10 +51,13 @@ export default function CollectionBreadcrumb({ collectionDef, params, docId }: P
           // {operatorId} is "ive" (all resolved segments before the param).
           const paramName = paramMatch[1];
           const value = params[paramName];
-          const graphPrefix = segments.slice(0, i).map((s) => {
-            const pm = s.match(/^\{(.+)\}$/);
-            return pm ? (params[pm[1]] ?? s) : s;
-          }).join('/');
+          const graphPrefix = segments
+            .slice(0, i)
+            .map((s) => {
+              const pm = s.match(/^\{(.+)\}$/);
+              return pm ? (params[pm[1]] ?? s) : s;
+            })
+            .join('/');
           return (
             <span key={i} className="flex items-center">
               {separator}
@@ -67,7 +81,10 @@ export default function CollectionBreadcrumb({ collectionDef, params, docId }: P
           return (
             <span key={i} className="flex items-center">
               {separator}
-              <Link to={browseUrl} className="text-amber-400 hover:text-amber-300 font-medium transition-colors">
+              <Link
+                to={browseUrl}
+                className="text-amber-400 hover:text-amber-300 font-medium transition-colors"
+              >
                 {seg}
               </Link>
             </span>

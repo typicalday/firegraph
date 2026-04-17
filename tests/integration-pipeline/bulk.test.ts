@@ -5,14 +5,11 @@
  * These operations use findEdges internally (which goes through the
  * pipeline adapter), so they're critical to test end-to-end.
  */
-import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import {
-  createPipelineClient,
-  uniqueCollectionPath,
-  cleanupCollection,
-} from './setup.js';
-import type { GraphClient, BulkProgress } from '../../src/types.js';
-import { tourData, departureData, riderData } from '../helpers/fixtures.js';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { BulkProgress, GraphClient } from '../../src/types.js';
+import { departureData, riderData, tourData } from '../helpers/fixtures.js';
+import { cleanupCollection, createPipelineClient, uniqueCollectionPath } from './setup.js';
 
 describe('pipeline bulk operations', () => {
   const collPaths: string[] = [];
@@ -70,7 +67,9 @@ describe('pipeline bulk operations', () => {
       await g.putNode('departure', 'bc-dep3', departureData);
       await g.putNode('rider', 'bc-r1', riderData);
       await g.putEdge('tour', 'bc-tour3', 'hasDeparture', 'departure', 'bc-dep3', { order: 0 });
-      await g.putEdge('rider', 'bc-r1', 'bookedFor', 'tour', 'bc-tour3', { confirmedAt: '2025-01-01' });
+      await g.putEdge('rider', 'bc-r1', 'bookedFor', 'tour', 'bc-tour3', {
+        confirmedAt: '2025-01-01',
+      });
 
       const result = await g.removeNodeCascade('bc-tour3');
 
@@ -219,9 +218,18 @@ describe('pipeline bulk operations', () => {
     });
 
     it('supports where clauses to filter edges by data fields (pipeline query)', async () => {
-      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep6', { order: 0, status: 'draft' });
-      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep7', { order: 1, status: 'published' });
-      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep8', { order: 2, status: 'draft' });
+      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep6', {
+        order: 0,
+        status: 'draft',
+      });
+      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep7', {
+        order: 1,
+        status: 'published',
+      });
+      await g.putEdge('tour', 'be-tour7', 'hasDeparture', 'departure', 'be-dep8', {
+        order: 2,
+        status: 'draft',
+      });
 
       const result = await g.bulkRemoveEdges({
         aUid: 'be-tour7',
@@ -238,7 +246,10 @@ describe('pipeline bulk operations', () => {
     });
 
     it('where clause with no matches deletes nothing', async () => {
-      await g.putEdge('tour', 'be-tour8', 'hasDeparture', 'departure', 'be-dep9', { order: 0, status: 'published' });
+      await g.putEdge('tour', 'be-tour8', 'hasDeparture', 'departure', 'be-dep9', {
+        order: 0,
+        status: 'published',
+      });
 
       const result = await g.bulkRemoveEdges({
         aUid: 'be-tour8',
@@ -273,7 +284,9 @@ describe('pipeline bulk operations', () => {
     it('batch removeEdge with different edge types', async () => {
       await g.putEdge('tour', 'bb-tour2', 'hasDeparture', 'departure', 'bb-dep4', { order: 0 });
       await g.putEdge('tour', 'bb-tour2', 'hasRider', 'rider', 'bb-r1', { seat: 1 });
-      await g.putEdge('rider', 'bb-r1', 'bookedFor', 'tour', 'bb-tour2', { confirmedAt: '2025-01-01' });
+      await g.putEdge('rider', 'bb-r1', 'bookedFor', 'tour', 'bb-tour2', {
+        confirmedAt: '2025-01-01',
+      });
 
       const batch = g.batch();
       await batch.removeEdge('bb-tour2', 'hasDeparture', 'bb-dep4');

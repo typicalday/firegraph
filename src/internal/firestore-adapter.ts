@@ -1,5 +1,6 @@
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
-import type { StoredGraphRecord, QueryFilter, QueryOptions } from '../types.js';
+
+import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 
 export interface FirestoreAdapter {
   collectionPath: string;
@@ -10,10 +11,7 @@ export interface FirestoreAdapter {
   query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]>;
 }
 
-export function createFirestoreAdapter(
-  db: Firestore,
-  collectionPath: string,
-): FirestoreAdapter {
+export function createFirestoreAdapter(db: Firestore, collectionPath: string): FirestoreAdapter {
   const collectionRef = db.collection(collectionPath);
 
   return {
@@ -112,10 +110,7 @@ export interface BatchAdapter {
   commit(): Promise<void>;
 }
 
-export function createBatchAdapter(
-  db: Firestore,
-  collectionPath: string,
-): BatchAdapter {
+export function createBatchAdapter(db: Firestore, collectionPath: string): BatchAdapter {
   const collectionRef = db.collection(collectionPath);
   const batch = db.batch();
 

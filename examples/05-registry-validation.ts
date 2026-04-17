@@ -14,11 +14,12 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/05-registry-validation.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import {
   createGraphClient,
   createRegistry,
-  ValidationError,
   RegistryViolationError,
+  ValidationError,
 } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -155,21 +156,106 @@ const operatorAgreementEdgeSchema = {
 
 const registry = createRegistry([
   // Node types (axbType: 'is')
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'user',      axbType: 'is', bType: 'user',      jsonSchema: userSchema,      description: 'User entity' },
-  { aType: 'booking',   axbType: 'is', bType: 'booking',   jsonSchema: bookingSchema,   description: 'Booking entity' },
-  { aType: 'rider',     axbType: 'is', bType: 'rider',     jsonSchema: riderSchema,     description: 'Rider on a booking' },
-  { aType: 'operator',  axbType: 'is', bType: 'operator',  jsonSchema: operatorSchema,  description: 'Operator partner' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchema,
+    description: 'Tour entity',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    jsonSchema: departureSchema,
+    description: 'Departure entity',
+  },
+  {
+    aType: 'user',
+    axbType: 'is',
+    bType: 'user',
+    jsonSchema: userSchema,
+    description: 'User entity',
+  },
+  {
+    aType: 'booking',
+    axbType: 'is',
+    bType: 'booking',
+    jsonSchema: bookingSchema,
+    description: 'Booking entity',
+  },
+  {
+    aType: 'rider',
+    axbType: 'is',
+    bType: 'rider',
+    jsonSchema: riderSchema,
+    description: 'Rider on a booking',
+  },
+  {
+    aType: 'operator',
+    axbType: 'is',
+    bType: 'operator',
+    jsonSchema: operatorSchema,
+    description: 'Operator partner',
+  },
 
   // Edge types (inverseLabel is a display-only label for when viewing incoming edges)
-  { aType: 'tour',    axbType: 'hasDeparture',        bType: 'departure', jsonSchema: orderedEdgeSchema,          description: 'Tour has a departure date',   inverseLabel: 'departureOf' },
-  { aType: 'tour',    axbType: 'hasItineraryDay',     bType: 'tour',      jsonSchema: orderedEdgeSchema,          description: 'Tour has an itinerary day',   inverseLabel: 'itineraryDayOf' },
-  { aType: 'tour',    axbType: 'fulfilledByOperator', bType: 'operator',  jsonSchema: operatorAgreementEdgeSchema, description: 'Tour fulfilled by operator', inverseLabel: 'fulfils' },
-  { aType: 'user',    axbType: 'placedBooking',       bType: 'booking',   jsonSchema: emptyEdgeSchema,            description: 'User placed a booking',       inverseLabel: 'placedBy' },
-  { aType: 'booking', axbType: 'bookedForTour',       bType: 'tour',      jsonSchema: emptyEdgeSchema,            description: 'Booking is for a tour',       inverseLabel: 'hasBooking' },
-  { aType: 'booking', axbType: 'bookedForDeparture',  bType: 'departure', jsonSchema: emptyEdgeSchema,            description: 'Booking is for a departure',  inverseLabel: 'hasBooking' },
-  { aType: 'booking', axbType: 'includesRider',       bType: 'rider',     jsonSchema: primaryContactEdgeSchema,   description: 'Booking includes a rider',    inverseLabel: 'riderOn' },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has a departure date',
+    inverseLabel: 'departureOf',
+  },
+  {
+    aType: 'tour',
+    axbType: 'hasItineraryDay',
+    bType: 'tour',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has an itinerary day',
+    inverseLabel: 'itineraryDayOf',
+  },
+  {
+    aType: 'tour',
+    axbType: 'fulfilledByOperator',
+    bType: 'operator',
+    jsonSchema: operatorAgreementEdgeSchema,
+    description: 'Tour fulfilled by operator',
+    inverseLabel: 'fulfils',
+  },
+  {
+    aType: 'user',
+    axbType: 'placedBooking',
+    bType: 'booking',
+    jsonSchema: emptyEdgeSchema,
+    description: 'User placed a booking',
+    inverseLabel: 'placedBy',
+  },
+  {
+    aType: 'booking',
+    axbType: 'bookedForTour',
+    bType: 'tour',
+    jsonSchema: emptyEdgeSchema,
+    description: 'Booking is for a tour',
+    inverseLabel: 'hasBooking',
+  },
+  {
+    aType: 'booking',
+    axbType: 'bookedForDeparture',
+    bType: 'departure',
+    jsonSchema: emptyEdgeSchema,
+    description: 'Booking is for a departure',
+    inverseLabel: 'hasBooking',
+  },
+  {
+    aType: 'booking',
+    axbType: 'includesRider',
+    bType: 'rider',
+    jsonSchema: primaryContactEdgeSchema,
+    description: 'Booking includes a rider',
+    inverseLabel: 'riderOn',
+  },
 ]);
 
 const g = createGraphClient(db, 'examples/registry/graph', { registry });
@@ -206,9 +292,7 @@ async function main() {
     bookingReference: 'BK-2025-001',
     totalAmount: 2500,
     currency: 'EUR',
-    lineItems: [
-      { description: 'Tour spot', quantity: 1, unitPrice: 2500 },
-    ],
+    lineItems: [{ description: 'Tour spot', quantity: 1, unitPrice: 2500 }],
   });
   console.log('booking1 created');
 
@@ -225,9 +309,9 @@ async function main() {
   // ═══════════════════════════════════════════════════════════════
   try {
     await g.putNode('tour', 'bad-tour', {
-      name: '',              // fails minLength: 1
+      name: '', // fails minLength: 1
       difficulty: 'extreme', // fails enum
-      maxRiders: -5,         // fails exclusiveMinimum: 0
+      maxRiders: -5, // fails exclusiveMinimum: 0
     });
   } catch (err) {
     if (err instanceof ValidationError) {

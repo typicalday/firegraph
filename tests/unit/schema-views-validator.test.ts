@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
-import { createRegistry } from '../../src/registry.js';
-import { validateSchemaViews } from '../../editor/server/schema-views-validator.js';
-import type { SchemaMetadata } from '../../editor/server/schema-introspect.js';
-import type { ViewRegistry, EntityViewMeta } from '../../src/views.js';
+import { describe, expect, it } from 'vitest';
+
 import type { LoadedConfig } from '../../editor/server/config-loader.js';
+import type { SchemaMetadata } from '../../editor/server/schema-introspect.js';
+import { validateSchemaViews } from '../../editor/server/schema-views-validator.js';
+import { createRegistry } from '../../src/registry.js';
+import type { EntityViewMeta, ViewRegistry } from '../../src/views.js';
 
 // --- Helpers ---
 
@@ -74,15 +75,16 @@ describe('validateSchemaViews', () => {
   describe('null / empty inputs', () => {
     it('returns empty array when viewRegistry is null', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const result = validateSchemaViews(schema, null, null, registry);
       expect(result).toEqual([]);
     });
 
     it('returns empty array when views match registry exactly', () => {
-      const schema = makeSchemaMetadata(['tour'], [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+      const schema = makeSchemaMetadata(
+        ['tour'],
+        [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }],
+      );
       const registry = createRegistry([
         { aType: 'tour', axbType: 'is', bType: 'tour' },
         { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
@@ -99,9 +101,7 @@ describe('validateSchemaViews', () => {
   describe('orphaned views', () => {
     it('detects node views for types not in registry', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: {
           tour: makeViewMeta('card'),
@@ -117,7 +117,10 @@ describe('validateSchemaViews', () => {
     });
 
     it('detects edge views for axbTypes not in registry', () => {
-      const schema = makeSchemaMetadata([], [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+      const schema = makeSchemaMetadata(
+        [],
+        [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }],
+      );
       const registry = createRegistry([
         { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
       ]);
@@ -176,7 +179,10 @@ describe('validateSchemaViews', () => {
     });
 
     it('validates edge sample data against JSON schema', () => {
-      const schema = makeSchemaMetadata([], [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+      const schema = makeSchemaMetadata(
+        [],
+        [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }],
+      );
       const registry = createRegistry([
         { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', jsonSchema: edgeJsonSchema },
       ]);
@@ -197,9 +203,7 @@ describe('validateSchemaViews', () => {
 
     it('skips validation when no jsonSchema exists', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: {
           tour: {
@@ -217,9 +221,7 @@ describe('validateSchemaViews', () => {
   describe('viewDefaults validation', () => {
     it('passes when all defaults reference valid views', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMetaMulti(['card', 'detail']) },
         edges: {},
@@ -233,9 +235,7 @@ describe('validateSchemaViews', () => {
 
     it('detects default view name not in view list', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMeta('card') },
         edges: {},
@@ -251,9 +251,7 @@ describe('validateSchemaViews', () => {
 
     it('allows "json" as default without warning', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMeta('card') },
         edges: {},
@@ -267,9 +265,7 @@ describe('validateSchemaViews', () => {
 
     it('detects viewDefaults for entity types with no views', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: {},
         edges: {},
@@ -285,9 +281,7 @@ describe('validateSchemaViews', () => {
 
     it('skips when viewDefaults is null', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMeta('card') },
         edges: {},
@@ -297,7 +291,10 @@ describe('validateSchemaViews', () => {
     });
 
     it('validates edge viewDefaults', () => {
-      const schema = makeSchemaMetadata([], [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }]);
+      const schema = makeSchemaMetadata(
+        [],
+        [{ aType: 'tour', axbType: 'hasDeparture', bType: 'departure' }],
+      );
       const registry = createRegistry([
         { aType: 'tour', axbType: 'hasDeparture', bType: 'departure' },
       ]);
@@ -316,9 +313,7 @@ describe('validateSchemaViews', () => {
 
     it('detects context-specific keys referencing unknown views', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMeta('card') },
         edges: {},
@@ -335,9 +330,7 @@ describe('validateSchemaViews', () => {
 
     it('allows valid context-specific keys', () => {
       const schema = makeSchemaMetadata(['tour'], []);
-      const registry = createRegistry([
-        { aType: 'tour', axbType: 'is', bType: 'tour' },
-      ]);
+      const registry = createRegistry([{ aType: 'tour', axbType: 'is', bType: 'tour' }]);
       const viewReg: ViewRegistry = {
         nodes: { tour: makeViewMetaMulti(['card', 'detail']) },
         edges: {},

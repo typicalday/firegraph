@@ -4,14 +4,15 @@
  * Validates that createGraphClient with queryMode: 'pipeline' produces
  * identical results to standard mode for basic read operations.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import type { GraphClient } from '../../src/types.js';
 import {
+  cleanupCollection,
   createPipelineClient,
   createStandardClient,
   uniqueCollectionPath,
-  cleanupCollection,
 } from './setup.js';
-import type { GraphClient } from '../../src/types.js';
 
 describe('pipeline client reads', () => {
   const collPath = uniqueCollectionPath();
@@ -23,15 +24,32 @@ describe('pipeline client reads', () => {
     standard = createStandardClient(collPath);
 
     // Seed data via standard client (writes don't use pipelines)
-    await pipeline.putNode('tour', 'tour1', { name: 'Dolomites Classic', difficulty: 'hard', price: 5000 });
+    await pipeline.putNode('tour', 'tour1', {
+      name: 'Dolomites Classic',
+      difficulty: 'hard',
+      price: 5000,
+    });
     await pipeline.putNode('tour', 'tour2', { name: 'Alps Easy', difficulty: 'easy', price: 2000 });
-    await pipeline.putNode('tour', 'tour3', { name: 'Colorado Trail', difficulty: 'medium', price: 3500 });
+    await pipeline.putNode('tour', 'tour3', {
+      name: 'Colorado Trail',
+      difficulty: 'medium',
+      price: 3500,
+    });
     await pipeline.putNode('departure', 'dep1', { date: '2025-07-15', spotsLeft: 5 });
     await pipeline.putNode('departure', 'dep2', { date: '2025-08-01', spotsLeft: 0 });
 
-    await pipeline.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', { order: 0, guide: 'Marco' });
-    await pipeline.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', { order: 1, guide: 'Luca' });
-    await pipeline.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', { order: 0, guide: 'Marco' });
+    await pipeline.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep1', {
+      order: 0,
+      guide: 'Marco',
+    });
+    await pipeline.putEdge('tour', 'tour1', 'hasDeparture', 'departure', 'dep2', {
+      order: 1,
+      guide: 'Luca',
+    });
+    await pipeline.putEdge('tour', 'tour2', 'hasDeparture', 'departure', 'dep1', {
+      order: 0,
+      guide: 'Marco',
+    });
   }, 30_000);
 
   afterAll(async () => {
@@ -80,7 +98,7 @@ describe('pipeline client reads', () => {
     it('findNodes returns same results via pipeline', async () => {
       const results = await pipeline.findNodes({ aType: 'tour' });
       expect(results.length).toBe(3);
-      const names = results.map(r => r.data.name).sort();
+      const names = results.map((r) => r.data.name).sort();
       expect(names).toEqual(['Alps Easy', 'Colorado Trail', 'Dolomites Classic']);
     });
 
@@ -93,8 +111,8 @@ describe('pipeline client reads', () => {
       expect(pipeResults.length).toBe(stdResults.length);
 
       // Same edge UIDs
-      const pipeUids = pipeResults.map(r => `${r.aUid}->${r.bUid}`).sort();
-      const stdUids = stdResults.map(r => `${r.aUid}->${r.bUid}`).sort();
+      const pipeUids = pipeResults.map((r) => `${r.aUid}->${r.bUid}`).sort();
+      const stdUids = stdResults.map((r) => `${r.aUid}->${r.bUid}`).sort();
       expect(pipeUids).toEqual(stdUids);
     });
 

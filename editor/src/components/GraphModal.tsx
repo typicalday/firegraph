@@ -1,13 +1,14 @@
-import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import cytoscape, { type Core, type ElementDefinition, type LayoutOptions } from 'cytoscape';
-import type { GraphRecord, ViewRegistryData, AppConfig, Schema } from '../types';
-import { getTypeHexColor, resolveViewForEntity, scopeInput } from '../utils';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
 import { trpc } from '../trpc';
-import { useFocusMaybe } from './focus-context';
-import { useScope } from './path-context';
+import type { AppConfig, GraphRecord, Schema, ViewRegistryData } from '../types';
+import { getTypeHexColor, resolveViewForEntity, scopeInput } from '../utils';
 import CustomView from './CustomView';
+import { useFocusMaybe } from './focus-context';
 import JsonView from './JsonView';
+import { useScope } from './path-context';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -35,13 +36,24 @@ const EMPTY_CONFIG: AppConfig = { projectId: '', collection: '', readonly: true 
 // ---------------------------------------------------------------------------
 
 /** Well-known display fields, checked first in priority order. */
-const PREFERRED_LABEL_KEYS = ['title', 'name', 'label', 'displayName', 'summary', 'description', 'text', 'subject'];
+const PREFERRED_LABEL_KEYS = [
+  'title',
+  'name',
+  'label',
+  'displayName',
+  'summary',
+  'description',
+  'text',
+  'subject',
+];
 
 /**
  * Build a lookup from node/edge type → { titleField, subtitleField } from schema metadata.
  * Node schemas are keyed by aType (since axbType='is'), edge schemas by axbType.
  */
-function buildDisplayFieldMap(schema?: Schema): Record<string, { titleField?: string; subtitleField?: string }> {
+function buildDisplayFieldMap(
+  schema?: Schema,
+): Record<string, { titleField?: string; subtitleField?: string }> {
   const map: Record<string, { titleField?: string; subtitleField?: string }> = {};
   if (!schema) return map;
   for (const n of schema.nodeSchemas ?? []) {
@@ -57,11 +69,7 @@ function buildDisplayFieldMap(schema?: Schema): Record<string, { titleField?: st
   return map;
 }
 
-function pickLabel(
-  data: Record<string, unknown>,
-  uid: string,
-  titleField?: string,
-): string {
+function pickLabel(data: Record<string, unknown>, uid: string, titleField?: string): string {
   const truncate = (s: string) => (s.length > 24 ? s.slice(0, 22) + '\u2026' : s);
 
   // 0. Schema-configured titleField takes priority
@@ -265,14 +273,13 @@ function traversalEdgesToElements(
 // Cytoscape stylesheet
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- cytoscape's stylesheet types are overly restrictive
 const STYLESHEET: any[] = [
   {
     selector: 'node',
     style: {
       'background-color': 'data(color)',
-      'label': 'data(label)',
-      'color': '#e2e8f0',
+      label: 'data(label)',
+      color: '#e2e8f0',
       'text-valign': 'bottom',
       'text-halign': 'center',
       'font-size': '11px',
@@ -280,8 +287,8 @@ const STYLESHEET: any[] = [
       'text-margin-y': 6,
       'text-outline-color': '#020617',
       'text-outline-width': 2,
-      'width': 28,
-      'height': 28,
+      width: 28,
+      height: 28,
       'border-width': 2,
       'border-color': '#334155',
     },
@@ -289,8 +296,8 @@ const STYLESHEET: any[] = [
   {
     selector: 'node[?isFocus]',
     style: {
-      'width': 42,
-      'height': 42,
+      width: 42,
+      height: 42,
       'border-width': 3,
       'border-color': '#818cf8',
       'font-size': '13px',
@@ -300,13 +307,13 @@ const STYLESHEET: any[] = [
   {
     selector: 'edge',
     style: {
-      'width': 1.5,
+      width: 1.5,
       'line-color': '#475569',
       'target-arrow-color': '#475569',
       'target-arrow-shape': 'triangle',
       'curve-style': 'bezier',
-      'label': 'data(label)',
-      'color': '#94a3b8',
+      label: 'data(label)',
+      color: '#94a3b8',
       'font-size': '9px',
       'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
       'text-rotation': 'autorotate',
@@ -462,7 +469,10 @@ export default function GraphModal({
   // Build edge data lookup for tooltip
   const allEdgesForTooltip = isExplicitMode ? allExplicitEdges : [...outEdges, ...inEdges];
   const edgeDataMap = useMemo(() => {
-    const map: Record<string, { edgeType: string; data: Record<string, unknown>; aType: string; bType: string }> = {};
+    const map: Record<
+      string,
+      { edgeType: string; data: Record<string, unknown>; aType: string; bType: string }
+    > = {};
     for (const edge of allEdgesForTooltip) {
       const id = `${edge.aUid}:${edge.axbType}:${edge.bUid}`;
       if (!map[id]) {
@@ -481,10 +491,24 @@ export default function GraphModal({
 
   const elements = useMemo(() => {
     if (isExplicitMode) {
-      return traversalEdgesToElements(effectiveFocusUid, allExplicitEdges, resolvedNodes, displayFieldMap);
+      return traversalEdgesToElements(
+        effectiveFocusUid,
+        allExplicitEdges,
+        resolvedNodes,
+        displayFieldMap,
+      );
     }
     return graphDataToElements(node!, outEdges, inEdges, resolvedNodes, displayFieldMap);
-  }, [isExplicitMode, effectiveFocusUid, allExplicitEdges, node, outEdges, inEdges, resolvedNodes, displayFieldMap]);
+  }, [
+    isExplicitMode,
+    effectiveFocusUid,
+    allExplicitEdges,
+    node,
+    outEdges,
+    inEdges,
+    resolvedNodes,
+    displayFieldMap,
+  ]);
   const nodeCount = elements.filter((e) => !e.data.source).length;
   const edgeCount = elements.filter((e) => e.data.source).length;
 
@@ -571,7 +595,6 @@ export default function GraphModal({
       cy.destroy();
       cyRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout, effectiveFocusUid, elements.length]);
 
   const handleFit = useCallback(() => {
@@ -579,7 +602,9 @@ export default function GraphModal({
   }, []);
 
   // Collect unique node types for the legend
-  const nodeTypes = [...new Set(elements.filter((e) => !e.data.source).map((e) => e.data.nodeType as string))];
+  const nodeTypes = [
+    ...new Set(elements.filter((e) => !e.data.source).map((e) => e.data.nodeType as string)),
+  ];
 
   // Resolve tooltip content
   const tooltipContent = useMemo(() => {
@@ -588,7 +613,7 @@ export default function GraphModal({
     if (hovered.kind === 'node') {
       const { uid, nodeType } = hovered;
       const nodeData: Record<string, unknown> =
-        (node && uid === node.aUid)
+        node && uid === node.aUid
           ? (node.data as Record<string, unknown>)
           : ((resolvedNodes[uid]?.data as Record<string, unknown>) ?? null);
 
@@ -600,9 +625,8 @@ export default function GraphModal({
       const views = viewRegistry?.nodes[nodeType]?.views ?? [];
       const viewDefaults = config.viewDefaults?.nodes?.[nodeType];
       const viewName = resolveViewForEntity(viewDefaults, views);
-      const tagName = viewName !== 'json'
-        ? views.find((v) => v.viewName === viewName)?.tagName ?? null
-        : null;
+      const tagName =
+        viewName !== 'json' ? (views.find((v) => v.viewName === viewName)?.tagName ?? null) : null;
 
       return { title: `${nodeType}  ${uid}`, tagName, data: nodeData };
     }
@@ -615,9 +639,8 @@ export default function GraphModal({
     const views = viewRegistry?.edges[edgeType]?.views ?? [];
     const viewDefaults = config.viewDefaults?.edges?.[edgeType];
     const viewName = resolveViewForEntity(viewDefaults, views);
-    const tagName = viewName !== 'json'
-      ? views.find((v) => v.viewName === viewName)?.tagName ?? null
-      : null;
+    const tagName =
+      viewName !== 'json' ? (views.find((v) => v.viewName === viewName)?.tagName ?? null) : null;
 
     return {
       title: `${edgeInfo.aType} \u2014[${edgeType}]\u2192 ${edgeInfo.bType}`,
@@ -681,7 +704,10 @@ export default function GraphModal({
         {/* Legend */}
         <div className="flex items-center gap-3 px-4 py-2 border-t border-slate-700/60 bg-slate-900/80 shrink-0 overflow-x-auto">
           {nodeTypes.map((t) => (
-            <span key={t} className="flex items-center gap-1.5 text-xs text-slate-400 whitespace-nowrap">
+            <span
+              key={t}
+              className="flex items-center gap-1.5 text-xs text-slate-400 whitespace-nowrap"
+            >
               <span
                 className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
                 style={{ backgroundColor: getTypeHexColor(t) }}
@@ -697,7 +723,13 @@ export default function GraphModal({
 
       {/* Tooltip — rendered via React so we can use CustomView */}
       {hovered && tooltipContent && tooltipContent.data && (
-        <GraphTooltip x={hovered.x} y={hovered.y} title={tooltipContent.title} tagName={tooltipContent.tagName} data={tooltipContent.data} />
+        <GraphTooltip
+          x={hovered.x}
+          y={hovered.y}
+          title={tooltipContent.title}
+          tagName={tooltipContent.tagName}
+          data={tooltipContent.data}
+        />
       )}
     </div>,
     document.body,

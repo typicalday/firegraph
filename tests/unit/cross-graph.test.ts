@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { resolveAncestorCollection, isAncestorUid } from '../../src/cross-graph.js';
+import { describe, expect, it } from 'vitest';
+
+import { isAncestorUid, resolveAncestorCollection } from '../../src/cross-graph.js';
 
 describe('resolveAncestorCollection', () => {
   it('returns collection path for a UID at the first doc segment', () => {
@@ -7,13 +8,11 @@ describe('resolveAncestorCollection', () => {
   });
 
   it('returns collection path for a UID deeper in the path', () => {
-    expect(resolveAncestorCollection('graph/A/workspace/B/context', 'B'))
-      .toBe('graph/A/workspace');
+    expect(resolveAncestorCollection('graph/A/workspace/B/context', 'B')).toBe('graph/A/workspace');
   });
 
   it('returns first-level collection for UID at position 1', () => {
-    expect(resolveAncestorCollection('graph/A/workspace/B/context', 'A'))
-      .toBe('graph');
+    expect(resolveAncestorCollection('graph/A/workspace/B/context', 'A')).toBe('graph');
   });
 
   it('returns null when UID is not in the path', () => {

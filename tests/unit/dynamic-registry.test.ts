@@ -1,18 +1,19 @@
-import { describe, it, expect } from 'vitest';
+import { Timestamp } from '@google-cloud/firestore';
+import { describe, expect, it } from 'vitest';
+
 import {
+  BOOTSTRAP_ENTRIES,
   createBootstrapRegistry,
   createRegistryFromGraph,
-  generateDeterministicUid,
-  NODE_TYPE_SCHEMA,
   EDGE_TYPE_SCHEMA,
-  META_NODE_TYPE,
+  generateDeterministicUid,
   META_EDGE_TYPE,
-  BOOTSTRAP_ENTRIES,
+  META_NODE_TYPE,
+  NODE_TYPE_SCHEMA,
 } from '../../src/dynamic-registry.js';
-import { createRegistry } from '../../src/registry.js';
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
+import { createRegistry } from '../../src/registry.js';
 import type { GraphReader, StoredGraphRecord } from '../../src/types.js';
-import { Timestamp } from '@google-cloud/firestore';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -311,9 +312,9 @@ describe('createBootstrapRegistry', () => {
 
   it('rejects unknown domain types', () => {
     const registry = createBootstrapRegistry();
-    expect(() =>
-      registry.validate('tour', 'is', 'tour', { name: 'X' }),
-    ).toThrow(RegistryViolationError);
+    expect(() => registry.validate('tour', 'is', 'tour', { name: 'X' })).toThrow(
+      RegistryViolationError,
+    );
   });
 });
 
@@ -491,9 +492,7 @@ describe('createRegistryFromGraph', () => {
     ]);
     const registry = await createRegistryFromGraph(reader);
 
-    expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(
-      RegistryViolationError,
-    );
+    expect(() => registry.validate('booking', 'is', 'booking', {})).toThrow(RegistryViolationError);
   });
 
   it('threads titleField and subtitleField through to nodeType entries', async () => {

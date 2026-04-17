@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
-import { usePathMaybe } from './path-context';
+
 import { encodeFsPath } from '../utils';
+import { usePathMaybe } from './path-context';
 
 export default function ScopeBreadcrumb() {
   const pathCtx = usePathMaybe();
@@ -19,8 +20,18 @@ export default function ScopeBreadcrumb() {
 
   return (
     <nav className="flex items-center px-4 py-2 bg-indigo-950/40 border-b border-indigo-500/20 text-xs gap-1 flex-wrap">
-      <svg className="w-3.5 h-3.5 text-indigo-400 mr-1 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+      <svg
+        className="w-3.5 h-3.5 text-indigo-400 mr-1 shrink-0"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+        />
       </svg>
       <Link
         to={`/${encodeFsPath(graphCollection)}`}

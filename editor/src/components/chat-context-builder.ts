@@ -1,5 +1,5 @@
-import type { FocusContextValue } from './focus-context';
 import type { Schema } from '../types';
+import type { FocusContextValue } from './focus-context';
 
 /**
  * Build a context payload for a chat request.

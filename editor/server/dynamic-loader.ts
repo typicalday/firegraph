@@ -3,15 +3,11 @@
  * and extracts RegistryEntry[] + view template metadata.
  */
 import type { Firestore } from '@google-cloud/firestore';
+
+import { META_EDGE_TYPE, META_NODE_TYPE } from '../../src/dynamic-registry.js';
 import { createGraphClient } from '../../src/index.js';
-import { META_NODE_TYPE, META_EDGE_TYPE } from '../../src/dynamic-registry.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
-import type {
-  RegistryEntry,
-  NodeTypeData,
-  EdgeTypeData,
-  QueryMode,
-} from '../../src/types.js';
+import type { EdgeTypeData, NodeTypeData, QueryMode, RegistryEntry } from '../../src/types.js';
 
 // ---------------------------------------------------------------------------
 // Types

@@ -5,6 +5,7 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/02-queries.ts
  */
 import { Firestore } from '@google-cloud/firestore';
+
 import { createGraphClient, createRegistry } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
@@ -38,9 +39,27 @@ const orderedEdgeSchema = {
 };
 
 const registry = createRegistry([
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      jsonSchema: tourSchema,      description: 'Tour entity' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', jsonSchema: departureSchema, description: 'Departure entity' },
-  { aType: 'tour',      axbType: 'hasDeparture', bType: 'departure', jsonSchema: orderedEdgeSchema, description: 'Tour has a departure' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    jsonSchema: tourSchema,
+    description: 'Tour entity',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    jsonSchema: departureSchema,
+    description: 'Departure entity',
+  },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    jsonSchema: orderedEdgeSchema,
+    description: 'Tour has a departure',
+  },
 ]);
 
 const g = createGraphClient(db, 'examples/queries/graph', { registry });

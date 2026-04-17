@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { computeNodeDocId, computeEdgeDocId } from '../../src/docid.js';
+
+import { describe, expect, it } from 'vitest';
+
+import { computeEdgeDocId, computeNodeDocId } from '../../src/docid.js';
 
 describe('computeNodeDocId', () => {
   it('returns the uid unchanged', () => {

@@ -1,22 +1,30 @@
-import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Schema, GraphRecord, ViewRegistryData, ViewMeta, AppConfig } from '../types';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+
 import { trpc } from '../trpc';
-import { getTypeBadgeColor, formatTimestamp, resolveViewForEntity, scopeInput, fsUrl, resolveCollectionPath } from '../utils';
-import JsonView from './JsonView';
-import CustomView from './CustomView';
-import ViewSwitcher from './ViewSwitcher';
-import { TraversalPanel } from './TraversalBuilder';
-import NodeEditor from './NodeEditor';
-import EdgeEditor from './EdgeEditor';
+import type { AppConfig, GraphRecord, Schema, ViewMeta, ViewRegistryData } from '../types';
+import {
+  formatTimestamp,
+  fsUrl,
+  getTypeBadgeColor,
+  resolveCollectionPath,
+  resolveViewForEntity,
+  scopeInput,
+} from '../utils';
 import ConfirmDialog from './ConfirmDialog';
-import GraphModal from './GraphModal';
-import { DrillProvider, useDrill, type DrillFrame } from './drill-context';
+import CustomView from './CustomView';
+import { type DrillFrame, DrillProvider, useDrill } from './drill-context';
 import DrillStack from './DrillStack';
+import EdgeEditor from './EdgeEditor';
 import { useFocusMaybe } from './focus-context';
+import GraphModal from './GraphModal';
+import JsonView from './JsonView';
+import NodeEditor from './NodeEditor';
 import { useScope } from './path-context';
 import { useRecents } from './recents-context';
+import { TraversalPanel } from './TraversalBuilder';
+import ViewSwitcher from './ViewSwitcher';
 
 interface Props {
   schema: Schema;
@@ -62,11 +70,7 @@ export function NodeDataCard({ nodeType, data, viewRegistry, config }: NodeDataC
     <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold">Data</h2>
-        <ViewSwitcher
-          views={views}
-          activeView={activeView}
-          onSwitch={setActiveView}
-        />
+        <ViewSwitcher views={views} activeView={activeView} onSwitch={setActiveView} />
       </div>
       {activeView === 'json' ? (
         <div className="font-mono text-xs leading-relaxed bg-slate-950 rounded-lg p-4 overflow-auto max-h-96">
@@ -83,8 +87,20 @@ const LIMIT_OPTIONS = [10, 25, 50, 100];
 
 /** Describes a pending bulk edge deletion — shown in a confirmation dialog. */
 type BulkDeleteRequest =
-  | { mode: 'visible'; axbType: string; inverseLabel?: string; edges: Array<{ aUid: string; axbType: string; bUid: string }> }
-  | { mode: 'filtered'; axbType: string; inverseLabel?: string; direction: 'in' | 'out'; uid: string; where: Array<{ field: string; op: string; value: string | number | boolean }> }
+  | {
+      mode: 'visible';
+      axbType: string;
+      inverseLabel?: string;
+      edges: Array<{ aUid: string; axbType: string; bUid: string }>;
+    }
+  | {
+      mode: 'filtered';
+      axbType: string;
+      inverseLabel?: string;
+      direction: 'in' | 'out';
+      uid: string;
+      where: Array<{ field: string; op: string; value: string | number | boolean }>;
+    }
   | { mode: 'all'; axbType: string; inverseLabel?: string; direction: 'in' | 'out'; uid: string };
 
 /** Format an edge type label, showing inverseLabel when available. */
@@ -95,7 +111,13 @@ function edgeTypeLabel(axbType: string, inverseLabel?: string): string {
 /**
  * Exported route component — thin shell that wraps DrillProvider + DrillStack.
  */
-export default function NodeDetail({ schema, viewRegistry, config, onDataChanged, uidParam }: Props) {
+export default function NodeDetail({
+  schema,
+  viewRegistry,
+  config,
+  onDataChanged,
+  uidParam,
+}: Props) {
   const { uid: uidFromParams } = useParams<{ uid: string }>();
   const location = useLocation();
   const uid = uidParam ?? uidFromParams;
@@ -145,24 +167,34 @@ export function NodeDetailContent({
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
-  const [deleteStep, setDeleteStep] = useState<null | 'choose' | 'confirm-cascade' | 'confirm-node-only'>(null);
+  const [deleteStep, setDeleteStep] = useState<
+    null | 'choose' | 'confirm-cascade' | 'confirm-node-only'
+  >(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [showCreateEdge, setShowCreateEdge] = useState(false);
   const [showCreateIncomingEdge, setShowCreateIncomingEdge] = useState(false);
-  const [deletingEdge, setDeletingEdge] = useState<{ aUid: string; axbType: string; bUid: string; inverseLabel?: string } | null>(null);
+  const [deletingEdge, setDeletingEdge] = useState<{
+    aUid: string;
+    axbType: string;
+    bUid: string;
+    inverseLabel?: string;
+  } | null>(null);
   const [bulkDeleteRequest, setBulkDeleteRequest] = useState<BulkDeleteRequest | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const canWrite = !schema.readonly;
   const { addRecent } = useRecents();
 
-  const { data: nodeDetailData, isLoading: loading, error: queryError, refetch: loadNode } = trpc.getNodeDetail.useQuery(
-    { uid, ...scopeInput(scopePath) },
-    { enabled: !!uid },
-  );
+  const {
+    data: nodeDetailData,
+    isLoading: loading,
+    error: queryError,
+    refetch: loadNode,
+  } = trpc.getNodeDetail.useQuery({ uid, ...scopeInput(scopePath) }, { enabled: !!uid });
 
   const node = (nodeDetailData?.node as GraphRecord | null) ?? null;
-  const totalEdgeCount = (nodeDetailData?.outEdges?.length ?? 0) + (nodeDetailData?.inEdges?.length ?? 0);
+  const totalEdgeCount =
+    (nodeDetailData?.outEdges?.length ?? 0) + (nodeDetailData?.inEdges?.length ?? 0);
   const error = queryError?.message ?? mutationError ?? null;
 
   // Track a reload signal for edge sections
@@ -200,7 +232,6 @@ export function NodeDetailContent({
         url: scopedPath(`/node/${encodeURIComponent(node.aUid)}`),
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node?.aUid]);
 
   // Publish focus to FocusContext only from the root frame (drillIndex === 0).
@@ -225,7 +256,10 @@ export function NodeDetailContent({
       }
     },
     onError: (err) => setMutationError(err.message),
-    onSettled: () => { setDeleteStep(null); setDeleteConfirmInput(''); },
+    onSettled: () => {
+      setDeleteStep(null);
+      setDeleteConfirmInput('');
+    },
   });
 
   const deleteNodeCascadeMutation = trpc.deleteNodeCascade.useMutation({
@@ -246,7 +280,10 @@ export function NodeDetailContent({
       }
     },
     onError: (err) => setMutationError(err.message),
-    onSettled: () => { setDeleteStep(null); setDeleteConfirmInput(''); },
+    onSettled: () => {
+      setDeleteStep(null);
+      setDeleteConfirmInput('');
+    },
   });
 
   const deleteEdgeMutation = trpc.deleteEdge.useMutation({
@@ -266,7 +303,9 @@ export function NodeDetailContent({
       reloadEdges();
       onDataChanged?.();
       if (result.errors.length > 0) {
-        setMutationError(`Bulk delete partially failed: deleted ${result.deleted}, ${result.errors.length} batch(es) failed`);
+        setMutationError(
+          `Bulk delete partially failed: deleted ${result.deleted}, ${result.errors.length} batch(es) failed`,
+        );
       }
     },
     onError: (err) => {
@@ -466,8 +505,18 @@ export function NodeDetailContent({
                 onClick={() => enterSubgraph(node.aUid, sg.name)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-950/50 border border-indigo-500/30 rounded-lg text-xs text-indigo-300 hover:bg-indigo-900/50 hover:border-indigo-400/50 transition-colors"
               >
-                <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                <svg
+                  className="w-3 h-3 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+                  />
                 </svg>
                 {sg.name}
               </button>
@@ -482,8 +531,18 @@ export function NodeDetailContent({
                   to={fsUrl(resolvedColPath)}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-950/30 border border-amber-500/20 rounded-lg text-xs text-amber-300 hover:bg-amber-900/40 hover:border-amber-400/40 transition-colors"
                 >
-                  <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                  <svg
+                    className="w-3 h-3 shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
                   </svg>
                   {col.name}
                 </Link>
@@ -514,7 +573,12 @@ export function NodeDetailContent({
               className="px-3 py-1 bg-indigo-600/20 text-indigo-400 rounded-lg text-xs hover:bg-indigo-600/30 transition-colors flex items-center gap-1"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               Add Edge
             </button>
@@ -544,7 +608,9 @@ export function NodeDetailContent({
             direction="out"
             axbTypes={outAxbTypes}
             canWrite={canWrite}
-            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })}
+            onDeleteEdge={(e) =>
+              setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })
+            }
             onBulkDelete={(req) => setBulkDeleteRequest(req)}
             nodeUid={node.aUid}
             reloadKey={edgeReloadKey}
@@ -566,7 +632,12 @@ export function NodeDetailContent({
               className="px-3 py-1 bg-indigo-600/20 text-indigo-400 rounded-lg text-xs hover:bg-indigo-600/30 transition-colors flex items-center gap-1"
             >
               <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               Add Edge
             </button>
@@ -597,7 +668,14 @@ export function NodeDetailContent({
             axbTypes={inAxbTypes}
             inverseLabelMap={inverseLabelMap}
             canWrite={canWrite}
-            onDeleteEdge={(e) => setDeletingEdge({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid, inverseLabel: inverseLabelMap[e.axbType] })}
+            onDeleteEdge={(e) =>
+              setDeletingEdge({
+                aUid: e.aUid,
+                axbType: e.axbType,
+                bUid: e.bUid,
+                inverseLabel: inverseLabelMap[e.axbType],
+              })
+            }
             onBulkDelete={(req) => setBulkDeleteRequest(req)}
             nodeUid={node.aUid}
             reloadKey={edgeReloadKey}
@@ -613,116 +691,165 @@ export function NodeDetailContent({
       {schema.edgeTypes.length > 0 && (
         <section className="bg-slate-900 rounded-xl border border-slate-800 p-5">
           <h2 className="text-sm font-semibold mb-4 flex items-center gap-2">
-            <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            <svg
+              className="w-4 h-4 text-indigo-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M13 10V3L4 14h7v7l9-11h-7z"
+              />
             </svg>
             Traverse from this node
           </h2>
-          <TraversalPanel schema={schema} startUid={node.aUid} startNodeType={node.aType} viewRegistry={viewRegistry} config={config} />
+          <TraversalPanel
+            schema={schema}
+            startUid={node.aUid}
+            startNodeType={node.aType}
+            viewRegistry={viewRegistry}
+            config={config}
+          />
         </section>
       )}
 
       {/* Delete node — Step 1: Choose what to delete */}
-      {deleteStep === 'choose' && createPortal(
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setDeleteStep(null)}>
+      {deleteStep === 'choose' &&
+        createPortal(
           <div
-            className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+            onClick={() => setDeleteStep(null)}
           >
-            <h3 className="text-lg font-semibold mb-2">Delete Node</h3>
-            <p className="text-sm text-slate-400 mb-2">
-              How do you want to delete <span className="font-mono text-slate-300">"{node.aUid}"</span> ({node.aType})?
-            </p>
-            {totalEdgeCount > 0 && (
-              <p className="text-xs text-amber-400/80 mb-4">
-                This node has {totalEdgeCount}+ connected edge{totalEdgeCount !== 1 ? 's' : ''}.
+            <div
+              className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold mb-2">Delete Node</h3>
+              <p className="text-sm text-slate-400 mb-2">
+                How do you want to delete{' '}
+                <span className="font-mono text-slate-300">"{node.aUid}"</span> ({node.aType})?
               </p>
-            )}
-            <div className="flex flex-col gap-2 mt-4">
-              <button
-                onClick={() => { setDeleteConfirmInput(''); setDeleteStep('confirm-cascade'); }}
-                className="w-full px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors flex items-center justify-center gap-2"
-              >
-                Delete node + <span className="font-bold uppercase">ALL</span> edges
-              </button>
-              <button
-                onClick={() => { setDeleteConfirmInput(''); setDeleteStep('confirm-node-only'); }}
-                className="w-full px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
-              >
-                Delete node only
-              </button>
-              <button
-                onClick={() => setDeleteStep(null)}
-                className="w-full px-4 py-2 text-sm text-slate-500 hover:text-slate-300 transition-colors"
-              >
-                Cancel
-              </button>
+              {totalEdgeCount > 0 && (
+                <p className="text-xs text-amber-400/80 mb-4">
+                  This node has {totalEdgeCount}+ connected edge{totalEdgeCount !== 1 ? 's' : ''}.
+                </p>
+              )}
+              <div className="flex flex-col gap-2 mt-4">
+                <button
+                  onClick={() => {
+                    setDeleteConfirmInput('');
+                    setDeleteStep('confirm-cascade');
+                  }}
+                  className="w-full px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors flex items-center justify-center gap-2"
+                >
+                  Delete node + <span className="font-bold uppercase">ALL</span> edges
+                </button>
+                <button
+                  onClick={() => {
+                    setDeleteConfirmInput('');
+                    setDeleteStep('confirm-node-only');
+                  }}
+                  className="w-full px-4 py-2 bg-slate-800 text-slate-300 rounded-lg text-sm hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
+                >
+                  Delete node only
+                </button>
+                <button
+                  onClick={() => setDeleteStep(null)}
+                  className="w-full px-4 py-2 text-sm text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* Delete node — Step 2: Type to confirm */}
-      {(deleteStep === 'confirm-cascade' || deleteStep === 'confirm-node-only') && createPortal(
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => { setDeleteStep(null); setDeleteConfirmInput(''); }}>
+      {(deleteStep === 'confirm-cascade' || deleteStep === 'confirm-node-only') &&
+        createPortal(
           <div
-            className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+            onClick={() => {
+              setDeleteStep(null);
+              setDeleteConfirmInput('');
+            }}
           >
-            <h3 className="text-lg font-semibold mb-2">
-              {deleteStep === 'confirm-cascade' ? (
-                <>Confirm: Delete node + <span className="text-red-400 uppercase">ALL</span> edges</>
-              ) : (
-                'Confirm: Delete node only'
-              )}
-            </h3>
-            <p className="text-sm text-slate-400 mb-4">
-              {deleteStep === 'confirm-cascade'
-                ? <>This will permanently delete the node and <span className="text-red-400 font-semibold uppercase">ALL</span> connected edges.</>
-                : 'This will delete only the node record. Connected edges will remain.'}
-            </p>
-            <div className="mb-4">
-              <p className="text-xs text-slate-500 mb-2">
-                Type <span className="font-mono text-slate-300">{node.aUid}</span> to confirm:
-              </p>
-              <input
-                type="text"
-                value={deleteConfirmInput}
-                onChange={(e) => setDeleteConfirmInput(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-red-500/50 placeholder:text-slate-600"
-                placeholder={node.aUid}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && deleteConfirmInput === node.aUid) {
-                    deleteStep === 'confirm-cascade' ? handleDeleteCascade() : handleDelete();
-                  }
-                }}
-              />
-            </div>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => { setDeleteStep('choose'); setDeleteConfirmInput(''); }}
-                disabled={deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending}
-                className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
-              >
-                Back
-              </button>
-              <button
-                onClick={deleteStep === 'confirm-cascade' ? handleDeleteCascade : handleDelete}
-                disabled={deleteConfirmInput !== node.aUid || deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {(deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending) && (
-                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            <div
+              className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold mb-2">
+                {deleteStep === 'confirm-cascade' ? (
+                  <>
+                    Confirm: Delete node + <span className="text-red-400 uppercase">ALL</span> edges
+                  </>
+                ) : (
+                  'Confirm: Delete node only'
                 )}
-                {deleteStep === 'confirm-cascade' ? 'Delete' : 'Delete node only'}
-              </button>
+              </h3>
+              <p className="text-sm text-slate-400 mb-4">
+                {deleteStep === 'confirm-cascade' ? (
+                  <>
+                    This will permanently delete the node and{' '}
+                    <span className="text-red-400 font-semibold uppercase">ALL</span> connected
+                    edges.
+                  </>
+                ) : (
+                  'This will delete only the node record. Connected edges will remain.'
+                )}
+              </p>
+              <div className="mb-4">
+                <p className="text-xs text-slate-500 mb-2">
+                  Type <span className="font-mono text-slate-300">{node.aUid}</span> to confirm:
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmInput}
+                  onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 font-mono focus:outline-none focus:border-red-500/50 placeholder:text-slate-600"
+                  placeholder={node.aUid}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && deleteConfirmInput === node.aUid) {
+                      deleteStep === 'confirm-cascade' ? handleDeleteCascade() : handleDelete();
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setDeleteStep('choose');
+                    setDeleteConfirmInput('');
+                  }}
+                  disabled={deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending}
+                  className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-50"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={deleteStep === 'confirm-cascade' ? handleDeleteCascade : handleDelete}
+                  disabled={
+                    deleteConfirmInput !== node.aUid ||
+                    deleteNodeMutation.isPending ||
+                    deleteNodeCascadeMutation.isPending
+                  }
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {(deleteNodeMutation.isPending || deleteNodeCascadeMutation.isPending) && (
+                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
+                  {deleteStep === 'confirm-cascade' ? 'Delete' : 'Delete node only'}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>,
-        document.body,
-      )}
+          </div>,
+          document.body,
+        )}
 
       {/* Delete edge dialog */}
       {deletingEdge && (
@@ -739,17 +866,36 @@ export function NodeDetailContent({
       {/* Bulk delete edge confirmation dialog */}
       {bulkDeleteRequest && (
         <ConfirmDialog
-          title={bulkDeleteRequest.mode === 'visible'
-            ? `Delete ${bulkDeleteRequest.edges.length} Edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''}`
-            : bulkDeleteRequest.mode === 'filtered'
-              ? 'Delete Filtered Edges'
-              : <>Delete <span className="text-red-400 uppercase font-bold">ALL</span> Edges</>}
-          message={bulkDeleteRequest.mode === 'visible'
-            ? `Delete the ${bulkDeleteRequest.edges.length} "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''} currently visible on this page?`
-            : bulkDeleteRequest.mode === 'filtered'
-              ? `Delete all "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges ${bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node that match the current filters? This may include edges on other pages.`
-              : <>Delete <span className="text-red-400 font-semibold uppercase">ALL</span> "{edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges {bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node? This cannot be undone.</>}
-          confirmLabel={bulkDeleteRequest.mode === 'visible' ? `Delete ${bulkDeleteRequest.edges.length}` : 'Delete All'}
+          title={
+            bulkDeleteRequest.mode === 'visible' ? (
+              `Delete ${bulkDeleteRequest.edges.length} Edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''}`
+            ) : bulkDeleteRequest.mode === 'filtered' ? (
+              'Delete Filtered Edges'
+            ) : (
+              <>
+                Delete <span className="text-red-400 uppercase font-bold">ALL</span> Edges
+              </>
+            )
+          }
+          message={
+            bulkDeleteRequest.mode === 'visible' ? (
+              `Delete the ${bulkDeleteRequest.edges.length} "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edge${bulkDeleteRequest.edges.length !== 1 ? 's' : ''} currently visible on this page?`
+            ) : bulkDeleteRequest.mode === 'filtered' ? (
+              `Delete all "${edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges ${bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node that match the current filters? This may include edges on other pages.`
+            ) : (
+              <>
+                Delete <span className="text-red-400 font-semibold uppercase">ALL</span> "
+                {edgeTypeLabel(bulkDeleteRequest.axbType, bulkDeleteRequest.inverseLabel)}" edges{' '}
+                {bulkDeleteRequest.direction === 'out' ? 'from' : 'to'} this node? This cannot be
+                undone.
+              </>
+            )
+          }
+          confirmLabel={
+            bulkDeleteRequest.mode === 'visible'
+              ? `Delete ${bulkDeleteRequest.edges.length}`
+              : 'Delete All'
+          }
           requireConfirmText={bulkDeleteRequest.axbType}
           onConfirm={handleBulkDeleteEdges}
           onCancel={() => setBulkDeleteRequest(null)}
@@ -816,7 +962,9 @@ function PaginatedEdgeSection({
   const [whereField, setWhereField] = useState('');
   const [whereOp, setWhereOp] = useState<string>('==');
   const [whereValue, setWhereValue] = useState('');
-  const [activeWhere, setActiveWhere] = useState<Array<{ field: string; op: string; value: string | number | boolean }>>([]);
+  const [activeWhere, setActiveWhere] = useState<
+    Array<{ field: string; op: string; value: string | number | boolean }>
+  >([]);
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
@@ -854,10 +1002,12 @@ function PaginatedEdgeSection({
     ...scopeInput(scopePath),
   };
 
-  const { data: edgeData, isLoading: loading, error: queryError, refetch: refetchEdges } = trpc.getEdges.useQuery(
-    edgeQueryInput,
-    { placeholderData: (prev) => prev },
-  );
+  const {
+    data: edgeData,
+    isLoading: loading,
+    error: queryError,
+    refetch: refetchEdges,
+  } = trpc.getEdges.useQuery(edgeQueryInput, { placeholderData: (prev) => prev });
 
   const edges = (edgeData?.edges ?? []) as unknown as GraphRecord[];
   const hasMore = edgeData?.hasMore ?? false;
@@ -872,9 +1022,12 @@ function PaginatedEdgeSection({
   }, [publishToNearby, focus, direction, edges, hasMore, loading]);
 
   // Compute UIDs that need batch resolving
-  const toResolveUids = resolveAll && edges.length > 0
-    ? [...new Set(edges.map((e) => (direction === 'out' ? e.bUid : e.aUid)))].filter((u) => !(u in resolvedNodes))
-    : [];
+  const toResolveUids =
+    resolveAll && edges.length > 0
+      ? [...new Set(edges.map((e) => (direction === 'out' ? e.bUid : e.aUid)))].filter(
+          (u) => !(u in resolvedNodes),
+        )
+      : [];
 
   const { data: batchData, isFetching: resolving } = trpc.getNodesBatch.useQuery(
     { uids: toResolveUids, ...scopeInput(scopePath) },
@@ -930,14 +1083,18 @@ function PaginatedEdgeSection({
       <div className="flex items-center gap-2 flex-wrap mb-3">
         {/* Limit */}
         <div className="flex items-center gap-1.5">
-          <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Show</label>
+          <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+            Show
+          </label>
           <select
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
             className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
           >
             {LIMIT_OPTIONS.map((n) => (
-              <option key={n} value={n}>{n}</option>
+              <option key={n} value={n}>
+                {n}
+              </option>
             ))}
           </select>
         </div>
@@ -947,7 +1104,9 @@ function PaginatedEdgeSection({
           <>
             <div className="w-px h-4 bg-slate-700" />
             <div className="flex items-center gap-1.5">
-              <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Type</label>
+              <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+                Type
+              </label>
               <select
                 value={filterAxbType}
                 onChange={(e) => setFilterAxbType(e.target.value)}
@@ -955,7 +1114,9 @@ function PaginatedEdgeSection({
               >
                 <option value="">All</option>
                 {axbTypes.map((ab) => (
-                  <option key={ab} value={ab}>{ab}</option>
+                  <option key={ab} value={ab}>
+                    {ab}
+                  </option>
                 ))}
               </select>
             </div>
@@ -973,9 +1134,18 @@ function PaginatedEdgeSection({
           }`}
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"
+            />
           </svg>
-          {activeWhere.length > 0 ? `Filter (${activeWhere.length})` : sortBy ? 'Sort' : 'Sort / Filter'}
+          {activeWhere.length > 0
+            ? `Filter (${activeWhere.length})`
+            : sortBy
+              ? 'Sort'
+              : 'Sort / Filter'}
         </button>
 
         {/* Pagination */}
@@ -1000,13 +1170,23 @@ function PaginatedEdgeSection({
 
         {/* Refresh */}
         <button
-          onClick={() => { setPage(1); setCursorStack([]); setStartAfter(undefined); refetchEdges(); }}
+          onClick={() => {
+            setPage(1);
+            setCursorStack([]);
+            setStartAfter(undefined);
+            refetchEdges();
+          }}
           disabled={loading}
           className="px-2 py-1 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50"
           title="Refresh"
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
           </svg>
         </button>
 
@@ -1050,7 +1230,9 @@ function PaginatedEdgeSection({
         <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 mb-3 space-y-3">
           {/* Sort */}
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-10">Sort</label>
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-10">
+              Sort
+            </label>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
@@ -1058,12 +1240,16 @@ function PaginatedEdgeSection({
             >
               <option value="">Default (axbType)</option>
               {builtinFields.map((f) => (
-                <option key={f} value={f}>{f}</option>
+                <option key={f} value={f}>
+                  {f}
+                </option>
               ))}
               {dataFields.length > 0 && (
                 <optgroup label="Data fields">
                   {dataFields.map((f) => (
-                    <option key={f} value={f}>{f}</option>
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
                   ))}
                 </optgroup>
               )}
@@ -1108,7 +1294,9 @@ function PaginatedEdgeSection({
 
           {/* Add where clause */}
           <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-10">Where</label>
+            <label className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold w-10">
+              Where
+            </label>
             <select
               value={whereField}
               onChange={(e) => setWhereField(e.target.value)}
@@ -1116,12 +1304,16 @@ function PaginatedEdgeSection({
             >
               <option value="">Field...</option>
               {builtinFields.map((f) => (
-                <option key={f} value={f}>{f}</option>
+                <option key={f} value={f}>
+                  {f}
+                </option>
               ))}
               {dataFields.length > 0 && (
                 <optgroup label="Data fields">
                   {dataFields.map((f) => (
-                    <option key={f} value={f}>{f}</option>
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
                   ))}
                 </optgroup>
               )}
@@ -1132,7 +1324,9 @@ function PaginatedEdgeSection({
               className="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
             >
               {['==', '!=', '<', '<=', '>', '>='].map((op) => (
-                <option key={op} value={op}>{op}</option>
+                <option key={op} value={op}>
+                  {op}
+                </option>
               ))}
             </select>
             <input
@@ -1146,8 +1340,12 @@ function PaginatedEdgeSection({
                   let coerced: string | number | boolean = whereValue;
                   if (whereValue === 'true') coerced = true;
                   else if (whereValue === 'false') coerced = false;
-                  else if (!isNaN(Number(whereValue)) && whereValue.trim() !== '') coerced = Number(whereValue);
-                  setActiveWhere((prev) => [...prev, { field: whereField, op: whereOp, value: coerced }]);
+                  else if (!isNaN(Number(whereValue)) && whereValue.trim() !== '')
+                    coerced = Number(whereValue);
+                  setActiveWhere((prev) => [
+                    ...prev,
+                    { field: whereField, op: whereOp, value: coerced },
+                  ]);
                   setWhereValue('');
                 }
               }}
@@ -1158,8 +1356,12 @@ function PaginatedEdgeSection({
                 let coerced: string | number | boolean = whereValue;
                 if (whereValue === 'true') coerced = true;
                 else if (whereValue === 'false') coerced = false;
-                else if (!isNaN(Number(whereValue)) && whereValue.trim() !== '') coerced = Number(whereValue);
-                setActiveWhere((prev) => [...prev, { field: whereField, op: whereOp, value: coerced }]);
+                else if (!isNaN(Number(whereValue)) && whereValue.trim() !== '')
+                  coerced = Number(whereValue);
+                setActiveWhere((prev) => [
+                  ...prev,
+                  { field: whereField, op: whereOp, value: coerced },
+                ]);
                 setWhereValue('');
               }}
               disabled={!whereField || !whereValue}
@@ -1185,7 +1387,10 @@ function PaginatedEdgeSection({
           <span className="text-xs">Loading edges...</span>
         </div>
       ) : edges.length === 0 ? (
-        <p className="text-sm text-slate-500">No {direction === 'out' ? 'outgoing' : 'incoming'} edges{filterAxbType ? ` of type "${filterAxbType}"` : ''}</p>
+        <p className="text-sm text-slate-500">
+          No {direction === 'out' ? 'outgoing' : 'incoming'} edges
+          {filterAxbType ? ` of type "${filterAxbType}"` : ''}
+        </p>
       ) : (
         <div className="space-y-4">
           {Object.entries(groups).map(([axbType, groupEdges]) => (
@@ -1197,34 +1402,42 @@ function PaginatedEdgeSection({
               inverseLabel={direction === 'in' ? inverseLabelMap[axbType] : undefined}
               canWrite={canWrite}
               onDeleteEdge={onDeleteEdge}
-              onBulkDelete={onBulkDelete && nodeUid ? (mode) => {
-                const inv = direction === 'in' ? inverseLabelMap[axbType] : undefined;
-                if (mode === 'visible') {
-                  onBulkDelete({
-                    mode: 'visible',
-                    axbType,
-                    inverseLabel: inv,
-                    edges: groupEdges.map((e) => ({ aUid: e.aUid, axbType: e.axbType, bUid: e.bUid })),
-                  });
-                } else if (mode === 'filtered') {
-                  onBulkDelete({
-                    mode: 'filtered',
-                    axbType,
-                    inverseLabel: inv,
-                    direction,
-                    uid: nodeUid,
-                    where: activeWhere,
-                  });
-                } else {
-                  onBulkDelete({
-                    mode: 'all',
-                    axbType,
-                    inverseLabel: inv,
-                    direction,
-                    uid: nodeUid,
-                  });
-                }
-              } : undefined}
+              onBulkDelete={
+                onBulkDelete && nodeUid
+                  ? (mode) => {
+                      const inv = direction === 'in' ? inverseLabelMap[axbType] : undefined;
+                      if (mode === 'visible') {
+                        onBulkDelete({
+                          mode: 'visible',
+                          axbType,
+                          inverseLabel: inv,
+                          edges: groupEdges.map((e) => ({
+                            aUid: e.aUid,
+                            axbType: e.axbType,
+                            bUid: e.bUid,
+                          })),
+                        });
+                      } else if (mode === 'filtered') {
+                        onBulkDelete({
+                          mode: 'filtered',
+                          axbType,
+                          inverseLabel: inv,
+                          direction,
+                          uid: nodeUid,
+                          where: activeWhere,
+                        });
+                      } else {
+                        onBulkDelete({
+                          mode: 'all',
+                          axbType,
+                          inverseLabel: inv,
+                          direction,
+                          uid: nodeUid,
+                        });
+                      }
+                    }
+                  : undefined
+              }
               hasActiveFilters={activeWhere.length > 0}
               expandAll={expandAll}
               resolveAll={resolveAll}
@@ -1302,7 +1515,9 @@ function EdgeGroup({
   const [groupNodeView, setGroupNodeView] = useState('');
   const [groupExpand, setGroupExpand] = useState(false);
   const [groupResolve, setGroupResolve] = useState(false);
-  const [groupResolvedNodes, setGroupResolvedNodes] = useState<Record<string, GraphRecord | null>>({});
+  const [groupResolvedNodes, setGroupResolvedNodes] = useState<Record<string, GraphRecord | null>>(
+    {},
+  );
 
   const effectiveExpand = expandAll || groupExpand;
   const effectiveResolve = resolveAll || groupResolve;
@@ -1325,9 +1540,12 @@ function EdgeGroup({
 
   // Batch resolve target nodes for this group when groupResolve is toggled
   const allResolvedNodes = { ...resolvedNodes, ...groupResolvedNodes };
-  const toResolveUids = groupResolve && !resolveAll && edges.length > 0
-    ? [...new Set(edges.map((e) => (direction === 'out' ? e.bUid : e.aUid)))].filter((u) => !(u in allResolvedNodes))
-    : [];
+  const toResolveUids =
+    groupResolve && !resolveAll && edges.length > 0
+      ? [...new Set(edges.map((e) => (direction === 'out' ? e.bUid : e.aUid)))].filter(
+          (u) => !(u in allResolvedNodes),
+        )
+      : [];
 
   const { data: batchData, isFetching: groupResolving } = trpc.getNodesBatch.useQuery(
     { uids: toResolveUids, ...scopeInput(scopePath) },
@@ -1355,7 +1573,9 @@ function EdgeGroup({
         ) : inverseLabel ? (
           <>
             <span className="text-slate-500">&mdash;</span>
-            <span className="text-amber-400 cursor-help" title={`Inverse of: ${axbType}`}>{inverseLabel}</span>
+            <span className="text-amber-400 cursor-help" title={`Inverse of: ${axbType}`}>
+              {inverseLabel}
+            </span>
             <span className="text-slate-500">&rarr;</span>
           </>
         ) : (
@@ -1378,11 +1598,26 @@ function EdgeGroup({
             }`}
             title={effectiveExpand ? 'Collapse edges' : 'Expand edges'}
           >
-            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              {effectiveExpand
-                ? <path strokeLinecap="round" strokeLinejoin="round" d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
-                : <path strokeLinecap="round" strokeLinejoin="round" d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-              }
+            <svg
+              className="w-3 h-3"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              {effectiveExpand ? (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"
+                />
+              ) : (
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"
+                />
+              )}
             </svg>
           </button>
 
@@ -1404,19 +1639,55 @@ function EdgeGroup({
                   : 'bg-slate-800 border-indigo-500/50 text-slate-500 hover:text-slate-300'
                 : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300 hover:bg-slate-700'
             }`}
-            title={effectiveResolve ? (groupNodeVisible ? 'Hide node data' : 'Show node data') : 'Resolve target nodes'}
-            aria-label={effectiveResolve ? (groupNodeVisible ? 'Hide node data' : 'Show node data') : 'Resolve target nodes'}
+            title={
+              effectiveResolve
+                ? groupNodeVisible
+                  ? 'Hide node data'
+                  : 'Show node data'
+                : 'Resolve target nodes'
+            }
+            aria-label={
+              effectiveResolve
+                ? groupNodeVisible
+                  ? 'Hide node data'
+                  : 'Show node data'
+                : 'Resolve target nodes'
+            }
           >
             {groupResolving ? (
               <span className="w-3 h-3 border-[1.5px] border-indigo-400 border-t-transparent rounded-full animate-spin block" />
             ) : effectiveResolve && groupNodeVisible ? (
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18" />
+              <svg
+                className="w-3 h-3"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18"
+                />
               </svg>
             ) : (
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              <svg
+                className="w-3 h-3"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                />
               </svg>
             )}
           </button>
@@ -1424,7 +1695,13 @@ function EdgeGroup({
           {/* Edge view dropdown with icon inside */}
           {edgeViews.length > 0 && (
             <span className="relative inline-flex items-center">
-              <svg className="w-3 h-3 text-slate-500 absolute left-1.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg
+                className="w-3 h-3 text-slate-500 absolute left-1.5 pointer-events-none"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 12h14" />
               </svg>
               <select
@@ -1434,10 +1711,16 @@ function EdgeGroup({
                 style={{ direction: 'rtl' }}
                 title="Edge data view"
               >
-                <option value="" dir="ltr">default</option>
-                <option value="json" dir="ltr">JSON</option>
+                <option value="" dir="ltr">
+                  default
+                </option>
+                <option value="json" dir="ltr">
+                  JSON
+                </option>
                 {edgeViews.map((v) => (
-                  <option key={v.viewName} value={v.viewName} dir="ltr">{v.viewName}</option>
+                  <option key={v.viewName} value={v.viewName} dir="ltr">
+                    {v.viewName}
+                  </option>
                 ))}
               </select>
             </span>
@@ -1446,7 +1729,13 @@ function EdgeGroup({
           {/* Node view dropdown with icon inside */}
           {nodeViews.length > 0 && (
             <span className="relative inline-flex items-center">
-              <svg className="w-3 h-3 text-slate-500 absolute left-1.5 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <svg
+                className="w-3 h-3 text-slate-500 absolute left-1.5 pointer-events-none"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
                 <circle cx="12" cy="12" r="8" />
               </svg>
               <select
@@ -1456,10 +1745,16 @@ function EdgeGroup({
                 style={{ direction: 'rtl' }}
                 title="Node data view"
               >
-                <option value="" dir="ltr">default</option>
-                <option value="json" dir="ltr">JSON</option>
+                <option value="" dir="ltr">
+                  default
+                </option>
+                <option value="json" dir="ltr">
+                  JSON
+                </option>
                 {nodeViews.map((v) => (
-                  <option key={v.viewName} value={v.viewName} dir="ltr">{v.viewName}</option>
+                  <option key={v.viewName} value={v.viewName} dir="ltr">
+                    {v.viewName}
+                  </option>
                 ))}
               </select>
             </span>
@@ -1477,8 +1772,18 @@ function EdgeGroup({
                 }`}
                 title={`Bulk delete ${edgeTypeLabel(axbType, inverseLabel)} edges`}
               >
-                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                <svg
+                  className="w-3 h-3"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
                 </svg>
               </button>
               {showBulkMenu && (
@@ -1486,24 +1791,34 @@ function EdgeGroup({
                   <div className="fixed inset-0 z-30" onClick={() => setShowBulkMenu(false)} />
                   <div className="absolute right-0 top-full mt-1 z-40 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[200px]">
                     <button
-                      onClick={() => { setShowBulkMenu(false); onBulkDelete('visible'); }}
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        onBulkDelete('visible');
+                      }}
                       className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
                     >
                       Delete visible ({edges.length})
                     </button>
                     {hasActiveFilters && (
                       <button
-                        onClick={() => { setShowBulkMenu(false); onBulkDelete('filtered'); }}
+                        onClick={() => {
+                          setShowBulkMenu(false);
+                          onBulkDelete('filtered');
+                        }}
                         className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-700 transition-colors"
                       >
                         Delete all matching filters
                       </button>
                     )}
                     <button
-                      onClick={() => { setShowBulkMenu(false); onBulkDelete('all'); }}
+                      onClick={() => {
+                        setShowBulkMenu(false);
+                        onBulkDelete('all');
+                      }}
                       className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-slate-700 transition-colors"
                     >
-                      Delete <span className="font-bold uppercase">ALL</span> {edgeTypeLabel(axbType, inverseLabel)} edges
+                      Delete <span className="font-bold uppercase">ALL</span>{' '}
+                      {edgeTypeLabel(axbType, inverseLabel)} edges
                     </button>
                   </div>
                 </>
@@ -1646,12 +1961,15 @@ function EdgeRow({
         }
       }
     }
-  }, [resolveAllActive, resolvedNode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [resolveAllActive, resolvedNode]);
 
   const handleResolve = async () => {
     setNodeLoading(true);
     try {
-      const result = await utils.getNodesBatch.fetch({ uids: [targetUid], ...scopeInput(scopePath) });
+      const result = await utils.getNodesBatch.fetch({
+        uids: [targetUid],
+        ...scopeInput(scopePath),
+      });
       const resolved = (result.nodes[targetUid] as GraphRecord | null) ?? null;
       setNodeData(resolved);
       setNodeExpanded(true);
@@ -1684,7 +2002,9 @@ function EdgeRow({
   return (
     <div className="bg-slate-800/50 rounded-lg">
       <div className="flex items-center gap-3 px-3 py-2">
-        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(targetType)}`}>
+        <span
+          className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${getTypeBadgeColor(targetType)}`}
+        >
           {targetType}
         </span>
         <button
@@ -1739,22 +2059,35 @@ function EdgeRow({
         <div className="px-3 pb-2 space-y-2">
           {/* Edge metadata */}
           <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px] font-mono bg-slate-950 rounded p-2">
-            <span className="text-slate-500">aType</span><span className="text-slate-300">{edge.aType}</span>
-            <span className="text-slate-500">aUid</span><span className="text-slate-300">{edge.aUid}</span>
-            <span className="text-slate-500">axbType</span><span className="text-slate-300">{edge.axbType}</span>
-            <span className="text-slate-500">bType</span><span className="text-slate-300">{edge.bType}</span>
-            <span className="text-slate-500">bUid</span><span className="text-slate-300">{edge.bUid}</span>
-            <span className="text-slate-500">createdAt</span><span className="text-slate-300">{formatTimestamp(edge.createdAt)}</span>
-            <span className="text-slate-500">updatedAt</span><span className="text-slate-300">{formatTimestamp(edge.updatedAt)}</span>
+            <span className="text-slate-500">aType</span>
+            <span className="text-slate-300">{edge.aType}</span>
+            <span className="text-slate-500">aUid</span>
+            <span className="text-slate-300">{edge.aUid}</span>
+            <span className="text-slate-500">axbType</span>
+            <span className="text-slate-300">{edge.axbType}</span>
+            <span className="text-slate-500">bType</span>
+            <span className="text-slate-300">{edge.bType}</span>
+            <span className="text-slate-500">bUid</span>
+            <span className="text-slate-300">{edge.bUid}</span>
+            <span className="text-slate-500">createdAt</span>
+            <span className="text-slate-300">{formatTimestamp(edge.createdAt)}</span>
+            <span className="text-slate-500">updatedAt</span>
+            <span className="text-slate-300">{formatTimestamp(edge.updatedAt)}</span>
           </div>
 
           {/* Edge data */}
           {hasData && (
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Data</span>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                  Data
+                </span>
                 {edgeViews.length > 0 && (
-                  <ViewSwitcher views={edgeViews} activeView={edgeViewMode} onSwitch={setEdgeViewMode} />
+                  <ViewSwitcher
+                    views={edgeViews}
+                    activeView={edgeViewMode}
+                    onSwitch={setEdgeViewMode}
+                  />
                 )}
               </div>
               {edgeViewMode === 'json' ? (
@@ -1762,7 +2095,11 @@ function EdgeRow({
                   <JsonView data={edge.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={edgeViewMode} data={edge.data as Record<string, unknown>} onError={() => setEdgeViewMode('json')} />
+                <CustomView
+                  tagName={edgeViewMode}
+                  data={edge.data as Record<string, unknown>}
+                  onError={() => setEdgeViewMode('json')}
+                />
               )}
             </div>
           )}
@@ -1782,7 +2119,11 @@ function EdgeRow({
                   {formatTimestamp(effectiveNode.updatedAt)}
                 </span>
                 {nodeViews.length > 0 && (
-                  <ViewSwitcher views={nodeViews} activeView={nodeViewMode} onSwitch={setNodeViewMode} />
+                  <ViewSwitcher
+                    views={nodeViews}
+                    activeView={nodeViewMode}
+                    onSwitch={setNodeViewMode}
+                  />
                 )}
               </div>
               {nodeViewMode === 'json' ? (
@@ -1790,7 +2131,11 @@ function EdgeRow({
                   <JsonView data={effectiveNode.data} defaultExpanded />
                 </div>
               ) : (
-                <CustomView tagName={nodeViewMode} data={effectiveNode.data as Record<string, unknown>} onError={() => setNodeViewMode('json')} />
+                <CustomView
+                  tagName={nodeViewMode}
+                  data={effectiveNode.data as Record<string, unknown>}
+                  onError={() => setNodeViewMode('json')}
+                />
               )}
             </div>
           )}

@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Schema, ViewRegistryData, AppConfig } from '../types';
+
+import type { AppConfig, Schema, ViewRegistryData } from '../types';
 import { getTypeBadgeColor, isTypeVisibleInScope } from '../utils';
-import { useScope } from './path-context';
 import NodeEditor from './NodeEditor';
 import NodeListCore from './NodeListCore';
+import { useScope } from './path-context';
 
 interface Props {
   schema: Schema;
@@ -15,7 +16,13 @@ interface Props {
   typeParam?: string;
 }
 
-export default function NodeBrowser({ schema, viewRegistry, config, onDataChanged, typeParam }: Props) {
+export default function NodeBrowser({
+  schema,
+  viewRegistry,
+  config,
+  onDataChanged,
+  typeParam,
+}: Props) {
   const { scopedPath, scopeNamesPath } = useScope();
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
@@ -38,7 +45,9 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
       <div className="p-6 max-w-6xl mx-auto">
         <div className="mb-4">
           <h1 className="text-xl font-bold text-slate-300">Graph</h1>
-          <p className="text-sm text-slate-400 mt-1">Select a node type from the sidebar to browse.</p>
+          <p className="text-sm text-slate-400 mt-1">
+            Select a node type from the sidebar to browse.
+          </p>
         </div>
         {filteredNodeTypes.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -48,7 +57,9 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
                 onClick={() => navigate(scopedPath(`/browse/${encodeURIComponent(nt.type)}`))}
                 className="block w-full text-left px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl hover:border-indigo-500/40 transition-colors"
               >
-                <span className={`inline-block px-2 py-0.5 rounded text-xs font-mono mb-1 ${getTypeBadgeColor(nt.type)}`}>
+                <span
+                  className={`inline-block px-2 py-0.5 rounded text-xs font-mono mb-1 ${getTypeBadgeColor(nt.type)}`}
+                >
                   {nt.type}
                 </span>
               </button>
@@ -74,7 +85,12 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
               className="ml-auto px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-500 transition-colors flex items-center gap-1.5"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               Create {type}
             </button>
@@ -102,12 +118,7 @@ export default function NodeBrowser({ schema, viewRegistry, config, onDataChange
       )}
 
       {/* Node list */}
-      <NodeListCore
-        type={type}
-        schema={schema}
-        viewRegistry={viewRegistry}
-        config={config}
-      />
+      <NodeListCore type={type} schema={schema} viewRegistry={viewRegistry} config={config} />
     </div>
   );
 }

@@ -8,6 +8,7 @@
 
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
+
 import { ValidationError } from './errors.js';
 
 // ---------------------------------------------------------------------------
@@ -41,10 +42,7 @@ addFormats(ajv);
  * Compile a JSON Schema into a validation function.
  * The returned function throws `ValidationError` if data is invalid.
  */
-export function compileSchema(
-  schema: object,
-  label?: string,
-): (data: unknown) => void {
+export function compileSchema(schema: object, label?: string): (data: unknown) => void {
   const validate = ajv.compile(schema);
   return (data: unknown) => {
     if (!validate(data)) {
@@ -64,8 +62,6 @@ export function compileSchema(
 // JSON Schema → FieldMeta introspection
 // ---------------------------------------------------------------------------
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 /**
  * Convert a JSON Schema (expected to be `type: "object"`) into `FieldMeta[]`
  * suitable for the editor's SchemaForm component.
@@ -73,9 +69,7 @@ export function compileSchema(
 export function jsonSchemaToFieldMeta(schema: any): FieldMeta[] {
   if (!schema || schema.type !== 'object' || !schema.properties) return [];
 
-  const requiredSet = new Set<string>(
-    Array.isArray(schema.required) ? schema.required : [],
-  );
+  const requiredSet = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
 
   return Object.entries(schema.properties).map(([name, prop]) =>
     propertyToFieldMeta(name, prop as any, requiredSet.has(name)),
@@ -85,11 +79,7 @@ export function jsonSchemaToFieldMeta(schema: any): FieldMeta[] {
 /**
  * Convert a single JSON Schema property into a `FieldMeta`.
  */
-function propertyToFieldMeta(
-  name: string,
-  prop: any,
-  required: boolean,
-): FieldMeta {
+function propertyToFieldMeta(name: string, prop: any, required: boolean): FieldMeta {
   if (!prop) return { name, type: 'unknown', required };
 
   // Handle enum (can appear with or without type)
@@ -145,9 +135,7 @@ function propertyToFieldMeta(
   }
 
   if (type === 'array') {
-    const itemMeta = prop.items
-      ? propertyToFieldMeta('item', prop.items, true)
-      : undefined;
+    const itemMeta = prop.items ? propertyToFieldMeta('item', prop.items, true) : undefined;
     return {
       name,
       type: 'array',
@@ -169,5 +157,3 @@ function propertyToFieldMeta(
 
   return { name, type: 'unknown', required, description: prop.description };
 }
-
-/* eslint-enable @typescript-eslint/no-explicit-any */

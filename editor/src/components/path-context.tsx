@@ -1,14 +1,15 @@
-import { createContext, useContext, useCallback, useMemo, type ReactNode } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { createContext, type ReactNode, useCallback, useContext, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+
 import type { CollectionDef } from '../types';
 import {
   decodeFsPath,
   encodeFsPath,
-  isGraphPath,
   extractGraphScope,
-  scopeToNamesPath,
-  parseScopeSegments,
+  isGraphPath,
   matchCollectionTemplate,
+  parseScopeSegments,
+  scopeToNamesPath,
 } from '../utils';
 
 export interface ScopeSegment {
@@ -91,7 +92,10 @@ export function PathProvider({ children, graphCollection, collections }: PathPro
   }, [firestorePath, graphCollection, collections]);
 
   const graphScope = useMemo(
-    () => (pathType === 'graph' && graphCollection ? extractGraphScope(firestorePath, graphCollection) : ''),
+    () =>
+      pathType === 'graph' && graphCollection
+        ? extractGraphScope(firestorePath, graphCollection)
+        : '',
     [pathType, firestorePath, graphCollection],
   );
 
@@ -194,9 +198,20 @@ export function PathProvider({ children, graphCollection, collections }: PathPro
       popToDepth,
     }),
     [
-      firestorePath, encodedPath, pathType, graphScope, scopeNamesPath,
-      scopeSegments, collectionMatch, pathUrl, enterSubgraph,
-      navigateUp, navigateToRoot, scopeUrlPrefix, exitToRoot, popToDepth,
+      firestorePath,
+      encodedPath,
+      pathType,
+      graphScope,
+      scopeNamesPath,
+      scopeSegments,
+      collectionMatch,
+      pathUrl,
+      enterSubgraph,
+      navigateUp,
+      navigateToRoot,
+      scopeUrlPrefix,
+      exitToRoot,
+      popToDepth,
     ],
   );
 

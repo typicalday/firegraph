@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useChat, type ChatMessage } from './chat-context';
-import { useFocusMaybe } from './focus-context';
-import { useArtifactMaybe } from './artifact-context';
-import { buildChatContext } from './chat-context-builder';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
 import type { ChatArtifact } from '../artifact-types';
 import type { Schema } from '../types';
+import { useArtifactMaybe } from './artifact-context';
+import { type ChatMessage, useChat } from './chat-context';
+import { buildChatContext } from './chat-context-builder';
+import { useFocusMaybe } from './focus-context';
 
 interface Props {
   schema: Schema;
@@ -53,7 +54,8 @@ export default function ChatPanel({ schema }: Props) {
         <div className="text-center">
           <p className="text-slate-500 text-xs mb-2">AI chat not available</p>
           <p className="text-slate-600 text-[10px]">
-            Install the <code className="text-slate-400">claude</code> CLI to enable chat, or set <code className="text-slate-400">chat: false</code> in config to hide this tab.
+            Install the <code className="text-slate-400">claude</code> CLI to enable chat, or set{' '}
+            <code className="text-slate-400">chat: false</code> in config to hide this tab.
           </p>
         </div>
       </div>
@@ -75,7 +77,11 @@ export default function ChatPanel({ schema }: Props) {
             }`}
           />
           <span className="text-[10px] text-slate-500">
-            {status === 'connected' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Offline'}
+            {status === 'connected'
+              ? 'Connected'
+              : status === 'checking'
+                ? 'Checking...'
+                : 'Offline'}
           </span>
         </div>
         {messages.length > 0 && (
@@ -95,9 +101,7 @@ export default function ChatPanel({ schema }: Props) {
             {status === 'connected' ? (
               <p>Ask a question about your graph data.</p>
             ) : (
-              <p>
-                Waiting for chat service to connect...
-              </p>
+              <p>Waiting for chat service to connect...</p>
             )}
           </div>
         )}
@@ -156,7 +160,9 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="flex justify-end">
         <div className="bg-indigo-600/30 border border-indigo-500/20 rounded-lg px-3 py-2 max-w-[90%]">
-          <p className="text-xs text-slate-200 whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="text-xs text-slate-200 whitespace-pre-wrap break-words">
+            {message.content}
+          </p>
         </div>
       </div>
     );
@@ -248,7 +254,11 @@ export function ArtifactCard({
   );
 }
 
-export function getArtifactSummary(artifact: ChatArtifact): { icon: string; label: string; detail: string } {
+export function getArtifactSummary(artifact: ChatArtifact): {
+  icon: string;
+  label: string;
+  detail: string;
+} {
   const d = artifact.data as Record<string, unknown>;
   switch (artifact.kind) {
     case 'node-detail': {
@@ -263,15 +273,27 @@ export function getArtifactSummary(artifact: ChatArtifact): { icon: string; labe
     }
     case 'nodes-list': {
       const nodes = Array.isArray(d.nodes) ? d.nodes : [];
-      return { icon: '\u2261', label: `${nodes.length} nodes`, detail: d.hasMore ? 'has more' : '' };
+      return {
+        icon: '\u2261',
+        label: `${nodes.length} nodes`,
+        detail: d.hasMore ? 'has more' : '',
+      };
     }
     case 'edges-list': {
       const edges = Array.isArray(d.edges) ? d.edges : [];
-      return { icon: '\u2192', label: `${edges.length} edges`, detail: d.hasMore ? 'has more' : '' };
+      return {
+        icon: '\u2192',
+        label: `${edges.length} edges`,
+        detail: d.hasMore ? 'has more' : '',
+      };
     }
     case 'traverse': {
       const hops = Array.isArray(d.hops) ? d.hops : [];
-      return { icon: '\u26a1', label: `Traversal: ${hops.length} hops`, detail: `${d.totalReads ?? 0} reads` };
+      return {
+        icon: '\u26a1',
+        label: `Traversal: ${hops.length} hops`,
+        detail: `${d.totalReads ?? 0} reads`,
+      };
     }
     case 'search': {
       const results = Array.isArray(d.results) ? d.results : [];
@@ -280,7 +302,11 @@ export function getArtifactSummary(artifact: ChatArtifact): { icon: string; labe
     case 'schema': {
       const nodeTypes = Array.isArray(d.nodeTypes) ? d.nodeTypes : [];
       const edgeTypes = Array.isArray(d.edgeTypes) ? d.edgeTypes : [];
-      return { icon: '\u229e', label: `${nodeTypes.length} node types`, detail: `${edgeTypes.length} edge types` };
+      return {
+        icon: '\u229e',
+        label: `${nodeTypes.length} node types`,
+        detail: `${edgeTypes.length} edge types`,
+      };
     }
     default:
       return { icon: '?', label: 'Query result', detail: '' };

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react';
 
 export type RecentType = 'node' | 'collection-doc' | 'collection';
 
@@ -59,7 +59,11 @@ export function RecentsProvider({ children }: { children: ReactNode }) {
 
   const clearRecents = useCallback(() => {
     setRecents([]);
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const displayRecents = useMemo(() => recents.slice(0, DISPLAY_COUNT), [recents]);

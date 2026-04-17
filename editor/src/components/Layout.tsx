@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import Sidebar from './Sidebar';
-import ScopeBreadcrumb from './ScopeBreadcrumb';
-import WarningBanner from './WarningBanner';
+
+import type { AppConfig, Schema, SchemaViewWarning, ViewRegistryData } from '../types';
 import ChatBar from './ChatBar';
-import type { Schema, AppConfig, ViewRegistryData, SchemaViewWarning } from '../types';
+import ScopeBreadcrumb from './ScopeBreadcrumb';
+import Sidebar from './Sidebar';
+import WarningBanner from './WarningBanner';
 
 interface Props {
   schema: Schema;

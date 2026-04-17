@@ -1,24 +1,25 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useRef, useMemo, useCallback, type ReactNode } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Schema, AppConfig, ViewRegistryData } from '../types';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+
+import { trpc } from '../trpc';
+import type { AppConfig, Schema, ViewRegistryData } from '../types';
 import {
-  getTypeColor,
-  isTypeVisibleInScope,
-  isCollectionUnderGraph,
   decodeFsPath,
   encodeFsPath,
-  isGraphPath,
   extractGraphScope,
-  scopeToNamesPath,
-  matchCollectionTemplate,
   fsUrl,
+  getTypeColor,
+  isCollectionUnderGraph,
+  isGraphPath,
+  isTypeVisibleInScope,
+  matchCollectionTemplate,
   resolveCollectionPath,
+  scopeToNamesPath,
 } from '../utils';
 import { useFocusMaybe } from './focus-context';
-import { useRecents, type RecentEntry } from './recents-context';
 import NearbyPanel from './NearbyPanel';
-import { trpc } from '../trpc';
+import { type RecentEntry, useRecents } from './recents-context';
 
 function relativeTime(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -30,18 +31,48 @@ function relativeTime(ts: number): string {
 
 const recentIcons: Record<string, ReactNode> = {
   node: (
-    <svg className="w-3 h-3 shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+    <svg
+      className="w-3 h-3 shrink-0 text-indigo-400"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+      />
     </svg>
   ),
   collection: (
-    <svg className="w-3 h-3 shrink-0 text-amber-500/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+    <svg
+      className="w-3 h-3 shrink-0 text-amber-500/80"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+      />
     </svg>
   ),
   'collection-doc': (
-    <svg className="w-3 h-3 shrink-0 text-amber-400/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    <svg
+      className="w-3 h-3 shrink-0 text-amber-400/80"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+      />
     </svg>
   ),
 };
@@ -96,8 +127,10 @@ function RecentsPopover({
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
       if (
-        popoverRef.current && !popoverRef.current.contains(target) &&
-        triggerRef.current && !triggerRef.current.contains(target)
+        popoverRef.current &&
+        !popoverRef.current.contains(target) &&
+        triggerRef.current &&
+        !triggerRef.current.contains(target)
       ) {
         onClose();
       }
@@ -116,9 +149,15 @@ function RecentsPopover({
       onMouseLeave={onClose}
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Recent</span>
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          Recent
+        </span>
         <button
-          onClick={(e) => { e.stopPropagation(); onClear(); onClose(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClear();
+            onClose();
+          }}
           className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors"
         >
           Clear
@@ -158,7 +197,10 @@ function usePathFromUrl(graphCollection?: string, collections?: Schema['collecti
         graphScope: '',
         scopeNamesPath: '',
         isScoped: false,
-        collectionMatch: null as { collection: NonNullable<Schema['collections']>[number]; params: Record<string, string> } | null,
+        collectionMatch: null as {
+          collection: NonNullable<Schema['collections']>[number];
+          params: Record<string, string>;
+        } | null,
         pageAction: '',
         isOnNodePage: false,
       };
@@ -167,7 +209,8 @@ function usePathFromUrl(graphCollection?: string, collections?: Schema['collecti
     // Extract encoded path (first segment) and page action (rest)
     const withoutLeadingSlash = pathname.slice(1);
     const firstSlashIdx = withoutLeadingSlash.indexOf('/');
-    const encodedPath = firstSlashIdx >= 0 ? withoutLeadingSlash.slice(0, firstSlashIdx) : withoutLeadingSlash;
+    const encodedPath =
+      firstSlashIdx >= 0 ? withoutLeadingSlash.slice(0, firstSlashIdx) : withoutLeadingSlash;
     const pageAction = firstSlashIdx >= 0 ? withoutLeadingSlash.slice(firstSlashIdx) : '';
     const firestorePath = decodeFsPath(encodedPath);
 
@@ -245,18 +288,24 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   const [reloadMessage, setReloadMessage] = useState<string | null>(null);
 
   // Build URL helpers based on current path
-  const pathUrl = useCallback((pageAction?: string) => {
-    if (!pathInfo.encodedPath) return '/';
-    const prefix = `/${pathInfo.encodedPath}`;
-    if (!pageAction) return prefix;
-    const action = pageAction.startsWith('/') ? pageAction.slice(1) : pageAction;
-    return `${prefix}/${action}`;
-  }, [pathInfo.encodedPath]);
+  const pathUrl = useCallback(
+    (pageAction?: string) => {
+      if (!pathInfo.encodedPath) return '/';
+      const prefix = `/${pathInfo.encodedPath}`;
+      if (!pageAction) return prefix;
+      const action = pageAction.startsWith('/') ? pageAction.slice(1) : pageAction;
+      return `${prefix}/${action}`;
+    },
+    [pathInfo.encodedPath],
+  );
 
-  const enterSubgraph = useCallback((parentUid: string, subgraphName: string) => {
-    const newPath = pathInfo.firestorePath + '/' + parentUid + '/' + subgraphName;
-    navigate(`/${encodeFsPath(newPath)}`);
-  }, [navigate, pathInfo.firestorePath]);
+  const enterSubgraph = useCallback(
+    (parentUid: string, subgraphName: string) => {
+      const newPath = pathInfo.firestorePath + '/' + parentUid + '/' + subgraphName;
+      navigate(`/${encodeFsPath(newPath)}`);
+    },
+    [navigate, pathInfo.firestorePath],
+  );
 
   const navigateToRoot = useCallback(() => {
     if (config.collection) {
@@ -275,18 +324,21 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
     });
   }, [schema.nodeTypes, schema.nodeSchemas, pathInfo.scopeNamesPath]);
 
-  const handleSearch = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    const q = searchQuery.trim();
-    if (!q) return;
+  const handleSearch = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const q = searchQuery.trim();
+      if (!q) return;
 
-    if (pathInfo.pathType === 'collection' && pathInfo.collectionMatch) {
-      navigate(fsUrl(pathInfo.firestorePath, `doc/${encodeURIComponent(q)}`));
-    } else {
-      navigate(pathUrl(`/node/${encodeURIComponent(q)}`));
-    }
-    setSearchQuery('');
-  }, [searchQuery, pathInfo, navigate, pathUrl]);
+      if (pathInfo.pathType === 'collection' && pathInfo.collectionMatch) {
+        navigate(fsUrl(pathInfo.firestorePath, `doc/${encodeURIComponent(q)}`));
+      } else {
+        navigate(pathUrl(`/node/${encodeURIComponent(q)}`));
+      }
+      setSearchQuery('');
+    },
+    [searchQuery, pathInfo, navigate, pathUrl],
+  );
 
   // Show Nearby panel inline when on a node page with a focused node
   const showNearby = pathInfo.pathType === 'graph' && pathInfo.isOnNodePage && !!focus?.focused;
@@ -306,17 +358,21 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   }, [schema.edgeTypes, focus?.focused]);
 
   const attachedCollections = useMemo(
-    () => (schema.collections ?? []).filter(
-      (c) => c.parentNodeType === focus?.focused?.nodeType && isCollectionUnderGraph(c.path, config.collection),
-    ),
+    () =>
+      (schema.collections ?? []).filter(
+        (c) =>
+          c.parentNodeType === focus?.focused?.nodeType &&
+          isCollectionUnderGraph(c.path, config.collection),
+      ),
     [schema.collections, focus?.focused?.nodeType, config.collection],
   );
 
   // Collections not tied to a node type (global) and under the current graph
   const globalCollections = useMemo(
-    () => (schema.collections ?? []).filter(
-      (c) => !c.parentNodeType && isCollectionUnderGraph(c.path, config.collection),
-    ),
+    () =>
+      (schema.collections ?? []).filter(
+        (c) => !c.parentNodeType && isCollectionUnderGraph(c.path, config.collection),
+      ),
     [schema.collections, config.collection],
   );
 
@@ -327,14 +383,17 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
   );
 
   // Build the collection URL by resolving path params from the focused node
-  const buildCollectionUrl = useCallback((col: { path: string; pathParams: string[] }) => {
-    if (col.pathParams.length === 0) return fsUrl(col.path);
-    const colParams: Record<string, string> = {};
-    if (focus?.focused && col.pathParams.length > 0) {
-      colParams[col.pathParams[0]] = focus.focused.uid;
-    }
-    return fsUrl(resolveCollectionPath(col.path, colParams));
-  }, [focus?.focused]);
+  const buildCollectionUrl = useCallback(
+    (col: { path: string; pathParams: string[] }) => {
+      if (col.pathParams.length === 0) return fsUrl(col.path);
+      const colParams: Record<string, string> = {};
+      if (focus?.focused && col.pathParams.length > 0) {
+        colParams[col.pathParams[0]] = focus.focused.uid;
+      }
+      return fsUrl(resolveCollectionPath(col.path, colParams));
+    },
+    [focus?.focused],
+  );
 
   return (
     <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
@@ -348,15 +407,31 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
             Firegraph Editor
           </span>
         </Link>
-        <div className="mt-2 text-[10px] text-slate-500 font-mono truncate" title={config.projectId}>
+        <div
+          className="mt-2 text-[10px] text-slate-500 font-mono truncate"
+          title={config.projectId}
+        >
           {config.projectId}
         </div>
         {pathInfo.isScoped && (
           <div className="mt-1 flex items-center gap-1.5">
-            <svg className="w-3 h-3 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            <svg
+              className="w-3 h-3 text-indigo-400 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+              />
             </svg>
-            <span className="text-[10px] text-indigo-400 font-mono truncate" title={pathInfo.graphScope}>
+            <span
+              className="text-[10px] text-indigo-400 font-mono truncate"
+              title={pathInfo.graphScope}
+            >
               {pathInfo.graphScope}
             </span>
             <button
@@ -390,7 +465,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 setReloadMessage(null);
                 reloadMutation.mutate(undefined, {
                   onSuccess: (data) => {
-                    setReloadMessage(`Loaded ${data.nodeTypeCount} node, ${data.edgeTypeCount} edge types`);
+                    setReloadMessage(
+                      `Loaded ${data.nodeTypeCount} node, ${data.edgeTypeCount} edge types`,
+                    );
                     setTimeout(() => setReloadMessage(null), 3000);
                   },
                   onError: (err) => {
@@ -402,13 +479,25 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               disabled={reloadMutation.isPending}
               className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded-md text-[10px] font-medium bg-violet-600/20 text-violet-300 hover:bg-violet-600/30 transition-colors disabled:opacity-50"
             >
-              <svg className={`w-3 h-3 ${reloadMutation.isPending ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              <svg
+                className={`w-3 h-3 ${reloadMutation.isPending ? 'animate-spin' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
               </svg>
               {reloadMutation.isPending ? 'Refreshing...' : 'Refresh Schemas'}
             </button>
             {reloadMessage && (
-              <p className={`mt-1 text-[9px] ${reloadMutation.isError ? 'text-red-400' : 'text-emerald-400'}`}>
+              <p
+                className={`mt-1 text-[9px] ${reloadMutation.isError ? 'text-red-400' : 'text-emerald-400'}`}
+              >
                 {reloadMessage}
               </p>
             )}
@@ -424,7 +513,11 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={pathInfo.pathType === 'collection' ? 'Go to document by ID...' : 'Go to node by UID...'}
+              placeholder={
+                pathInfo.pathType === 'collection'
+                  ? 'Go to document by ID...'
+                  : 'Go to node by UID...'
+              }
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </form>
@@ -445,8 +538,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                   to={`/${encodeFsPath(config.collection)}`}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
                 >
-                  <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                  <svg
+                    className="w-3.5 h-3.5 text-indigo-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+                    />
                   </svg>
                   {config.collection}
                 </Link>
@@ -463,8 +566,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                     to={fsUrl(col.path)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors"
                   >
-                    <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    <svg
+                      className="w-3 h-3 shrink-0 text-amber-500/70"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                      />
                     </svg>
                     <span className="flex-1 truncate">{col.name}</span>
                   </Link>
@@ -487,7 +600,12 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 }`}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+                  />
                 </svg>
                 Graph
               </Link>
@@ -500,7 +618,12 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 }`}
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M13 10V3L4 14h7v7l9-11h-7z"
+                  />
                 </svg>
                 Traverse
               </Link>
@@ -513,8 +636,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"
+                    />
                   </svg>
                   Views
                 </Link>
@@ -531,8 +664,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                     }`}
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <svg
+                      className="w-3.5 h-3.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
                     </svg>
                     Recent
                   </button>
@@ -561,7 +704,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                 </h3>
                 {filteredNodeTypes.length === 0 ? (
                   <p className="text-xs text-slate-600 px-3">
-                    {schema.nodeTypes.length === 0 ? 'No nodes registered' : 'No nodes allowed in this scope'}
+                    {schema.nodeTypes.length === 0
+                      ? 'No nodes registered'
+                      : 'No nodes allowed in this scope'}
                   </p>
                 ) : (
                   filteredNodeTypes.map((nt) => (
@@ -579,7 +724,10 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                         {nt.type}
                       </span>
                       {nt.isDynamic && (
-                        <span className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400" title="Dynamic type (from Firestore)">
+                        <span
+                          className="px-1 py-px rounded text-[8px] font-semibold bg-violet-500/20 text-violet-400"
+                          title="Dynamic type (from Firestore)"
+                        >
                           D
                         </span>
                       )}
@@ -606,8 +754,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <svg
+                    className="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
                   </svg>
                   Recent
                 </button>
@@ -638,8 +796,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                     onClick={() => focus?.focused && enterSubgraph(focus.focused.uid, sg.name)}
                     className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors text-left"
                   >
-                    <svg className="w-3 h-3 shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                    <svg
+                      className="w-3 h-3 shrink-0 text-indigo-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"
+                      />
                     </svg>
                     <span className="flex-1 truncate">{sg.name}</span>
                   </button>
@@ -648,7 +816,9 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
             )}
             {attachedCollections.length > 0 && (
               <>
-                <h3 className={`text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3 ${availableSubgraphs.length > 0 ? 'mt-3' : ''}`}>
+                <h3
+                  className={`text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-2 px-3 ${availableSubgraphs.length > 0 ? 'mt-3' : ''}`}
+                >
                   Collections
                 </h3>
                 {attachedCollections.map((col) => (
@@ -661,8 +831,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                     }`}
                   >
-                    <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    <svg
+                      className="w-3 h-3 shrink-0 text-amber-500/70"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                      />
                     </svg>
                     <span className="flex-1 truncate">{col.name}</span>
                   </Link>
@@ -688,8 +868,18 @@ export default function Sidebar({ schema, config, viewRegistry }: Props) {
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                 }`}
               >
-                <svg className="w-3 h-3 shrink-0 text-amber-500/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                <svg
+                  className="w-3 h-3 shrink-0 text-amber-500/70"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                  />
                 </svg>
                 <span className="flex-1 truncate">{col.name}</span>
                 {col.pathParams.length > 0 && (

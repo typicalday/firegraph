@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
 import path from 'path';
+import { describe, expect, it } from 'vitest';
+
 import { discoverEntities, DiscoveryError } from '../../src/discover.js';
 
 const FIXTURES = path.join(import.meta.dirname, '..', 'fixtures');
@@ -67,9 +68,9 @@ describe('discoverEntities', () => {
   });
 
   it('throws DiscoveryError when edge is missing edge.json', () => {
-    expect(() =>
-      discoverEntities(path.join(FIXTURES, 'entities-bad-edge')),
-    ).toThrow(/Missing edge\.json/);
+    expect(() => discoverEntities(path.join(FIXTURES, 'entities-bad-edge'))).toThrow(
+      /Missing edge\.json/,
+    );
   });
 
   it('warns about dangling topology references', () => {

@@ -5,15 +5,16 @@
  * client is in pipeline mode, and that both modes coexist correctly.
  * Full transaction CRUD coverage.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import type { GraphClient } from '../../src/types.js';
+import { departureData, tourData } from '../helpers/fixtures.js';
 import {
+  cleanupCollection,
   createPipelineClient,
   createStandardClient,
   uniqueCollectionPath,
-  cleanupCollection,
 } from './setup.js';
-import type { GraphClient } from '../../src/types.js';
-import { tourData, departureData } from '../helpers/fixtures.js';
 
 describe('pipeline mixed mode', () => {
   const collPath = uniqueCollectionPath();
@@ -61,7 +62,11 @@ describe('pipeline mixed mode', () => {
     });
 
     it('conditional write: read, check, write', async () => {
-      await pipeline.putNode('departure', 'mx-dep2', { ...departureData, maxCapacity: 2, registeredRiders: 1 });
+      await pipeline.putNode('departure', 'mx-dep2', {
+        ...departureData,
+        maxCapacity: 2,
+        registeredRiders: 1,
+      });
 
       await pipeline.runTransaction(async (tx) => {
         const dep = await tx.getNode('mx-dep2');
@@ -90,7 +95,9 @@ describe('pipeline mixed mode', () => {
 
     it('transaction supports removeNode and removeEdge', async () => {
       await pipeline.putNode('tour', 'mx-tour4', tourData);
-      await pipeline.putEdge('tour', 'mx-tour4', 'hasDeparture', 'departure', 'mx-dep4', { order: 0 });
+      await pipeline.putEdge('tour', 'mx-tour4', 'hasDeparture', 'departure', 'mx-dep4', {
+        order: 0,
+      });
 
       await pipeline.runTransaction(async (tx) => {
         await tx.removeEdge('mx-tour4', 'hasDeparture', 'mx-dep4');
@@ -141,10 +148,7 @@ describe('pipeline mixed mode', () => {
       await batch.putNode('rider', 'bx2', { name: 'Batch Rider 2' });
       await batch.commit();
 
-      const [r1, r2] = await Promise.all([
-        pipeline.getNode('bx1'),
-        pipeline.getNode('bx2'),
-      ]);
+      const [r1, r2] = await Promise.all([pipeline.getNode('bx1'), pipeline.getNode('bx2')]);
       expect(r1).not.toBeNull();
       expect(r2).not.toBeNull();
     });

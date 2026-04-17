@@ -1,23 +1,24 @@
 import http from 'node:http';
+
+import { readEditorPort } from './config.js';
+import { summarizeEdge, summarizeRecord } from './shaping.js';
 import type {
-  QueryClientOptions,
-  SchemaResult,
-  GetNodeDetailInput,
-  NodeDetailResult,
-  GetNodesInput,
-  GetNodesResult,
   GetEdgesInput,
   GetEdgesResult,
-  TraverseInput,
-  TraverseResult,
-  TraverseHopResult,
+  GetNodeDetailInput,
+  GetNodesInput,
+  GetNodesResult,
+  NodeDetailResult,
+  QueryClientOptions,
+  SchemaResult,
   SearchInput,
   SearchResult,
-  SummarizedRecord,
   SummarizedEdge,
+  SummarizedRecord,
+  TraverseHopResult,
+  TraverseInput,
+  TraverseResult,
 } from './types.js';
-import { summarizeRecord, summarizeEdge } from './shaping.js';
-import { readEditorPort } from './config.js';
 
 // --- Error ---
 
@@ -112,7 +113,7 @@ function parseTrpcResponse(raw: string, procedure: string): unknown {
   if (parsed.error) {
     const msg =
       typeof parsed.error === 'object' && parsed.error !== null
-        ? (parsed.error as Record<string, unknown>).message ?? JSON.stringify(parsed.error)
+        ? ((parsed.error as Record<string, unknown>).message ?? JSON.stringify(parsed.error))
         : String(parsed.error);
     throw new QueryClientError(`Server error from ${procedure}: ${msg}`, 'SERVER_ERROR');
   }
@@ -131,8 +132,7 @@ export class QueryClient {
   }
 
   private async query(procedure: string, input?: unknown): Promise<unknown> {
-    const qs =
-      input != null ? `?input=${encodeURIComponent(JSON.stringify(input))}` : '';
+    const qs = input != null ? `?input=${encodeURIComponent(JSON.stringify(input))}` : '';
     const url = `${this.baseUrl}/${procedure}${qs}`;
     const raw = await httpGet(url);
     return parseTrpcResponse(raw, procedure);
@@ -150,7 +150,8 @@ export class QueryClient {
     const data = (await this.query('getSchema')) as Record<string, unknown>;
     return {
       nodeTypes: ((data.nodeTypes as unknown[]) ?? []).map(
-        (t) => (typeof t === 'object' && t !== null ? (t as Record<string, unknown>).type : t) as string,
+        (t) =>
+          (typeof t === 'object' && t !== null ? (t as Record<string, unknown>).type : t) as string,
       ),
       edgeTypes: ((data.edgeTypes as unknown[]) ?? []).map((t) => {
         const e = t as Record<string, unknown>;
@@ -169,8 +170,12 @@ export class QueryClient {
     const data = (await this.query('getNodeDetail', { uid: input.uid })) as Record<string, unknown>;
     return {
       node: summarizeRecord(data.node as Record<string, unknown> | null),
-      outEdges: ((data.outEdges as Record<string, unknown>[]) ?? []).map(summarizeEdge).filter(Boolean) as SummarizedEdge[],
-      inEdges: ((data.inEdges as Record<string, unknown>[]) ?? []).map(summarizeEdge).filter(Boolean) as SummarizedEdge[],
+      outEdges: ((data.outEdges as Record<string, unknown>[]) ?? [])
+        .map(summarizeEdge)
+        .filter(Boolean) as SummarizedEdge[],
+      inEdges: ((data.inEdges as Record<string, unknown>[]) ?? [])
+        .map(summarizeEdge)
+        .filter(Boolean) as SummarizedEdge[],
     };
   }
 
@@ -186,14 +191,22 @@ export class QueryClient {
       where: input.where,
     })) as Record<string, unknown>;
     return {
-      nodes: ((data.nodes as Record<string, unknown>[]) ?? []).map(summarizeRecord).filter(Boolean) as SummarizedRecord[],
+      nodes: ((data.nodes as Record<string, unknown>[]) ?? [])
+        .map(summarizeRecord)
+        .filter(Boolean) as SummarizedRecord[],
       hasMore: (data.hasMore as boolean) ?? false,
       nextCursor: data.nextCursor as string | null | undefined,
     };
   }
 
   async getEdges(input: GetEdgesInput): Promise<GetEdgesResult> {
-    const hasFilter = input.aType || input.aUid || input.axbType || input.bType || input.bUid || (input.where && input.where.length > 0);
+    const hasFilter =
+      input.aType ||
+      input.aUid ||
+      input.axbType ||
+      input.bType ||
+      input.bUid ||
+      (input.where && input.where.length > 0);
     if (!hasFilter) {
       throw new QueryClientError(
         'getEdges requires at least one filter field (aType, aUid, axbType, bType, bUid, or where)',
@@ -215,7 +228,9 @@ export class QueryClient {
       where: input.where,
     })) as Record<string, unknown>;
     return {
-      edges: ((data.edges as Record<string, unknown>[]) ?? []).map(summarizeEdge).filter(Boolean) as SummarizedEdge[],
+      edges: ((data.edges as Record<string, unknown>[]) ?? [])
+        .map(summarizeEdge)
+        .filter(Boolean) as SummarizedEdge[],
       hasMore: (data.hasMore as boolean) ?? false,
       nextCursor: data.nextCursor as string | null | undefined,
     };
@@ -245,20 +260,27 @@ export class QueryClient {
     if (input.maxReads != null && (!Number.isInteger(input.maxReads) || input.maxReads < 1)) {
       throw new QueryClientError('maxReads must be a positive integer', 'VALIDATION_ERROR');
     }
-    if (input.concurrency != null && (!Number.isInteger(input.concurrency) || input.concurrency < 1)) {
+    if (
+      input.concurrency != null &&
+      (!Number.isInteger(input.concurrency) || input.concurrency < 1)
+    ) {
       throw new QueryClientError('concurrency must be a positive integer', 'VALIDATION_ERROR');
     }
 
     const data = (await this.mutate('traverse', input)) as Record<string, unknown>;
     return {
-      hops: ((data.hops as Record<string, unknown>[]) ?? []).map((h): TraverseHopResult => ({
-        relation: h.axbType as string,
-        direction: h.direction as string,
-        depth: h.depth as number,
-        edgeCount: ((h.edges as unknown[]) ?? []).length,
-        edges: ((h.edges as Record<string, unknown>[]) ?? []).map(summarizeEdge).filter(Boolean) as SummarizedEdge[],
-        truncated: (h.truncated as boolean) ?? false,
-      })),
+      hops: ((data.hops as Record<string, unknown>[]) ?? []).map(
+        (h): TraverseHopResult => ({
+          relation: h.axbType as string,
+          direction: h.direction as string,
+          depth: h.depth as number,
+          edgeCount: ((h.edges as unknown[]) ?? []).length,
+          edges: ((h.edges as Record<string, unknown>[]) ?? [])
+            .map(summarizeEdge)
+            .filter(Boolean) as SummarizedEdge[],
+          truncated: (h.truncated as boolean) ?? false,
+        }),
+      ),
       totalReads: (data.totalReads as number) ?? 0,
       truncated: (data.truncated as boolean) ?? false,
     };
@@ -269,14 +291,16 @@ export class QueryClient {
     const limit = clampInt(input.limit, 1, 50, 20);
     const data = (await this.query('search', { q: input.q, limit })) as Record<string, unknown>;
     return {
-      results: ((data.results as Record<string, unknown>[]) ?? []).map((r) => {
-        const base = summarizeRecord(r);
-        if (!base) return null;
-        return {
-          ...base,
-          matchType: (r._matchType as string) ?? null,
-        };
-      }).filter(Boolean) as (SummarizedRecord & { matchType: string | null })[],
+      results: ((data.results as Record<string, unknown>[]) ?? [])
+        .map((r) => {
+          const base = summarizeRecord(r);
+          if (!base) return null;
+          return {
+            ...base,
+            matchType: (r._matchType as string) ?? null,
+          };
+        })
+        .filter(Boolean) as (SummarizedRecord & { matchType: string | null })[],
     };
   }
 }

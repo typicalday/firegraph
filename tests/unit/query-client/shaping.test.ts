@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { summarizeRecord, summarizeEdge } from '../../../src/query-client/shaping.js';
+import { describe, expect, it } from 'vitest';
+
+import { summarizeEdge, summarizeRecord } from '../../../src/query-client/shaping.js';
 
 describe('summarizeRecord', () => {
   it('returns null for null input', () => {

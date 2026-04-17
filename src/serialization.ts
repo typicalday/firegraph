@@ -11,8 +11,8 @@
  * (in-memory functions) receive raw Firestore objects directly.
  */
 
-import { Timestamp, GeoPoint, FieldValue } from '@google-cloud/firestore';
-import type { Firestore, DocumentReference } from '@google-cloud/firestore';
+import type { DocumentReference, Firestore } from '@google-cloud/firestore';
+import { FieldValue, GeoPoint, Timestamp } from '@google-cloud/firestore';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -66,8 +66,7 @@ function isVectorValue(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   return (
-    v.constructor?.name === 'VectorValue' &&
-    Array.isArray((v as Record<string, unknown>)._values)
+    v.constructor?.name === 'VectorValue' && Array.isArray((v as Record<string, unknown>)._values)
   );
 }
 
@@ -81,9 +80,7 @@ function isVectorValue(value: unknown): boolean {
  *
  * Returns a new object tree — the input is never mutated.
  */
-export function serializeFirestoreTypes(
-  data: Record<string, unknown>,
-): Record<string, unknown> {
+export function serializeFirestoreTypes(data: Record<string, unknown>): Record<string, unknown> {
   return serializeValue(data) as Record<string, unknown>;
 }
 
@@ -94,10 +91,18 @@ function serializeValue(value: unknown): unknown {
 
   // Firestore types (check before generic object/array)
   if (isTimestamp(value)) {
-    return { [SERIALIZATION_TAG]: 'Timestamp', seconds: value.seconds, nanoseconds: value.nanoseconds };
+    return {
+      [SERIALIZATION_TAG]: 'Timestamp',
+      seconds: value.seconds,
+      nanoseconds: value.nanoseconds,
+    };
   }
   if (isGeoPoint(value)) {
-    return { [SERIALIZATION_TAG]: 'GeoPoint', latitude: value.latitude, longitude: value.longitude };
+    return {
+      [SERIALIZATION_TAG]: 'GeoPoint',
+      latitude: value.latitude,
+      longitude: value.longitude,
+    };
   }
   if (isDocumentReference(value)) {
     return { [SERIALIZATION_TAG]: 'DocumentReference', path: (value as DocumentReference).path };
@@ -105,9 +110,8 @@ function serializeValue(value: unknown): unknown {
   if (isVectorValue(value)) {
     // Prefer toArray() (public API) over _values (private internal property)
     const v = value as Record<string, unknown>;
-    const values = typeof v.toArray === 'function'
-      ? (v.toArray as () => number[])()
-      : (v._values as number[]);
+    const values =
+      typeof v.toArray === 'function' ? (v.toArray as () => number[])() : (v._values as number[]);
     return { [SERIALIZATION_TAG]: 'VectorValue', values: [...values] };
   }
 
@@ -153,7 +157,12 @@ function deserializeValue(value: unknown, db?: Firestore): unknown {
   // This makes deserializeFirestoreTypes idempotent — safe to call on data
   // that has already been deserialized (e.g., write-back after defaultExecutor
   // already reconstructed types, or static migrations that return raw types).
-  if (isTimestamp(value) || isGeoPoint(value) || isDocumentReference(value) || isVectorValue(value)) {
+  if (
+    isTimestamp(value) ||
+    isGeoPoint(value) ||
+    isDocumentReference(value) ||
+    isVectorValue(value)
+  ) {
     return value;
   }
 
@@ -192,8 +201,8 @@ function deserializeValue(value: unknown, db?: Firestore): unknown {
           _docRefWarned = true;
           console.warn(
             '[firegraph] DocumentReference encountered during migration deserialization ' +
-            'but no Firestore instance available. The reference will remain as a tagged ' +
-            'object with its path. Enable write-back for full reconstruction.',
+              'but no Firestore instance available. The reference will remain as a tagged ' +
+              'object with its path. Enable write-back for full reconstruction.',
           );
         }
         return obj;

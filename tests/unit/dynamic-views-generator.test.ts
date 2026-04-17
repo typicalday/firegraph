@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
+import type { DynamicTypeMetadata } from '../../editor/server/dynamic-loader.js';
 import {
   generateDynamicViewsBundle,
-  validateTemplate,
   getDynamicViewTags,
+  validateTemplate,
 } from '../../editor/server/dynamic-views-generator.js';
-import type { DynamicTypeMetadata } from '../../editor/server/dynamic-loader.js';
 
 // ---------------------------------------------------------------------------
 // validateTemplate

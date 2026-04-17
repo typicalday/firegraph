@@ -1,18 +1,24 @@
+import type { DocumentData, Firestore, Query, WhereFilterOp } from '@google-cloud/firestore';
+import { FieldPath, Timestamp } from '@google-cloud/firestore';
 import { initTRPC, TRPCError } from '@trpc/server';
 import type { CreateExpressContextOptions } from '@trpc/server/adapters/express';
-import { Timestamp, FieldPath } from '@google-cloud/firestore';
-import type { Firestore, DocumentData, Query, WhereFilterOp } from '@google-cloud/firestore';
+import { z } from 'zod';
+
+import {
+  computeEdgeDocId,
+  generateId,
+  RegistryViolationError,
+  ValidationError,
+} from '../../src/index.js';
 import type { GraphClient, GraphRegistry } from '../../src/types.js';
-import { generateId, ValidationError, RegistryViolationError, computeEdgeDocId } from '../../src/index.js';
-import type { SchemaMetadata } from './schema-introspect.js';
-import type { ViewRegistry, EntityViewMeta } from '../../src/views.js';
-import type { ViewBundle } from './views-bundler.js';
+import type { EntityViewMeta, ViewRegistry } from '../../src/views.js';
+import type { DiscoveredCollection } from './collections-loader.js';
 import type { LoadedConfig } from './config-loader.js';
-import type { SchemaViewWarning } from './schema-views-validator.js';
 import type { DynamicTypeMetadata } from './dynamic-loader.js';
 import type { ReloadResult } from './index.js';
-import type { DiscoveredCollection } from './collections-loader.js';
-import { z } from 'zod';
+import type { SchemaMetadata } from './schema-introspect.js';
+import type { SchemaViewWarning } from './schema-views-validator.js';
+import type { ViewBundle } from './views-bundler.js';
 
 // --- Context ---
 
@@ -188,17 +194,29 @@ const scopeSchema = z.string().optional();
  * e.g. "graph/{nodeUid}/logs" + {nodeUid: "abc"} → "graph/abc/logs"
  * Exported for unit testing.
  */
-export function substitutePathTemplate(template: string, params: Record<string, string> = {}): string {
+export function substitutePathTemplate(
+  template: string,
+  params: Record<string, string> = {},
+): string {
   return template.replace(/\{([^}]+)\}/g, (_, key) => {
     if (!(key in params)) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: `Missing required path parameter: "${key}"` });
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Missing required path parameter: "${key}"`,
+      });
     }
     const val = params[key];
     if (!val) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: `Path parameter "${key}" must not be empty` });
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Path parameter "${key}" must not be empty`,
+      });
     }
     if (val.includes('/')) {
-      throw new TRPCError({ code: 'BAD_REQUEST', message: `Path parameter "${key}" must not contain "/"` });
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `Path parameter "${key}" must not contain "/"`,
+      });
     }
     return val;
   });
@@ -270,17 +288,28 @@ export const appRouter = t.router({
   // --- Views ---
   getViews: publicProcedure.query(({ ctx }) => {
     // Start from filesystem view registry (or empty)
-    const nodes: Record<string, unknown> = ctx.viewRegistry?.nodes ? { ...ctx.viewRegistry.nodes } : {};
-    const edges: Record<string, unknown> = ctx.viewRegistry?.edges ? { ...ctx.viewRegistry.edges } : {};
+    const nodes: Record<string, unknown> = ctx.viewRegistry?.nodes
+      ? { ...ctx.viewRegistry.nodes }
+      : {};
+    const edges: Record<string, unknown> = ctx.viewRegistry?.edges
+      ? { ...ctx.viewRegistry.edges }
+      : {};
     const collections: Record<string, unknown> = { ...ctx.collectionViewRegistry };
 
     // Merge dynamic template views (for types that have viewTemplate)
     if (ctx.dynamicTypeMeta) {
       for (const [name, meta] of Object.entries(ctx.dynamicTypeMeta.nodes)) {
         if (!meta.viewTemplate) continue;
-        const tagName = `fg-${name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase()}-template`;
+        const tagName = `fg-${name
+          .replace(/[^a-zA-Z0-9]/g, '-')
+          .replace(/-+/g, '-')
+          .toLowerCase()}-template`;
         const existing = nodes[name] as { views: unknown[] } | undefined;
-        const templateView = { tagName, viewName: 'template', description: 'Dynamic template view' };
+        const templateView = {
+          tagName,
+          viewName: 'template',
+          description: 'Dynamic template view',
+        };
         if (existing) {
           existing.views = [...existing.views, templateView];
         } else {
@@ -289,9 +318,16 @@ export const appRouter = t.router({
       }
       for (const [name, meta] of Object.entries(ctx.dynamicTypeMeta.edges)) {
         if (!meta.viewTemplate) continue;
-        const tagName = `fg-edge-${name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase()}-template`;
+        const tagName = `fg-edge-${name
+          .replace(/[^a-zA-Z0-9]/g, '-')
+          .replace(/-+/g, '-')
+          .toLowerCase()}-template`;
         const existing = edges[name] as { views: unknown[] } | undefined;
-        const templateView = { tagName, viewName: 'template', description: 'Dynamic template view' };
+        const templateView = {
+          tagName,
+          viewName: 'template',
+          description: 'Dynamic template view',
+        };
         if (existing) {
           existing.views = [...existing.views, templateView];
         } else {
@@ -300,7 +336,10 @@ export const appRouter = t.router({
       }
     }
 
-    const hasViews = Object.keys(nodes).length > 0 || Object.keys(edges).length > 0 || Object.keys(collections).length > 0;
+    const hasViews =
+      Object.keys(nodes).length > 0 ||
+      Object.keys(edges).length > 0 ||
+      Object.keys(collections).length > 0;
     return { nodes, edges, collections, hasViews };
   }),
 
@@ -309,7 +348,8 @@ export const appRouter = t.router({
     if (!ctx.reloadFn) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
-        message: 'Dynamic registry mode is not enabled. Add registryMode to your config or use --registry-mode=dynamic.',
+        message:
+          'Dynamic registry mode is not enabled. Add registryMode to your config or use --registry-mode=dynamic.',
       });
     }
     const result = await ctx.reloadFn();
@@ -323,24 +363,30 @@ export const appRouter = t.router({
 
   // --- Browse Nodes ---
   getNodes: publicProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      type: z.string().optional(),
-      limit: z.number().min(1).max(200).default(25),
-      startAfter: z.string().optional(),
-      sortBy: z.string().default('aUid'),
-      sortDir: z.enum(['asc', 'desc']).default('asc'),
-      // Legacy single filter (kept for backwards compat)
-      filterField: z.string().optional(),
-      filterOp: z.string().optional(),
-      filterValue: z.string().optional(),
-      // Multi-filter support
-      where: z.array(z.object({
-        field: z.string(),
-        op: z.string(),
-        value: z.union([z.string(), z.number(), z.boolean()]),
-      })).optional(),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        type: z.string().optional(),
+        limit: z.number().min(1).max(200).default(25),
+        startAfter: z.string().optional(),
+        sortBy: z.string().default('aUid'),
+        sortDir: z.enum(['asc', 'desc']).default('asc'),
+        // Legacy single filter (kept for backwards compat)
+        filterField: z.string().optional(),
+        filterOp: z.string().optional(),
+        filterValue: z.string().optional(),
+        // Multi-filter support
+        where: z
+          .array(
+            z.object({
+              field: z.string(),
+              op: z.string(),
+              value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+          )
+          .optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       const builtinSortFields = ['aUid', 'createdAt', 'updatedAt'];
@@ -372,9 +418,16 @@ export const appRouter = t.router({
       }
 
       // Legacy single filter fallback
-      if (!input.where?.length && input.filterField && input.filterOp && input.filterValue !== undefined) {
+      if (
+        !input.where?.length &&
+        input.filterField &&
+        input.filterOp &&
+        input.filterValue !== undefined
+      ) {
         if (allowedOps.includes(input.filterOp as AllowedOp)) {
-          const field = input.filterField.startsWith('data.') ? input.filterField : `data.${input.filterField}`;
+          const field = input.filterField.startsWith('data.')
+            ? input.filterField
+            : `data.${input.filterField}`;
           let coercedValue: string | number = input.filterValue;
           if (['<', '<=', '>', '>='].includes(input.filterOp)) {
             const num = Number(input.filterValue);
@@ -400,7 +453,10 @@ export const appRouter = t.router({
       if (hasMore && docs.length > 0) {
         const lastDoc = docs[docs.length - 1].data();
         const cursorValue = lastDoc[effectiveSortBy];
-        nextCursor = cursorValue instanceof Timestamp ? cursorValue.toDate().toISOString() : String(cursorValue);
+        nextCursor =
+          cursorValue instanceof Timestamp
+            ? cursorValue.toDate().toISOString()
+            : String(cursorValue);
       }
 
       return { nodes, hasMore, nextCursor };
@@ -421,12 +477,18 @@ export const appRouter = t.router({
       const nodeDoc = await col.doc(uid).get();
       const node = nodeDoc.exists ? serializeRecord(nodeDoc.data()!) : null;
 
-      const outSnapshot = await col.where('aUid', '==', uid).limit(edgeLimit + 1).get();
+      const outSnapshot = await col
+        .where('aUid', '==', uid)
+        .limit(edgeLimit + 1)
+        .get();
       const outEdges = outSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
         .filter((e) => e.axbType !== NODE_RELATION);
 
-      const inSnapshot = await col.where('bUid', '==', uid).limit(edgeLimit + 1).get();
+      const inSnapshot = await col
+        .where('bUid', '==', uid)
+        .limit(edgeLimit + 1)
+        .get();
       const inEdges = inSnapshot.docs
         .map((doc) => serializeRecord(doc.data()))
         .filter((e) => e.axbType !== NODE_RELATION);
@@ -453,23 +515,29 @@ export const appRouter = t.router({
 
   // --- Query Edges ---
   getEdges: publicProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aType: z.string().optional(),
-      aUid: z.string().optional(),
-      axbType: z.string().optional(),
-      bType: z.string().optional(),
-      bUid: z.string().optional(),
-      limit: z.number().min(1).max(200).default(25),
-      startAfter: z.string().optional(),
-      sortBy: z.string().optional(),
-      sortDir: z.enum(['asc', 'desc']).default('asc'),
-      where: z.array(z.object({
-        field: z.string(),
-        op: z.string(),
-        value: z.union([z.string(), z.number(), z.boolean()]),
-      })).optional(),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aType: z.string().optional(),
+        aUid: z.string().optional(),
+        axbType: z.string().optional(),
+        bType: z.string().optional(),
+        bUid: z.string().optional(),
+        limit: z.number().min(1).max(200).default(25),
+        startAfter: z.string().optional(),
+        sortBy: z.string().optional(),
+        sortDir: z.enum(['asc', 'desc']).default('asc'),
+        where: z
+          .array(
+            z.object({
+              field: z.string(),
+              op: z.string(),
+              value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+          )
+          .optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       let query: Query = col;
@@ -491,8 +559,11 @@ export const appRouter = t.router({
       if (input.where && input.where.length > 0) {
         for (const clause of input.where) {
           if (!allowedOps.includes(clause.op as AllowedOp)) continue;
-          const field = builtinFields.includes(clause.field) ? clause.field
-            : clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+          const field = builtinFields.includes(clause.field)
+            ? clause.field
+            : clause.field.startsWith('data.')
+              ? clause.field
+              : `data.${clause.field}`;
           query = query.where(field, clause.op as AllowedOp, clause.value);
         }
       }
@@ -523,9 +594,14 @@ export const appRouter = t.router({
       if (hasMore && docs.length > 0) {
         const lastDoc = docs[docs.length - 1].data();
         const cursorValue = effectiveSortBy.startsWith('data.')
-          ? effectiveSortBy.split('.').reduce<unknown>((obj, key) => (obj as Record<string, unknown>)?.[key], lastDoc)
+          ? effectiveSortBy
+              .split('.')
+              .reduce<unknown>((obj, key) => (obj as Record<string, unknown>)?.[key], lastDoc)
           : lastDoc[effectiveSortBy];
-        nextCursor = cursorValue instanceof Timestamp ? cursorValue.toDate().toISOString() : String(cursorValue);
+        nextCursor =
+          cursorValue instanceof Timestamp
+            ? cursorValue.toDate().toISOString()
+            : String(cursorValue);
       }
 
       return { edges, hasMore, nextCursor };
@@ -533,28 +609,40 @@ export const appRouter = t.router({
 
   // --- Traversal ---
   traverse: publicProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      startUid: z.string().min(1),
-      hops: z.array(z.object({
-        axbType: z.string(),
-        direction: z.enum(['forward', 'reverse']).default('forward'),
-        limit: z.number().default(10),
-        aType: z.string().optional(),
-        bType: z.string().optional(),
-        orderBy: z.object({
-          field: z.string(),
-          direction: z.enum(['asc', 'desc']).default('asc'),
-        }).optional(),
-        where: z.array(z.object({
-          field: z.string(),
-          op: z.string(),
-          value: z.union([z.string(), z.number(), z.boolean()]),
-        })).optional(),
-      })).min(1),
-      maxReads: z.number().default(100),
-      concurrency: z.number().default(5),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        startUid: z.string().min(1),
+        hops: z
+          .array(
+            z.object({
+              axbType: z.string(),
+              direction: z.enum(['forward', 'reverse']).default('forward'),
+              limit: z.number().default(10),
+              aType: z.string().optional(),
+              bType: z.string().optional(),
+              orderBy: z
+                .object({
+                  field: z.string(),
+                  direction: z.enum(['asc', 'desc']).default('asc'),
+                })
+                .optional(),
+              where: z
+                .array(
+                  z.object({
+                    field: z.string(),
+                    op: z.string(),
+                    value: z.union([z.string(), z.number(), z.boolean()]),
+                  }),
+                )
+                .optional(),
+            }),
+          )
+          .min(1),
+        maxReads: z.number().default(100),
+        concurrency: z.number().default(5),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const col = ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope));
       let totalReads = 0;
@@ -579,8 +667,12 @@ export const appRouter = t.router({
 
         if (sourceUids.length === 0 || truncated) {
           hopResults.push({
-            axbType: hop.axbType, direction, depth,
-            edges: [], sourceCount: 0, truncated,
+            axbType: hop.axbType,
+            direction,
+            depth,
+            edges: [],
+            sourceCount: 0,
+            truncated,
           });
           continue;
         }
@@ -615,7 +707,9 @@ export const appRouter = t.router({
             if (hop.where && hop.where.length > 0) {
               for (const clause of hop.where) {
                 if (!allowedOps.includes(clause.op)) continue;
-                const field = clause.field.startsWith('data.') ? clause.field : `data.${clause.field}`;
+                const field = clause.field.startsWith('data.')
+                  ? clause.field
+                  : `data.${clause.field}`;
                 query = query.where(field, clause.op as WhereFilterOp, clause.value);
               }
             }
@@ -639,8 +733,12 @@ export const appRouter = t.router({
         }
 
         hopResults.push({
-          axbType: hop.axbType, direction, depth,
-          edges: hopEdges, sourceCount, truncated: hopTruncated,
+          axbType: hop.axbType,
+          direction,
+          depth,
+          edges: hopEdges,
+          sourceCount,
+          truncated: hopTruncated,
         });
 
         if (hopTruncated) truncated = true;
@@ -663,11 +761,13 @@ export const appRouter = t.router({
 
   // --- Search ---
   search: publicProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      q: z.string(),
-      limit: z.number().min(1).max(50).default(20),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        q: z.string(),
+        limit: z.number().min(1).max(50).default(20),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const q = input.q.trim();
       if (!q) return { results: [] as Record<string, unknown>[] };
@@ -684,7 +784,11 @@ export const appRouter = t.router({
       const aUidSnapshot = await col.where('aUid', '==', strippedQ).limit(input.limit).get();
       for (const doc of aUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
-        if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
+        if (
+          !results.some(
+            (r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid,
+          )
+        ) {
           results.push({ ...record, _matchType: 'aUid' });
         }
       }
@@ -692,7 +796,11 @@ export const appRouter = t.router({
       const bUidSnapshot = await col.where('bUid', '==', strippedQ).limit(input.limit).get();
       for (const doc of bUidSnapshot.docs) {
         const record = serializeRecord(doc.data());
-        if (!results.some((r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid)) {
+        if (
+          !results.some(
+            (r) => r.aUid === record.aUid && r.axbType === record.axbType && r.bUid === record.bUid,
+          )
+        ) {
           results.push({ ...record, _matchType: 'bUid' });
         }
       }
@@ -704,7 +812,10 @@ export const appRouter = t.router({
   checkNode: publicProcedure
     .input(z.object({ scope: scopeSchema, uid: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      const doc = await ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope)).doc(stripTypePrefix(input.uid)).get();
+      const doc = await ctx.db
+        .collection(resolveCollectionPath(ctx.collection, input.scope))
+        .doc(stripTypePrefix(input.uid))
+        .get();
       if (!doc.exists) return { exists: false as const, node: null };
       const data = serializeRecord(doc.data()!);
       return {
@@ -715,26 +826,33 @@ export const appRouter = t.router({
 
   // --- Check Edge Exists ---
   checkEdge: publicProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aUid: z.string().min(1),
-      axbType: z.string().min(1),
-      bUid: z.string().min(1),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aUid: z.string().min(1),
+        axbType: z.string().min(1),
+        bUid: z.string().min(1),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const docId = computeEdgeDocId(input.aUid, input.axbType, input.bUid);
-      const doc = await ctx.db.collection(resolveCollectionPath(ctx.collection, input.scope)).doc(docId).get();
+      const doc = await ctx.db
+        .collection(resolveCollectionPath(ctx.collection, input.scope))
+        .doc(docId)
+        .get();
       return { exists: doc.exists };
     }),
 
   // --- Write: Create Node ---
   createNode: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aType: z.string(),
-      uid: z.string().optional(),
-      data: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aType: z.string(),
+        uid: z.string().optional(),
+        data: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         const client = getScopedClient(ctx.graphClient, input.scope);
@@ -751,11 +869,13 @@ export const appRouter = t.router({
 
   // --- Write: Update Node ---
   updateNode: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      uid: z.string(),
-      data: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        uid: z.string(),
+        data: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         const client = getScopedClient(ctx.graphClient, input.scope);
@@ -803,21 +923,27 @@ export const appRouter = t.router({
 
   // --- Write: Create Edge ---
   createEdge: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aType: z.string(),
-      aUid: z.string(),
-      axbType: z.string(),
-      bType: z.string(),
-      bUid: z.string(),
-      data: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aType: z.string(),
+        aUid: z.string(),
+        axbType: z.string(),
+        bType: z.string(),
+        bUid: z.string(),
+        data: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         const client = getScopedClient(ctx.graphClient, input.scope);
         await client.putEdge(
-          input.aType, input.aUid, input.axbType,
-          input.bType, input.bUid, input.data || {},
+          input.aType,
+          input.aUid,
+          input.axbType,
+          input.bType,
+          input.bUid,
+          input.data || {},
         );
         return { success: true as const };
       } catch (err) {
@@ -830,20 +956,22 @@ export const appRouter = t.router({
 
   // --- Write: Create Edge + Target Node atomically ---
   createEdgeWithNode: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aType: z.string(),
-      axbType: z.string(),
-      bType: z.string(),
-      /** Which side is the new node: 'b' (outgoing) or 'a' (incoming) */
-      newNodeSide: z.enum(['a', 'b']).default('b'),
-      /** The UID of the existing node (the "fixed" side) */
-      existingUid: z.string(),
-      /** Optional UID for the new node (auto-generated if omitted) */
-      newNodeUid: z.string().optional(),
-      edgeData: z.record(z.string(), z.unknown()),
-      nodeData: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aType: z.string(),
+        axbType: z.string(),
+        bType: z.string(),
+        /** Which side is the new node: 'b' (outgoing) or 'a' (incoming) */
+        newNodeSide: z.enum(['a', 'b']).default('b'),
+        /** The UID of the existing node (the "fixed" side) */
+        existingUid: z.string(),
+        /** Optional UID for the new node (auto-generated if omitted) */
+        newNodeUid: z.string().optional(),
+        edgeData: z.record(z.string(), z.unknown()),
+        nodeData: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       try {
         const client = getScopedClient(ctx.graphClient, input.scope);
@@ -870,10 +998,7 @@ export const appRouter = t.router({
             await tx.putNode(newNodeType, newUid, input.nodeData);
           }
           // putEdge is an upsert — if edge exists, it updates updatedAt + data
-          await tx.putEdge(
-            input.aType, aUid, input.axbType,
-            input.bType, bUid, input.edgeData,
-          );
+          await tx.putEdge(input.aType, aUid, input.axbType, input.bType, bUid, input.edgeData);
         });
         return { success: true as const, uid: newUid, edgeUpdated: !!existingEdge };
       } catch (err) {
@@ -887,12 +1012,14 @@ export const appRouter = t.router({
 
   // --- Write: Delete Edge ---
   deleteEdge: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aUid: z.string(),
-      axbType: z.string(),
-      bUid: z.string(),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aUid: z.string(),
+        axbType: z.string(),
+        bUid: z.string(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const client = getScopedClient(ctx.graphClient, input.scope);
       await client.removeEdge(input.aUid, input.axbType, input.bUid);
@@ -901,19 +1028,25 @@ export const appRouter = t.router({
 
   // --- Write: Bulk Delete Edges (by query) ---
   bulkDeleteEdges: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      aUid: z.string().optional(),
-      axbType: z.string().optional(),
-      bUid: z.string().optional(),
-      aType: z.string().optional(),
-      bType: z.string().optional(),
-      where: z.array(z.object({
-        field: z.string(),
-        op: z.string(),
-        value: z.union([z.string(), z.number(), z.boolean()]),
-      })).optional(),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        aUid: z.string().optional(),
+        axbType: z.string().optional(),
+        bUid: z.string().optional(),
+        aType: z.string().optional(),
+        bType: z.string().optional(),
+        where: z
+          .array(
+            z.object({
+              field: z.string(),
+              op: z.string(),
+              value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+          )
+          .optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const client = getScopedClient(ctx.graphClient, input.scope);
       const { where: whereClauses, scope: _scope, ...params } = input;
@@ -936,14 +1069,21 @@ export const appRouter = t.router({
 
   // --- Write: Delete specific edges by ID ---
   deleteEdgesBatch: writeProcedure
-    .input(z.object({
-      scope: scopeSchema,
-      edges: z.array(z.object({
-        aUid: z.string(),
-        axbType: z.string(),
-        bUid: z.string(),
-      })).min(1).max(500),
-    }))
+    .input(
+      z.object({
+        scope: scopeSchema,
+        edges: z
+          .array(
+            z.object({
+              aUid: z.string(),
+              axbType: z.string(),
+              bUid: z.string(),
+            }),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const client = getScopedClient(ctx.graphClient, input.scope);
       const batch = client.batch();
@@ -956,17 +1096,23 @@ export const appRouter = t.router({
   // --- Plain Collection Procedures ---
 
   getCollectionDocs: publicProcedure
-    .input(z.object({
-      collectionName: z.string(),
-      params: z.record(z.string(), z.string()).optional(),
-      cursor: z.string().optional(),
-      limit: z.number().int().min(1).max(100).default(50),
-      where: z.array(z.object({
-        field: z.string(),
-        op: z.string(),
-        value: z.union([z.string(), z.number(), z.boolean()]),
-      })).optional(),
-    }))
+    .input(
+      z.object({
+        collectionName: z.string(),
+        params: z.record(z.string(), z.string()).optional(),
+        cursor: z.string().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+        where: z
+          .array(
+            z.object({
+              field: z.string(),
+              op: z.string(),
+              value: z.union([z.string(), z.number(), z.boolean()]),
+            }),
+          )
+          .optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
@@ -976,7 +1122,8 @@ export const appRouter = t.router({
       type AllowedOp = (typeof allowedOps)[number];
       // If the collection has a schema, restrict filters to known field names.
       // For schemaless collections, allow any field matching the safe pattern.
-      const schemaFieldNames = def.fields.length > 0 ? new Set(def.fields.map((f) => f.name)) : null;
+      const schemaFieldNames =
+        def.fields.length > 0 ? new Set(def.fields.map((f) => f.name)) : null;
       const safeFieldNameRe = /^[a-zA-Z_][a-zA-Z0-9_.]*$/;
 
       let query: Query = col;
@@ -987,7 +1134,12 @@ export const appRouter = t.router({
       if (input.where?.length) {
         for (const clause of input.where) {
           if (!allowedOps.includes(clause.op as AllowedOp)) continue;
-          if (schemaFieldNames ? !schemaFieldNames.has(clause.field) : !safeFieldNameRe.test(clause.field)) continue;
+          if (
+            schemaFieldNames
+              ? !schemaFieldNames.has(clause.field)
+              : !safeFieldNameRe.test(clause.field)
+          )
+            continue;
           query = query.where(clause.field, clause.op as AllowedOp, clause.value);
         }
       }
@@ -1032,11 +1184,13 @@ export const appRouter = t.router({
     }),
 
   getCollectionDoc: publicProcedure
-    .input(z.object({
-      collectionName: z.string(),
-      params: z.record(z.string(), z.string()).optional(),
-      docId: z.string(),
-    }))
+    .input(
+      z.object({
+        collectionName: z.string(),
+        params: z.record(z.string(), z.string()).optional(),
+        docId: z.string(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
@@ -1045,18 +1199,24 @@ export const appRouter = t.router({
         throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
       }
       const docData = snap.data()!;
-      if (def.typeField && def.typeValue !== undefined && docData[def.typeField] !== def.typeValue) {
+      if (
+        def.typeField &&
+        def.typeValue !== undefined &&
+        docData[def.typeField] !== def.typeValue
+      ) {
         throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
       }
       return { id: snap.id, data: serializeRecord(docData) };
     }),
 
   createCollectionDoc: writeProcedure
-    .input(z.object({
-      collectionName: z.string(),
-      params: z.record(z.string(), z.string()).optional(),
-      data: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        collectionName: z.string(),
+        params: z.record(z.string(), z.string()).optional(),
+        data: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
@@ -1069,12 +1229,14 @@ export const appRouter = t.router({
     }),
 
   updateCollectionDoc: writeProcedure
-    .input(z.object({
-      collectionName: z.string(),
-      params: z.record(z.string(), z.string()).optional(),
-      docId: z.string(),
-      data: z.record(z.string(), z.unknown()),
-    }))
+    .input(
+      z.object({
+        collectionName: z.string(),
+        params: z.record(z.string(), z.string()).optional(),
+        docId: z.string(),
+        data: z.record(z.string(), z.unknown()),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
@@ -1082,7 +1244,10 @@ export const appRouter = t.router({
       if (def.typeField && def.typeValue !== undefined) {
         const snap = await ctx.db.collection(colPath).doc(input.docId).get();
         if (!snap.exists || snap.data()![def.typeField] !== def.typeValue) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `Document "${input.docId}" not found.`,
+          });
         }
       }
       const docData: Record<string, unknown> = { ...input.data };
@@ -1095,18 +1260,23 @@ export const appRouter = t.router({
     }),
 
   deleteCollectionDoc: writeProcedure
-    .input(z.object({
-      collectionName: z.string(),
-      params: z.record(z.string(), z.string()).optional(),
-      docId: z.string(),
-    }))
+    .input(
+      z.object({
+        collectionName: z.string(),
+        params: z.record(z.string(), z.string()).optional(),
+        docId: z.string(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const def = getCollectionDef(ctx, input.collectionName);
       const colPath = substitutePathTemplate(def.path, input.params ?? {});
       if (def.typeField && def.typeValue !== undefined) {
         const snap = await ctx.db.collection(colPath).doc(input.docId).get();
         if (!snap.exists || snap.data()![def.typeField] !== def.typeValue) {
-          throw new TRPCError({ code: 'NOT_FOUND', message: `Document "${input.docId}" not found.` });
+          throw new TRPCError({
+            code: 'NOT_FOUND',
+            message: `Document "${input.docId}" not found.`,
+          });
         }
       }
       await ctx.db.collection(colPath).doc(input.docId).delete();

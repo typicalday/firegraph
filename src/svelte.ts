@@ -25,7 +25,6 @@ export interface ViewMeta {
   description?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClass = { new (...args: any[]): any };
 
 /**
@@ -34,7 +33,6 @@ type AnyClass = { new (...args: any[]): any };
  * (where HTMLElement may be shimmed by the editor server).
  */
 function getBaseClass(): AnyClass {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
   return g.HTMLElement ?? class {};
 }
@@ -56,7 +54,7 @@ function getBaseClass(): AnyClass {
  * Props are updated by mutating the props object — Svelte 5's reactivity
  * system picks up the changes automatically.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export function wrapSvelte(Component: any, meta: ViewMeta): ViewComponentClass {
   const Base = getBaseClass();
 
@@ -65,9 +63,9 @@ export function wrapSvelte(Component: any, meta: ViewMeta): ViewComponentClass {
     static description = meta.description;
 
     _data: Record<string, unknown> = {};
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     _instance: any = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     _props: any = null;
     _mounted = false;
 
@@ -108,7 +106,7 @@ export function wrapSvelte(Component: any, meta: ViewMeta): ViewComponentClass {
 
     async _mount() {
       // Dynamic import — resolved from project's node_modules at runtime
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const svelte: any = await (Function('return import("svelte")')() as Promise<unknown>);
       if (!this._mounted) return; // disconnected while awaiting
 

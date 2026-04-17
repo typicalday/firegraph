@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { buildNodeRecord, buildEdgeRecord } from '../../src/record.js';
+import { describe, expect, it } from 'vitest';
+
 import { NODE_RELATION } from '../../src/internal/constants.js';
+import { buildEdgeRecord, buildNodeRecord } from '../../src/record.js';
 
 describe('buildNodeRecord', () => {
   it('sets aType === bType', () => {

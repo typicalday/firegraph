@@ -1,8 +1,8 @@
-import type { SchemaMetadata } from './schema-introspect.js';
+import { compileSchema } from '../../src/json-schema.js';
+import type { GraphRegistry } from '../../src/types.js';
 import type { ViewRegistry } from '../../src/views.js';
 import type { LoadedConfig } from './config-loader.js';
-import type { GraphRegistry } from '../../src/types.js';
-import { compileSchema } from '../../src/json-schema.js';
+import type { SchemaMetadata } from './schema-introspect.js';
 
 export type SchemaViewWarningCode =
   | 'ORPHANED_NODE_VIEW'
@@ -82,9 +82,10 @@ function validateSampleData(
     if (!meta.sampleData) continue;
 
     // Find the registry entry to get the JSON Schema
-    const entry = kind === 'node'
-      ? registry.lookup(entityType, 'is', entityType)
-      : findEdgeEntry(registry, entityType);
+    const entry =
+      kind === 'node'
+        ? registry.lookup(entityType, 'is', entityType)
+        : findEdgeEntry(registry, entityType);
 
     if (entry?.jsonSchema) {
       try {
@@ -107,7 +108,9 @@ function validateSampleData(
 const VIEW_CONTEXT_KEYS = ['listing', 'detail', 'inline'] as const;
 
 function validateViewDefaults(
-  defaults: Record<string, { default?: string; listing?: string; detail?: string; inline?: string }> | undefined,
+  defaults:
+    | Record<string, { default?: string; listing?: string; detail?: string; inline?: string }>
+    | undefined,
   kind: 'node' | 'edge',
   viewEntities: ViewRegistry['nodes'] | ViewRegistry['edges'],
   warnings: SchemaViewWarning[],

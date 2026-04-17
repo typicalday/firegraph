@@ -7,10 +7,11 @@
  *   schema.json      (optional) — JSON Schema for document data → FieldMeta[]
  */
 
-import path from 'path';
 import fs from 'fs';
-import { jsonSchemaToFieldMeta } from '../../src/json-schema.js';
+import path from 'path';
+
 import type { FieldMeta } from '../../src/json-schema.js';
+import { jsonSchemaToFieldMeta } from '../../src/json-schema.js';
 import type { EntityViewMeta, ViewMeta } from '../../src/views.js';
 import { loadViewClasses, sanitizeTagPart } from './entities-loader.js';
 
@@ -85,7 +86,9 @@ export function discoverCollections(entitiesDir: string): DiscoveredCollection[]
       const raw = fs.readFileSync(collectionJsonPath, 'utf-8');
       collectionJson = JSON.parse(raw) as CollectionJson;
     } catch (err) {
-      console.warn(`[firegraph] Skipping collection "${name}": invalid collection.json — ${(err as Error).message}`);
+      console.warn(
+        `[firegraph] Skipping collection "${name}": invalid collection.json — ${(err as Error).message}`,
+      );
       continue;
     }
 
@@ -119,7 +122,10 @@ export function discoverCollections(entitiesDir: string): DiscoveredCollection[]
     let viewsPath: string | undefined;
     for (const ext of ['ts', 'js', 'mts', 'mjs']) {
       const candidate = path.join(dir, `views.${ext}`);
-      if (fs.existsSync(candidate)) { viewsPath = candidate; break; }
+      if (fs.existsSync(candidate)) {
+        viewsPath = candidate;
+        break;
+      }
     }
 
     // sample.json is optional
@@ -127,7 +133,10 @@ export function discoverCollections(entitiesDir: string): DiscoveredCollection[]
     const sampleJsonPath = path.join(dir, 'sample.json');
     if (fs.existsSync(sampleJsonPath)) {
       try {
-        sampleData = JSON.parse(fs.readFileSync(sampleJsonPath, 'utf-8')) as Record<string, unknown>;
+        sampleData = JSON.parse(fs.readFileSync(sampleJsonPath, 'utf-8')) as Record<
+          string,
+          unknown
+        >;
       } catch {
         // ignore parse errors
       }
@@ -172,7 +181,9 @@ export async function buildCollectionViewRegistry(
       }));
       result[col.name] = { views, sampleData: col.sampleData };
     } catch (err) {
-      console.warn(`[firegraph] Failed to load views for collection "${col.name}": ${(err as Error).message}`);
+      console.warn(
+        `[firegraph] Failed to load views for collection "${col.name}": ${(err as Error).message}`,
+      );
     }
   }
   return result;

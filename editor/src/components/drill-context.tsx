@@ -1,4 +1,13 @@
-import { createContext, useContext, useReducer, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react';
 
 export interface DrillFrame {
   uid: string;
@@ -46,8 +55,20 @@ type DrillAction =
   | { type: 'RESET'; rootUid: string }
   | { type: 'EXTEND_LANE'; laneId: string; frame: DrillFrame }
   | { type: 'EXTEND_PATH'; laneId: string; frames: DrillFrame[] }
-  | { type: 'FORK_AND_DRILL'; fromLaneId: string; fromIndex: number; frame: DrillFrame; newLaneId: string }
-  | { type: 'FORK_AND_DRILL_PATH'; fromLaneId: string; fromIndex: number; frames: DrillFrame[]; newLaneId: string }
+  | {
+      type: 'FORK_AND_DRILL';
+      fromLaneId: string;
+      fromIndex: number;
+      frame: DrillFrame;
+      newLaneId: string;
+    }
+  | {
+      type: 'FORK_AND_DRILL_PATH';
+      fromLaneId: string;
+      fromIndex: number;
+      frames: DrillFrame[];
+      newLaneId: string;
+    }
   | { type: 'CREATE_LANE'; newLaneId: string; frames: DrillFrame[] }
   | { type: 'POP_TO'; laneId: string; index: number }
   | { type: 'CLOSE_LANE'; laneId: string; rootUid: string }
@@ -142,8 +163,7 @@ function drillReducer(state: DrillState, action: DrillAction): DrillState {
       }
       return {
         lanes: remaining,
-        activeLaneId:
-          state.activeLaneId === action.laneId ? remaining[0].id : state.activeLaneId,
+        activeLaneId: state.activeLaneId === action.laneId ? remaining[0].id : state.activeLaneId,
       };
     }
     case 'SWITCH_LANE': {
@@ -218,22 +238,22 @@ export function DrillProvider({
   initialPaths?: DrillFrame[][];
   children: ReactNode;
 }) {
-  const [state, dispatch] = useReducer(
-    drillReducer,
-    { rootUid, initialPaths },
-    (init) => {
-      laneCounter = 0;
-      if (init.initialPaths && init.initialPaths.length > 0) {
-        const lanes = init.initialPaths.map((frames) => ({
-          id: nextLaneId(),
-          frames: [makeRootFrame(init.rootUid), ...frames],
-        }));
-        return { lanes, activeLaneId: lanes[0].id, previewLaneId: undefined };
-      }
-      const id = nextLaneId();
-      return { lanes: [{ id, frames: [makeRootFrame(init.rootUid)] }], activeLaneId: id, previewLaneId: undefined };
-    },
-  );
+  const [state, dispatch] = useReducer(drillReducer, { rootUid, initialPaths }, (init) => {
+    laneCounter = 0;
+    if (init.initialPaths && init.initialPaths.length > 0) {
+      const lanes = init.initialPaths.map((frames) => ({
+        id: nextLaneId(),
+        frames: [makeRootFrame(init.rootUid), ...frames],
+      }));
+      return { lanes, activeLaneId: lanes[0].id, previewLaneId: undefined };
+    }
+    const id = nextLaneId();
+    return {
+      lanes: [{ id, frames: [makeRootFrame(init.rootUid)] }],
+      activeLaneId: id,
+      previewLaneId: undefined,
+    };
+  });
 
   // Reset when rootUid changes (but not on initial mount — the initializer handles that)
   const prevRootUid = useRef(rootUid);
@@ -273,13 +293,10 @@ export function DrillProvider({
     dispatch({ type: 'EXTEND_PATH', laneId, frames });
   }, []);
 
-  const forkAndDrill = useCallback(
-    (fromLaneId: string, fromIndex: number, frame: DrillFrame) => {
-      const newLaneId = nextLaneId();
-      dispatch({ type: 'FORK_AND_DRILL', fromLaneId, fromIndex, frame, newLaneId });
-    },
-    [],
-  );
+  const forkAndDrill = useCallback((fromLaneId: string, fromIndex: number, frame: DrillFrame) => {
+    const newLaneId = nextLaneId();
+    dispatch({ type: 'FORK_AND_DRILL', fromLaneId, fromIndex, frame, newLaneId });
+  }, []);
 
   const forkAndDrillPath = useCallback(
     (fromLaneId: string, fromIndex: number, frames: DrillFrame[]) => {
@@ -352,14 +369,29 @@ export function DrillProvider({
       clearPreview,
       commitPreview,
     }),
-    [state.lanes, state.activeLaneId, state.previewLaneId, activeLane, drillIn, drillPath, extendLane, extendPath, forkAndDrill, forkAndDrillPath, createLane, popTo, closeLane, switchLane, setRootType, previewFrame, clearPreview, commitPreview],
+    [
+      state.lanes,
+      state.activeLaneId,
+      state.previewLaneId,
+      activeLane,
+      drillIn,
+      drillPath,
+      extendLane,
+      extendPath,
+      forkAndDrill,
+      forkAndDrillPath,
+      createLane,
+      popTo,
+      closeLane,
+      switchLane,
+      setRootType,
+      previewFrame,
+      clearPreview,
+      commitPreview,
+    ],
   );
 
-  return (
-    <DrillContext.Provider value={value}>
-      {children}
-    </DrillContext.Provider>
-  );
+  return <DrillContext.Provider value={value}>{children}</DrillContext.Provider>;
 }
 
 // --- Hook ---

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+
 import { SHARD_SEPARATOR } from './internal/constants.js';
 
 export function computeNodeDocId(uid: string): string {

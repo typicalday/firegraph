@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
 import path from 'path';
-import { discoverCollections, buildCollectionViewRegistry } from '../../editor/server/collections-loader.js';
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildCollectionViewRegistry,
+  discoverCollections,
+} from '../../editor/server/collections-loader.js';
 
 const FIXTURES = path.join(import.meta.dirname, '..', 'fixtures');
 const ENTITIES_DIR = path.join(FIXTURES, 'entities');

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useState } from 'react';
 
 export type ChatBarMode = 'collapsed' | 'expanded';
 
@@ -17,9 +17,7 @@ export function ChatBarProvider({ children }: { children: ReactNode }) {
   const collapse = useCallback(() => setMode('collapsed'), []);
 
   return (
-    <ChatBarContext.Provider value={{ mode, expand, collapse }}>
-      {children}
-    </ChatBarContext.Provider>
+    <ChatBarContext.Provider value={{ mode, expand, collapse }}>{children}</ChatBarContext.Provider>
   );
 }
 

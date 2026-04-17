@@ -1,4 +1,4 @@
-import type { SummarizedRecord, SummarizedEdge } from './types.js';
+import type { SummarizedEdge, SummarizedRecord } from './types.js';
 
 export function summarizeRecord(r: Record<string, unknown> | null): SummarizedRecord | null {
   if (!r) return null;

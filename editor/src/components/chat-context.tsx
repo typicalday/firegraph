@@ -1,6 +1,15 @@
-import { createContext, useContext, useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { ChatClient } from '../chat-client';
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
 import type { ChatArtifact } from '../artifact-types';
+import { ChatClient } from '../chat-client';
 
 // --- Types ---
 
@@ -60,7 +69,13 @@ function saveMessages(messages: ChatMessage[]) {
 
 // --- Provider ---
 
-export function ChatProvider({ chatEnabled, children }: { chatEnabled: boolean; children: ReactNode }) {
+export function ChatProvider({
+  chatEnabled,
+  children,
+}: {
+  chatEnabled: boolean;
+  children: ReactNode;
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>(loadMessages);
   const [status, setStatus] = useState<ConnectionStatus>(chatEnabled ? 'checking' : 'disconnected');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -159,21 +174,25 @@ export function ChatProvider({ chatEnabled, children }: { chatEnabled: boolean; 
           const event = result.value;
           if (event.kind === 'text') {
             setMessages((prev) =>
-              prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + event.text } : m)),
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, content: m.content + event.text } : m,
+              ),
             );
           } else if (event.kind === 'artifact') {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantId
-                  ? { ...m, artifacts: [...(m.artifacts ?? []), event.artifact], activeToolCall: null }
+                  ? {
+                      ...m,
+                      artifacts: [...(m.artifacts ?? []), event.artifact],
+                      activeToolCall: null,
+                    }
                   : m,
               ),
             );
           } else if (event.kind === 'tool_start') {
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, activeToolCall: event.command } : m,
-              ),
+              prev.map((m) => (m.id === assistantId ? { ...m, activeToolCall: event.command } : m)),
             );
           }
           result = await gen.next();
@@ -186,13 +205,17 @@ export function ChatProvider({ chatEnabled, children }: { chatEnabled: boolean; 
 
         // Mark streaming done
         setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, streaming: false, activeToolCall: null } : m)),
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, streaming: false, activeToolCall: null } : m,
+          ),
         );
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, role: 'error', content: errorMessage, streaming: false } : m,
+            m.id === assistantId
+              ? { ...m, role: 'error', content: errorMessage, streaming: false }
+              : m,
           ),
         );
       } finally {
@@ -209,7 +232,9 @@ export function ChatProvider({ chatEnabled, children }: { chatEnabled: boolean; 
   }, []);
 
   return (
-    <ChatContext.Provider value={{ messages, status, isStreaming, sendMessage, clearHistory, chatEnabled }}>
+    <ChatContext.Provider
+      value={{ messages, status, isStreaming, sendMessage, clearHistory, chatEnabled }}
+    >
       {children}
     </ChatContext.Provider>
   );

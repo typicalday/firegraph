@@ -4,14 +4,11 @@
  * Validates corner cases work correctly through pipeline mode:
  * empty data, deeply nested data, unicode, timestamps.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Timestamp } from '@google-cloud/firestore';
-import {
-  createPipelineClient,
-  uniqueCollectionPath,
-  cleanupCollection,
-} from './setup.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
 import type { GraphClient } from '../../src/types.js';
+import { cleanupCollection, createPipelineClient, uniqueCollectionPath } from './setup.js';
 
 describe('pipeline edge cases', () => {
   const collPath = uniqueCollectionPath();

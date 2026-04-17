@@ -32,7 +32,6 @@ export interface ViewMeta {
 /** A React function component that receives entity data. */
 export type ReactViewComponent = (props: { data: Record<string, unknown> }) => unknown;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClass = { new (...args: any[]): any };
 
 /**
@@ -41,7 +40,6 @@ type AnyClass = { new (...args: any[]): any };
  * (where HTMLElement may be shimmed by the editor server).
  */
 function getBaseClass(): AnyClass {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const g = globalThis as any;
   return g.HTMLElement ?? class {};
 }
@@ -53,13 +51,9 @@ function getBaseClass(): AnyClass {
  * `react-dom/client` at render time. React is resolved from the project's
  * own `node_modules` — firegraph does not bundle or depend on React itself.
  */
-export function wrapReact(
-  Component: ReactViewComponent,
-  meta: ViewMeta,
-): ViewComponentClass {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function wrapReact(Component: ReactViewComponent, meta: ViewMeta): ViewComponentClass {
   let React: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   let ReactDOM: any = null;
   let loaded = false;
 
@@ -82,7 +76,7 @@ export function wrapReact(
     static description = meta.description;
 
     _data: Record<string, unknown> = {};
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     _root: any = null;
     _mounted = false;
 

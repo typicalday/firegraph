@@ -1,10 +1,11 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Schema, GraphRecord } from '../types';
+
+import type { GraphRecord, Schema } from '../types';
 import { getTypeBadgeColor } from '../utils';
+import type { DrillFrame } from './drill-context';
 import { useFocus } from './focus-context';
 import { useScope } from './path-context';
-import type { DrillFrame } from './drill-context';
 
 interface Props {
   schema: Schema;
@@ -15,19 +16,32 @@ export default function NearbyPanel({ schema }: Props) {
   const navigate = useNavigate();
 
   const rootFrame: DrillFrame = useMemo(
-    () => focused
-      ? { uid: focused.uid, nodeType: focused.nodeType, edgeType: '', direction: 'out' as const }
-      : { uid: '', nodeType: '', edgeType: '', direction: 'out' as const },
+    () =>
+      focused
+        ? { uid: focused.uid, nodeType: focused.nodeType, edgeType: '', direction: 'out' as const }
+        : { uid: '', nodeType: '', edgeType: '', direction: 'out' as const },
     [focused?.uid, focused?.nodeType],
   );
 
   if (!focused) {
     return (
       <div className="px-3 py-6 text-center">
-        <svg className="w-6 h-6 mx-auto mb-2 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        <svg
+          className="w-6 h-6 mx-auto mb-2 text-slate-600"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.5}
+            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+          />
         </svg>
-        <p className="text-[11px] text-slate-500">Navigate to a node to explore nearby relationships</p>
+        <p className="text-[11px] text-slate-500">
+          Navigate to a node to explore nearby relationships
+        </p>
       </div>
     );
   }
@@ -40,7 +54,9 @@ export default function NearbyPanel({ schema }: Props) {
         onMouseEnter={() => onPeekNearby(rootFrame)}
       >
         <div className="flex items-center gap-1.5">
-          <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${getTypeBadgeColor(focused.nodeType)}`}>
+          <span
+            className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${getTypeBadgeColor(focused.nodeType)}`}
+          >
             {focused.nodeType}
           </span>
           <span className="text-[11px] font-mono text-slate-300 truncate">{focused.uid}</span>
@@ -141,9 +157,7 @@ function NearbyEdgeSection({
           />
         ))
       )}
-      {hasMore && (
-        <p className="text-[10px] text-slate-600 px-1 mt-1">and more...</p>
-      )}
+      {hasMore && <p className="text-[10px] text-slate-600 px-1 mt-1">and more...</p>}
     </div>
   );
 }
@@ -182,7 +196,10 @@ function NearbyGroup({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         {inverseLabel ? (
-          <span className="text-amber-400/80 text-[11px] font-mono cursor-help" title={`Inverse of: ${axbType}`}>
+          <span
+            className="text-amber-400/80 text-[11px] font-mono cursor-help"
+            title={`Inverse of: ${axbType}`}
+          >
             {inverseLabel}
           </span>
         ) : (
@@ -279,7 +296,9 @@ function NearbyItem({
       onMouseLeave={handleMouseLeave}
       className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-left transition-colors text-slate-400 hover:bg-slate-800 hover:text-slate-200"
     >
-      <span className={`px-1 py-px rounded text-[9px] font-mono shrink-0 ${getTypeBadgeColor(targetType)}`}>
+      <span
+        className={`px-1 py-px rounded text-[9px] font-mono shrink-0 ${getTypeBadgeColor(targetType)}`}
+      >
         {targetType}
       </span>
       <span className="text-[11px] font-mono truncate">{targetUid}</span>

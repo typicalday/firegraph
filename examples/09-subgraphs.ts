@@ -9,12 +9,8 @@
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8188 npx tsx examples/09-subgraphs.ts
  */
 import { Firestore } from '@google-cloud/firestore';
-import {
-  createGraphClient,
-  createRegistry,
-  generateId,
-  RegistryScopeError,
-} from '../src/index.js';
+
+import { createGraphClient, createRegistry, generateId, RegistryScopeError } from '../src/index.js';
 
 const db = new Firestore({ projectId: 'demo-firegraph' });
 
@@ -79,7 +75,7 @@ async function main() {
   const parentMemories = await g.findNodes({ aType: 'memory', allowCollectionScan: true });
   const subMemories = await memories.findNodes({ aType: 'memory', allowCollectionScan: true });
   console.log('Memories in parent:', parentMemories.length); // 0
-  console.log('Memories in subgraph:', subMemories.length);   // 2
+  console.log('Memories in subgraph:', subMemories.length); // 2
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
@@ -116,7 +112,7 @@ async function main() {
   const workspaceTasks = await workspace.findNodes({ aType: 'task', allowCollectionScan: true });
   const nestedTasks = await subtasks.findNodes({ aType: 'task', allowCollectionScan: true });
   console.log('Tasks in workspace:', workspaceTasks.length); // 1
-  console.log('Tasks in subtasks:', nestedTasks.length);     // 1
+  console.log('Tasks in subtasks:', nestedTasks.length); // 1
   console.log();
 
   // ═══════════════════════════════════════════════════════════════
@@ -127,11 +123,29 @@ async function main() {
     // Agents only at root
     { aType: 'agent', axbType: 'is', bType: 'agent', jsonSchema: agentSchema, allowedIn: ['root'] },
     // Memories only in 'memories' subgraphs (at any depth)
-    { aType: 'memory', axbType: 'is', bType: 'memory', jsonSchema: memorySchema, allowedIn: ['**/memories'] },
+    {
+      aType: 'memory',
+      axbType: 'is',
+      bType: 'memory',
+      jsonSchema: memorySchema,
+      allowedIn: ['**/memories'],
+    },
     // Memory links only in 'memories' subgraphs
-    { aType: 'memory', axbType: 'relatedTo', bType: 'memory', jsonSchema: linkSchema, allowedIn: ['**/memories'] },
+    {
+      aType: 'memory',
+      axbType: 'relatedTo',
+      bType: 'memory',
+      jsonSchema: linkSchema,
+      allowedIn: ['**/memories'],
+    },
     // Tasks in workspace subgraphs
-    { aType: 'task', axbType: 'is', bType: 'task', jsonSchema: taskSchema, allowedIn: ['workspace', '**/workspace', '**/subtasks'] },
+    {
+      aType: 'task',
+      axbType: 'is',
+      bType: 'task',
+      jsonSchema: taskSchema,
+      allowedIn: ['workspace', '**/workspace', '**/subtasks'],
+    },
   ]);
 
   const gs = createGraphClient(db, 'examples/subgraphs/scoped', { registry });

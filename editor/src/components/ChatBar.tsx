@@ -1,14 +1,15 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useChat, type ChatMessage } from './chat-context';
-import { useFocusMaybe } from './focus-context';
+
+import type { ChatArtifact } from '../artifact-types';
+import type { AppConfig, Schema, ViewRegistryData } from '../types';
 import { useArtifact } from './artifact-context';
+import { ArtifactContent, getArtifactTitle } from './artifact-views';
 import { useChatBar } from './chat-bar-context';
+import { type ChatMessage, useChat } from './chat-context';
 import { buildChatContext } from './chat-context-builder';
 import { getArtifactSummary } from './ChatPanel';
-import { ArtifactContent, getArtifactTitle } from './artifact-views';
-import type { ChatArtifact } from '../artifact-types';
-import type { Schema, ViewRegistryData, AppConfig } from '../types';
+import { useFocusMaybe } from './focus-context';
 
 interface Props {
   schema: Schema;
@@ -223,7 +224,11 @@ export default function ChatBar({ schema, viewRegistry, config }: Props) {
                 }`}
               />
               <span className="text-xs text-slate-400 font-medium">
-                {status === 'connected' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Offline'}
+                {status === 'connected'
+                  ? 'Connected'
+                  : status === 'checking'
+                    ? 'Checking...'
+                    : 'Offline'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -240,7 +245,15 @@ export default function ChatBar({ schema, viewRegistry, config }: Props) {
                 className="p-1.5 text-slate-500 hover:text-slate-200 transition-colors"
                 title="Close (Esc)"
               >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
                   <path d="M1 1l12 12M13 1L1 13" />
                 </svg>
               </button>
@@ -300,7 +313,16 @@ export default function ChatBar({ schema, viewRegistry, config }: Props) {
                 {isStreaming ? (
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
                 ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
                   </svg>
                 )}
@@ -311,9 +333,7 @@ export default function ChatBar({ schema, viewRegistry, config }: Props) {
 
         {/* Artifact panel (right side, only when artifact is active) */}
         {hasArtifact && (
-          <div
-            className="flex-1 flex flex-col h-full overflow-hidden animate-[slide-in-right_0.2s_ease-out]"
-          >
+          <div className="flex-1 flex flex-col h-full overflow-hidden animate-[slide-in-right_0.2s_ease-out]">
             {/* Artifact header */}
             <div className="shrink-0 border-b border-slate-800 px-5 py-3 flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
@@ -329,7 +349,15 @@ export default function ChatBar({ schema, viewRegistry, config }: Props) {
                 className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors shrink-0 ml-3"
                 title="Close artifact"
               >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
                   <path d="M1 1l12 12M13 1L1 13" />
                 </svg>
               </button>
@@ -369,7 +397,9 @@ function ChatBarMessageBubble({
     return (
       <div className="flex justify-end">
         <div className="bg-indigo-600/20 border border-indigo-500/20 rounded-xl px-4 py-3 max-w-[80%]">
-          <p className="text-sm text-slate-200 whitespace-pre-wrap break-words">{message.content}</p>
+          <p className="text-sm text-slate-200 whitespace-pre-wrap break-words">
+            {message.content}
+          </p>
         </div>
       </div>
     );

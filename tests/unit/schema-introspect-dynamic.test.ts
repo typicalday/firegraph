@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
+
 import { introspectRegistry } from '../../editor/server/schema-introspect.js';
 import { createRegistry } from '../../src/registry.js';
 
@@ -48,8 +49,8 @@ describe('introspectRegistry — isDynamic tagging', () => {
     const dynamicNames = new Set(['agent', 'assignedTo']);
     const meta = introspectRegistry(registry, dynamicNames);
 
-    const tourNode = meta.nodeTypes.find(n => n.aType === 'tour');
-    const agentNode = meta.nodeTypes.find(n => n.aType === 'agent');
+    const tourNode = meta.nodeTypes.find((n) => n.aType === 'tour');
+    const agentNode = meta.nodeTypes.find((n) => n.aType === 'agent');
 
     expect(tourNode?.isDynamic).toBe(false);
     expect(agentNode?.isDynamic).toBe(true);
@@ -59,8 +60,8 @@ describe('introspectRegistry — isDynamic tagging', () => {
     const dynamicNames = new Set(['agent', 'assignedTo']);
     const meta = introspectRegistry(registry, dynamicNames);
 
-    const hasDeparture = meta.edgeTypes.find(e => e.axbType === 'hasDeparture');
-    const assignedTo = meta.edgeTypes.find(e => e.axbType === 'assignedTo');
+    const hasDeparture = meta.edgeTypes.find((e) => e.axbType === 'hasDeparture');
+    const assignedTo = meta.edgeTypes.find((e) => e.axbType === 'assignedTo');
 
     expect(hasDeparture?.isDynamic).toBe(false);
     expect(assignedTo?.isDynamic).toBe(true);
@@ -71,7 +72,7 @@ describe('introspectRegistry — isDynamic tagging', () => {
     const dynamicNames = new Set(['tour']);
     const meta = introspectRegistry(registry, dynamicNames);
 
-    const tourNode = meta.nodeTypes.find(n => n.aType === 'tour');
+    const tourNode = meta.nodeTypes.find((n) => n.aType === 'tour');
     expect(tourNode?.isDynamic).toBe(true);
   });
 
@@ -79,11 +80,11 @@ describe('introspectRegistry — isDynamic tagging', () => {
     const dynamicNames = new Set(['hasDeparture']);
     const meta = introspectRegistry(registry, dynamicNames);
 
-    const hasDeparture = meta.edgeTypes.find(e => e.axbType === 'hasDeparture');
+    const hasDeparture = meta.edgeTypes.find((e) => e.axbType === 'hasDeparture');
     expect(hasDeparture?.isDynamic).toBe(true);
 
     // agent should NOT be tagged since 'agent' is not in dynamicNames
-    const agentNode = meta.nodeTypes.find(n => n.aType === 'agent');
+    const agentNode = meta.nodeTypes.find((n) => n.aType === 'agent');
     expect(agentNode?.isDynamic).toBe(false);
   });
 
@@ -103,7 +104,7 @@ describe('introspectRegistry — isDynamic tagging', () => {
     const dynamicNames = new Set(['agent']);
     const meta = introspectRegistry(registry, dynamicNames);
 
-    const agentNode = meta.nodeTypes.find(n => n.aType === 'agent');
+    const agentNode = meta.nodeTypes.find((n) => n.aType === 'agent');
     expect(agentNode).toBeDefined();
     expect(agentNode!.isDynamic).toBe(true);
     expect(agentNode!.isNodeEntry).toBe(true);

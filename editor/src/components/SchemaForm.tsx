@@ -1,4 +1,5 @@
 import { useState } from 'react';
+
 import type { FieldMeta } from '../types';
 
 interface Props {
@@ -175,7 +176,14 @@ function ArrayField({
   const [collapsed, setCollapsed] = useState(false);
 
   const addItem = () => {
-    const defaultVal = field.itemMeta?.type === 'object' ? {} : field.itemMeta?.type === 'string' ? '' : field.itemMeta?.type === 'number' ? 0 : null;
+    const defaultVal =
+      field.itemMeta?.type === 'object'
+        ? {}
+        : field.itemMeta?.type === 'string'
+          ? ''
+          : field.itemMeta?.type === 'number'
+            ? 0
+            : null;
     onChange([...items, defaultVal]);
   };
 
@@ -221,7 +229,12 @@ function ArrayField({
                 className="text-slate-600 hover:text-red-400 transition-colors mt-2"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
@@ -232,7 +245,12 @@ function ArrayField({
             className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
           >
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
             </svg>
             Add item
           </button>

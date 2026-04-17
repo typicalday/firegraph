@@ -1,14 +1,15 @@
-import { describe, it, expect, afterAll } from 'vitest';
-import { Timestamp, GeoPoint, FieldValue } from '@google-cloud/firestore';
+import { FieldValue, GeoPoint, Timestamp } from '@google-cloud/firestore';
+import { afterAll, describe, expect, it } from 'vitest';
+
+import { MigrationError } from '../../src/errors.js';
 import {
-  defaultExecutor,
   compileMigrationFn,
   compileMigrations,
-  precompileSource,
+  defaultExecutor,
   destroySandboxWorker,
+  precompileSource,
 } from '../../src/sandbox.js';
 import { SERIALIZATION_TAG } from '../../src/serialization.js';
-import { MigrationError } from '../../src/errors.js';
 
 // Cleanup: terminate the sandbox worker after all tests so vitest doesn't hang.
 afterAll(async () => {
@@ -122,7 +123,7 @@ describe('defaultExecutor — sandbox isolation', () => {
         }
       }`,
     );
-    const result = await fn({ x: 1 }) as Record<string, unknown>;
+    const result = (await fn({ x: 1 })) as Record<string, unknown>;
     // lockdown() makes Function.prototype.constructor throw
     expect(result.blocked).toBe(true);
   });
@@ -186,8 +187,10 @@ describe('precompileSource', () => {
     let called = false;
     const customExecutor = (source: string) => {
       called = true;
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + source)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+      return new Function('return ' + source)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
 
     await precompileSource('(d) => d', customExecutor);
@@ -224,8 +227,10 @@ describe('compileMigrationFn', () => {
     let executorCalled = false;
     const customExecutor = (source: string) => {
       executorCalled = true;
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + source)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+      return new Function('return ' + source)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
 
     // Use a unique source to avoid cache
@@ -241,13 +246,17 @@ describe('compileMigrationFn', () => {
 
     const executorA = (s: string) => {
       executorACalls++;
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + s)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+      return new Function('return ' + s)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
     const executorB = (s: string) => {
       executorBCalls++;
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + s)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+      return new Function('return ' + s)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
 
     const fnA = compileMigrationFn(source, executorA);
@@ -265,9 +274,7 @@ describe('compileMigrationFn', () => {
       throw new Error('bad executor');
     };
 
-    expect(() =>
-      compileMigrationFn('(d) => d', badExecutor),
-    ).toThrow(MigrationError);
+    expect(() => compileMigrationFn('(d) => d', badExecutor)).toThrow(MigrationError);
   });
 });
 
@@ -299,8 +306,10 @@ describe('compileMigrations', () => {
     let calls = 0;
     const countingExecutor = (source: string) => {
       calls++;
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + source)() as (d: Record<string, unknown>) => Record<string, unknown>;
+
+      return new Function('return ' + source)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
 
     // Use unique sources to avoid cache
@@ -323,8 +332,9 @@ describe('compileMigrations', () => {
     // compileMigrations time. With defaultExecutor, validation is deferred
     // to execution time — use precompileSource() for eager validation.
     const syncExecutor = (source: string) => {
-      // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      return new Function('return ' + source)() as (d: Record<string, unknown>) => Record<string, unknown>;
+      return new Function('return ' + source)() as (
+        d: Record<string, unknown>,
+      ) => Record<string, unknown>;
     };
 
     expect(() => compileMigrations(stored, syncExecutor)).toThrow(MigrationError);
@@ -333,9 +343,7 @@ describe('compileMigrations', () => {
   it('with default executor, invalid source errors surface at execution time', async () => {
     // defaultExecutor defers validation to the worker — compileMigrations
     // succeeds, but the compiled function rejects when called.
-    const stored = [
-      { fromVersion: 0, toVersion: 1, up: 'not valid {' },
-    ];
+    const stored = [{ fromVersion: 0, toVersion: 1, up: 'not valid {' }];
 
     const steps = compileMigrations(stored);
     expect(steps).toHaveLength(1);
