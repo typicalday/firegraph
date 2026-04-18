@@ -626,9 +626,10 @@ export class GraphClientImpl implements DynamicGraphClient {
 /**
  * Create a `GraphClient` backed by an arbitrary `StorageBackend`.
  *
- * Used by backend-specific factories (D1, DO-SQLite, etc.) — most callers
- * should use the higher-level `createGraphClient(firestore, ...)` overload
- * below or import the equivalent from `firegraph/d1` / `firegraph/do-sqlite`.
+ * Used by backend-specific factories (e.g. `createDOClient` in
+ * `firegraph/cloudflare`) — most callers should use the higher-level
+ * `createGraphClient(firestore, ...)` overload below for Firestore, or the
+ * Cloudflare factory for DO-backed graphs.
  */
 export function createGraphClientFromBackend(
   backend: StorageBackend,

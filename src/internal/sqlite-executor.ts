@@ -1,14 +1,15 @@
 /**
  * Driver-level SQLite abstraction.
  *
- * Two flavors of SQLite are supported:
- *  - Cloudflare D1 (`createD1Backend`) — async API, atomic batches via
- *    `db.batch()`, no interactive transactions.
- *  - Cloudflare Durable Object SQLite (`createDOSqliteBackend`) — sync API
- *    surfaced as async; supports both atomic batches and interactive
- *    transactions via `transactionSync`.
+ * The `SqliteBackend` only depends on this interface, not on any particular
+ * SQLite driver. Callers wire up whichever driver suits their runtime —
+ * `better-sqlite3` in Node tests, D1 in Workers, DO SQLite inside a Durable
+ * Object, etc. — and `createSqliteBackend` composes the rest.
  *
- * The `SqliteBackend` only depends on this interface, not on either driver.
+ * Some drivers are fully async with native atomic batches (e.g. D1); others
+ * are synchronous and wrap `run`/`all` in immediately-resolved promises while
+ * providing interactive transactions via a sync primitive (e.g. DO SQLite's
+ * `transactionSync`). Both shapes fit behind this interface.
  */
 
 export interface SqliteExecutor {

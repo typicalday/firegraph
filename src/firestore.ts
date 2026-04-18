@@ -2,8 +2,10 @@
  * Firestore-specific client factory.
  *
  * Kept in its own module so that bundlers don't pull
- * `@google-cloud/firestore` into SQLite-only entry points
- * (`firegraph/d1`, `firegraph/do-sqlite`).
+ * `@google-cloud/firestore` into non-Firestore entry points — most
+ * importantly the Cloudflare DO backend (`firegraph/cloudflare`) and the
+ * routing primitive (`firegraph/backend`), both of which must load cleanly
+ * in a Workers environment where the Node Firestore SDK is unavailable.
  */
 
 import type { Firestore } from '@google-cloud/firestore';

@@ -1,8 +1,10 @@
 /**
- * Cloudflare Workers compatibility check for the d1 and do-sqlite entry
- * points. These bundles must not statically import Node-only modules
- * (`node:worker_threads`) or the Firestore SDK — both are unavailable in
- * the Workers runtime. A regression here turns a deploy into a 502.
+ * Cloudflare Workers compatibility check for every entry point that ships
+ * as Workers-facing: the routing primitive (`firegraph/backend`) and the
+ * Cloudflare DO backend (`firegraph/cloudflare`). These bundles must not
+ * statically import Node-only modules (`node:worker_threads`, `node:fs`)
+ * or the Firestore SDK — none are available in the Workers runtime. A
+ * regression here turns a deploy into a 502.
  *
  * Two complementary checks:
  *
@@ -29,13 +31,13 @@ import { describe, expect, it } from 'vitest';
 const DIST = resolve(dirname(fileURLToPath(import.meta.url)), '../../dist');
 
 /**
- * Modules that must never appear in the d1/do-sqlite Worker bundles. Includes:
+ * Modules that must never appear in the Workers-facing bundles. Includes:
  *
  *   - `@google-cloud/firestore` — Node-only Firestore SDK, would crash a Worker.
  *   - `node:worker_threads`/`worker_threads` — Node-only; sandbox worker is
  *     lazy-loaded behind dynamic import so it must not be in the static graph.
  *   - `node:fs`/`fs` — Node-only filesystem APIs (used only by `discover.ts`,
- *     which the d1/do-sqlite entries should never transitively pull in).
+ *     which Workers-facing entries should never transitively pull in).
  *   - `ses` — only used by the sandbox worker thread; should never be reachable
  *     statically from the Worker bundle.
  *
@@ -72,7 +74,7 @@ function walkStaticImports(entry: string): Map<string, string> {
   return visited;
 }
 
-describe.each(['d1.js', 'do-sqlite.js', 'backend.js'])(
+describe.each(['backend.js', 'cloudflare/index.js'])(
   'bundle %s — Cloudflare Workers static-import allowlist',
   (entryName) => {
     const entry = resolve(DIST, entryName);
@@ -198,7 +200,7 @@ function isInsideAnyRange(pos: number, ranges: Range[]): boolean {
   return false;
 }
 
-describe.each(['d1.cjs', 'do-sqlite.cjs', 'backend.cjs'])(
+describe.each(['backend.cjs', 'cloudflare/index.cjs'])(
   'bundle %s — Cloudflare Workers no-eager-require allowlist (CJS)',
   (entryName) => {
     const entry = resolve(DIST, entryName);

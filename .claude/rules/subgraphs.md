@@ -156,4 +156,4 @@ The routing primitive composes with everything above — `allowedIn` validation,
 - `findEdgesGlobal` runs against the base backend only; it does not fan out.
 - `removeNodeCascade` cascades inside the base backend only; callers enumerate routed children explicitly.
 
-See `.claude/rules/routing.md` for the full contract and `docs/adr/0001-routing-without-do-rpc.md` for why firegraph ships the router but not a DO RPC layer.
+See `.claude/rules/routing.md` for the full contract.

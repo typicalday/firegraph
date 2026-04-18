@@ -8,8 +8,6 @@ export default defineConfig({
     'src/react.ts',
     'src/svelte.ts',
     'src/query-client/index.ts',
-    'src/d1.ts',
-    'src/do-sqlite.ts',
     'src/cloudflare/index.ts',
   ],
   format: ['esm', 'cjs'],

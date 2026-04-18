@@ -47,26 +47,6 @@
         "default": "./dist/query-client/index.cjs"
       }
     },
-    "./d1": {
-      "import": {
-        "types": "./dist/d1.d.ts",
-        "default": "./dist/d1.js"
-      },
-      "require": {
-        "types": "./dist/d1.d.cts",
-        "default": "./dist/d1.cjs"
-      }
-    },
-    "./do-sqlite": {
-      "import": {
-        "types": "./dist/do-sqlite.d.ts",
-        "default": "./dist/do-sqlite.js"
-      },
-      "require": {
-        "types": "./dist/do-sqlite.d.cts",
-        "default": "./dist/do-sqlite.cjs"
-      }
-    },
     "./cloudflare": {
       "import": {
         "types": "./dist/cloudflare/index.d.ts",

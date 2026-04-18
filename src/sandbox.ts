@@ -272,7 +272,7 @@ function hashSource(source: string): string {
 // ---------------------------------------------------------------------------
 // Lazy serialization loader. Pulls `@google-cloud/firestore` only when the
 // default executor actually runs a migration — keeps Firestore out of
-// SQLite-only bundles (D1, DO-SQLite).
+// non-Firestore bundles (e.g. the Cloudflare DO backend).
 // ---------------------------------------------------------------------------
 
 let _serializationModule: typeof SerializationModule | null = null;

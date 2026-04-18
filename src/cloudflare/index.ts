@@ -47,7 +47,7 @@ export type {
 } from './backend.js';
 export { DORPCBackend } from './backend.js';
 export type { DOClientOptions } from './client.js';
-export { createDOClient } from './client.js';
+export { createDOClient, createSiblingClient } from './client.js';
 export type {
   BatchOp,
   DOSqlCursor,

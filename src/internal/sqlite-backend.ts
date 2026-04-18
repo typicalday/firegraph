@@ -565,8 +565,8 @@ class SqliteBackendImpl implements StorageBackend {
  *
  * `tableName` is the single table that holds every triple. The driver must
  * have already created the table and indexes via `buildSchemaStatements()`
- * (the public driver factories — `createD1GraphClient` and
- * `createDOSqliteGraphClient` — handle this automatically).
+ * before any reads/writes arrive — callers that ship their own SQLite
+ * driver are responsible for wiring that up.
  */
 export function createSqliteBackend(
   executor: SqliteExecutor,

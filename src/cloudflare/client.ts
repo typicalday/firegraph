@@ -101,15 +101,13 @@ import type {
 import type { FiregraphNamespace } from './backend.js';
 import { DORPCBackend } from './backend.js';
 
-export interface DOClientOptions extends GraphClientOptions {
-  /**
-   * Logical table label — informational only, surfaced as
-   * `backend.collectionPath`. The DO's actual table name is chosen on the
-   * DO side (see `FiregraphDOOptions.table`) and defaults to `'firegraph'`;
-   * the two must agree if the user overrides the DO's table.
-   */
-  table?: string;
-}
+/**
+ * Options for `createDOClient`. Same shape as `GraphClientOptions`; the DO
+ * backend does not expose a table label of its own — the DO owns its SQLite
+ * schema (see `FiregraphDOOptions.table`, defaults to `'firegraph'`) and
+ * that choice isn't surfaced through the client factory.
+ */
+export type DOClientOptions = GraphClientOptions;
 
 /**
  * Create a `GraphClient` backed by a `FiregraphDO` Durable Object.
@@ -154,9 +152,6 @@ export function createDOClient(
     );
   }
 
-  const { table, ...clientOptions } = options;
-  const collectionLabel = table ?? 'firegraph';
-
   // Forward-reference the client so the backend's registry accessor sees
   // whatever registry the client currently holds — including late updates
   // from `reloadRegistry()` in dynamic mode. The closure is invoked lazily
@@ -183,11 +178,26 @@ export function createDOClient(
     return (client as unknown as GraphClientImpl).getRegistrySnapshot();
   };
 
+  // Factory used by `createSiblingClient` to spin up a peer root client
+  // pointing at a different DO while reusing this call's namespace and
+  // options. Carried on the backend so `createSiblingClient` can locate it
+  // from any `GraphClient` (root or subgraph) without the caller having to
+  // hold onto the original `createDOClient` arguments.
+  //
+  // We snapshot `options` (shallow copy) at capture time so that a later
+  // mutation by the caller — e.g. setting `options.registry = newReg`
+  // after construction — doesn't silently change sibling behaviour. Deep
+  // cloning isn't needed: `GraphClientOptions` values are either primitives
+  // or registries/functions the caller shouldn't mutate in place anyway.
+  const siblingOptions: DOClientOptions = { ...options };
+  const makeSiblingClient = (siblingRootKey: string): GraphClient | DynamicGraphClient =>
+    createDOClient(namespace, siblingRootKey, siblingOptions);
+
   const backend = new DORPCBackend(namespace, {
-    table: collectionLabel,
     scopePath: '',
     storageKey: rootKey,
     registryAccessor,
+    makeSiblingClient,
   });
 
   // Dynamic registry with an explicit meta-collection → spin up a second
@@ -196,8 +206,8 @@ export function createDOClient(
   // simpler bootstrap and avoids an extra DO when the caller doesn't need
   // the isolation.
   let metaBackend: StorageBackend | undefined;
-  if (clientOptions.registryMode?.collection) {
-    const metaKey = clientOptions.registryMode.collection;
+  if (options.registryMode?.collection) {
+    const metaKey = options.registryMode.collection;
     if (metaKey.includes('/')) {
       throw new FiregraphError(
         `createDOClient: registryMode.collection must not contain "/". Got: "${metaKey}".`,
@@ -206,16 +216,106 @@ export function createDOClient(
     }
     if (metaKey !== rootKey) {
       metaBackend = new DORPCBackend(namespace, {
-        table: collectionLabel,
         scopePath: '',
         storageKey: metaKey,
         // Meta backend shares the accessor so its own `removeNodeCascade`
-        // (unlikely, but safe) would also see the live registry.
+        // (unlikely, but safe) would also see the live registry. Sibling
+        // factory is carried for consistency; there's no user-facing path
+        // that creates a sibling from the meta backend, but it costs
+        // nothing to keep the two backends in sync.
         registryAccessor,
+        makeSiblingClient,
       });
     }
   }
 
-  client = createGraphClientFromBackend(backend, clientOptions, metaBackend);
+  client = createGraphClientFromBackend(backend, options, metaBackend);
   return client;
+}
+
+/**
+ * Construct a peer `GraphClient` that shares `client`'s DO namespace and
+ * construction options but targets a different root DO (i.e. a different
+ * root key — typically another tenant, workspace, or shard).
+ *
+ * This is the cheap, ergonomic way to talk to another root graph from
+ * inside a single Worker request without re-plumbing `createDOClient`'s
+ * arguments. The namespace binding plus the options snapshot captured at
+ * the original `createDOClient` call (registry, query mode, migration
+ * sandbox, `registryMode`, etc.) are inherited by the sibling.
+ *
+ * Works from any DO-backed client — root or subgraph. Passing a client
+ * that wasn't produced by `createDOClient` (e.g. a Firestore-backed
+ * client, or a `DORPCBackend` instantiated directly without the sibling
+ * factory wired in) throws `UNSUPPORTED_OPERATION` with an explanation.
+ *
+ * ## Dynamic-registry caveat
+ *
+ * When the original client uses `registryMode: 'dynamic'`, siblings
+ * inherit the *config* (so they're also dynamic clients) but NOT the
+ * compiled runtime state. Meta-type nodes and `reloadRegistry()` results
+ * are per-client; a sibling's `defineNodeType`/`defineEdgeType` calls go
+ * to that sibling's own root DO, and its registry must be independently
+ * populated and reloaded. If every tenant shares the same schema, pass a
+ * static `registry` instead of dynamic mode — static registries ARE
+ * inherited verbatim.
+ *
+ * @param client           A client previously returned by `createDOClient`.
+ * @param siblingRootKey   Root key for the peer DO. Same validation rules
+ *                         as `createDOClient`'s `rootKey`: non-empty,
+ *                         no `/`.
+ */
+export function createSiblingClient(client: GraphClient, siblingRootKey: string): GraphClient;
+export function createSiblingClient(
+  client: DynamicGraphClient,
+  siblingRootKey: string,
+): DynamicGraphClient;
+export function createSiblingClient(
+  client: GraphClient | DynamicGraphClient,
+  siblingRootKey: string,
+): GraphClient | DynamicGraphClient {
+  if (!siblingRootKey || typeof siblingRootKey !== 'string') {
+    throw new FiregraphError(
+      `createSiblingClient: siblingRootKey must be a non-empty string, got ${JSON.stringify(siblingRootKey)}.`,
+      'INVALID_ARGUMENT',
+    );
+  }
+  if (siblingRootKey.includes('/')) {
+    throw new FiregraphError(
+      `createSiblingClient: siblingRootKey must not contain "/". Got: "${siblingRootKey}".`,
+      'INVALID_ARGUMENT',
+    );
+  }
+
+  // `GraphClientImpl` exposes `getBackend()` as an `@internal` accessor.
+  // Cast through it to read the backend; if the caller handed us a non-
+  // firegraph client wrapper that's a programming error at their layer,
+  // surfaced here as a clear error rather than an opaque property miss.
+  //
+  // We deliberately duck-type the backend (`typeof maker === 'function'`)
+  // rather than using `instanceof DORPCBackend`: in monorepos with
+  // duplicated `firegraph` copies a DO client built against copy A would
+  // fail `instanceof` against copy B's class reference, even though every
+  // other invariant holds. The duck-type check stays correct across module
+  // boundaries — the only way `makeSiblingClient` exists on a backend is
+  // if `createDOClient` wired it up.
+  const impl = client as unknown as GraphClientImpl;
+  const backend: StorageBackend | undefined =
+    typeof impl.getBackend === 'function' ? impl.getBackend() : undefined;
+  const maker =
+    backend &&
+    (
+      backend as {
+        makeSiblingClient?: (k: string) => GraphClient | DynamicGraphClient;
+      }
+    ).makeSiblingClient;
+  if (typeof maker !== 'function') {
+    throw new FiregraphError(
+      'createSiblingClient: the provided client is not backed by a DO client produced by `createDOClient`. ' +
+        'Sibling construction is only available for DO-backed clients.',
+      'UNSUPPORTED_OPERATION',
+    );
+  }
+
+  return maker(siblingRootKey);
 }

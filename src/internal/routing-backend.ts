@@ -290,12 +290,12 @@ class RoutingStorageBackend implements StorageBackend {
  *
  * @example
  * ```ts
- * const base = createDOSqliteBackend(ctx.storage, 'fg');
+ * // `base` is any StorageBackend — e.g. a Firestore-backed one, an
+ * // in-process SQLite backend, or the DO backend from firegraph/cloudflare.
  * const routed = createRoutingBackend(base, {
  *   route: ({ subgraphName, storageScope }) => {
  *     if (subgraphName !== 'memories') return null;
- *     const stub = env.MEMORIES.get(env.MEMORIES.idFromName(storageScope));
- *     return createMyRpcBackend(stub);  // caller-owned
+ *     return createMyMemoriesBackend(storageScope); // caller-owned
  *   },
  * });
  * const client = createGraphClientFromBackend(routed, { registry });

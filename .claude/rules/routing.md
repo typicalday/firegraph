@@ -79,48 +79,44 @@ Every `route()` invocation receives:
 
 Use `storageScope` when you want a globally unique, human-readable identifier (DO name, shard key) — two different parent UIDs under the same subgraph name produce distinct storage-scopes. Use `scopePath` when your routing rule depends only on the subgraph name chain (e.g. "all `memories` subgraphs go to the memory DO namespace").
 
-## Example — routing `memories` subgraphs to a dedicated DO
+## Example — routing `memories` subgraphs to a separate backend
 
 ```ts
 import { createGraphClientFromBackend } from 'firegraph';
 import { createRoutingBackend } from 'firegraph/backend';
-import { createDOSqliteBackend } from 'firegraph/do-sqlite';
 
-// Inside a Durable Object fetch handler:
-const base = createDOSqliteBackend(ctx.storage, 'fg');
-
+// `base` is any StorageBackend — e.g. a Firestore-backed one, an
+// in-process SQLite backend, or a DO-backed backend constructed elsewhere.
 const routed = createRoutingBackend(base, {
   route: ({ subgraphName, storageScope }) => {
     if (subgraphName !== 'memories') return null;
-    const id = env.MEMORY_STORE.idFromName(storageScope);
-    const stub = env.MEMORY_STORE.get(id);
-    return createMyDoRpcBackend(stub); // <-- caller-owned
+    // Return any StorageBackend keyed by `storageScope`. Typical choices:
+    // a dedicated DO stub wrapped as a backend, a second Firestore
+    // collection, or a separate in-process SQLite database.
+    return createMyMemoriesBackend(storageScope);
   },
 });
 
 const client = createGraphClientFromBackend(routed, { registry });
 ```
 
-The `createMyDoRpcBackend` helper is **not** shipped by firegraph. Each app's DO binding name, auth, error policy, and retry behaviour differ; promoting one shape to the library would lock those choices in. A reference implementation is expected to live outside firegraph (see the ADR below).
+`createMyMemoriesBackend` is caller-owned: firegraph only knows about the
+`StorageBackend` interface, not about any particular physical target.
 
 ## What firegraph explicitly does not ship
 
-Recorded in `docs/adr/0001-routing-without-do-rpc.md`:
-
-- No DO RPC backend. Each app's binding shape is different.
 - No live-scope directory. Persistence choice (D1? KV? registry DO?) is app-specific.
 - No cross-backend cascade. Callers enumerate routed children themselves.
 - No async `route()`. The cost of async-ifying `.subgraph()` exceeds the benefit.
 
 ## Key files
 
-| File                                      | Purpose                                                                                                                                          |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/backend.ts`                          | Public `firegraph/backend` entry point — re-exports the routing primitive, scope-path helpers, backend types, and `CrossBackendTransactionError` |
-| `src/internal/routing-backend.ts`         | `RoutingStorageBackend` implementation; module doc is the canonical contract reference                                                           |
-| `src/scope-path.ts`                       | `parseStorageScope`, `resolveAncestorScope`, `isAncestorScopeUid`, `appendStorageScope`                                                          |
-| `src/errors.ts`                           | `CrossBackendTransactionError` (code `CROSS_BACKEND_TRANSACTION`)                                                                                |
-| `tests/unit/routing-backend.test.ts`      | Full contract coverage — nested routing, pass-through delegation, input validation                                                               |
-| `tests/unit/scope-path.test.ts`           | Storage-scope parsing round-trips                                                                                                                |
-| `tests/unit/backend-surface.test.ts`      | Compile-time shape lock + runtime export manifest for `firegraph/backend`                                                                        |
-| `docs/adr/0001-routing-without-do-rpc.md` | Why firegraph ships the router but not the DO RPC layer                                                                                          |
+| File                                 | Purpose                                                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/backend.ts`                     | Public `firegraph/backend` entry point — re-exports the routing primitive, scope-path helpers, backend types, and `CrossBackendTransactionError` |
+| `src/internal/routing-backend.ts`    | `RoutingStorageBackend` implementation; module doc is the canonical contract reference                                                           |
+| `src/scope-path.ts`                  | `parseStorageScope`, `resolveAncestorScope`, `isAncestorScopeUid`, `appendStorageScope`                                                          |
+| `src/errors.ts`                      | `CrossBackendTransactionError` (code `CROSS_BACKEND_TRANSACTION`)                                                                                |
+| `tests/unit/routing-backend.test.ts` | Full contract coverage — nested routing, pass-through delegation, input validation                                                               |
+| `tests/unit/scope-path.test.ts`      | Storage-scope parsing round-trips                                                                                                                |
+| `tests/unit/backend-surface.test.ts` | Compile-time shape lock + runtime export manifest for `firegraph/backend`                                                                        |

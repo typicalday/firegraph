@@ -44,7 +44,9 @@ import type {
   BulkOptions,
   BulkResult,
   CascadeResult,
+  DynamicGraphClient,
   FindEdgesParams,
+  GraphClient,
   GraphReader,
   GraphRegistry,
   QueryFilter,
@@ -174,8 +176,6 @@ class DORPCBatchBackend implements BatchBackend {
 // ---------------------------------------------------------------------------
 
 export interface DORPCBackendOptions {
-  /** Logical table name — informational only, returned via `collectionPath`. */
-  table?: string;
   /** Scope path (names-only chain, used for `allowedIn`). Default: `''`. */
   scopePath?: string;
   /**
@@ -192,28 +192,44 @@ export interface DORPCBackendOptions {
    * latest definitions after `reloadRegistry()`. Wired by `createDOClient`
    * via a forward reference to the constructed `GraphClient`. When
    * `undefined`, cross-DO cascade is disabled and `removeNodeCascade`
-   * cascades within this DO only (matching the routing-backend semantic
-   * documented in routing.md).
+   * cascades within this DO only.
    * @internal
    */
   registryAccessor?: () => GraphRegistry | undefined;
+  /**
+   * Factory used by `createSiblingClient` to construct a peer `GraphClient`
+   * that shares this client's namespace, registry, and other options but
+   * targets a different root DO. Wired by `createDOClient`. Leaving it
+   * `undefined` (e.g. when `DORPCBackend` is instantiated directly) disables
+   * sibling-client construction — `createSiblingClient` will throw.
+   *
+   * The union return type mirrors `createDOClient`'s two overloads: dynamic
+   * mode yields a `DynamicGraphClient`, everything else yields a plain
+   * `GraphClient`. `createSiblingClient` narrows at the boundary via its
+   * own overload signatures.
+   * @internal
+   */
+  makeSiblingClient?: (siblingStorageKey: string) => GraphClient | DynamicGraphClient;
 }
 
 export class DORPCBackend implements StorageBackend {
-  readonly collectionPath: string;
+  readonly collectionPath = 'firegraph';
   readonly scopePath: string;
   /** @internal */
   readonly storageKey: string;
-  private readonly namespace: FiregraphNamespace;
+  /** @internal */
+  readonly namespace: FiregraphNamespace;
   private readonly registryAccessor?: () => GraphRegistry | undefined;
+  /** @internal — see `DORPCBackendOptions.makeSiblingClient` for the union-type rationale. */
+  readonly makeSiblingClient?: (siblingStorageKey: string) => GraphClient | DynamicGraphClient;
   private cachedStub: FiregraphStub | null = null;
 
   constructor(namespace: FiregraphNamespace, options: DORPCBackendOptions) {
     this.namespace = namespace;
-    this.collectionPath = options.table ?? 'firegraph';
     this.scopePath = options.scopePath ?? '';
     this.storageKey = options.storageKey;
     this.registryAccessor = options.registryAccessor;
+    this.makeSiblingClient = options.makeSiblingClient;
   }
 
   private get stub(): FiregraphStub {
@@ -272,12 +288,14 @@ export class DORPCBackend implements StorageBackend {
     const newStorageKey = `${this.storageKey}/${parentNodeUid}/${name}`;
     const newScopePath = this.scopePath ? `${this.scopePath}/${name}` : name;
     return new DORPCBackend(this.namespace, {
-      table: this.collectionPath,
       scopePath: newScopePath,
       storageKey: newStorageKey,
       // Subgraph backends share the same live registry accessor so a cascade
-      // invoked on a subgraph client still fans out correctly.
+      // invoked on a subgraph client still fans out correctly. The sibling
+      // factory is also carried forward so `createSiblingClient` works from
+      // any subgraph client in the chain.
       registryAccessor: this.registryAccessor,
+      makeSiblingClient: this.makeSiblingClient,
     });
   }
 
@@ -294,8 +312,8 @@ export class DORPCBackend implements StorageBackend {
     // DO before deleting the node itself. This mirrors the Firestore and
     // SQLite backends, which honor the same flag to recurse into nested
     // subgraphs. Without an accessor we fall back to DO-local cascade only
-    // (matches the routing-backend semantic — each physical backend cascades
-    // within its own scope).
+    // — each DO owns its own scope, and registry-less clients have no way
+    // to discover descendants.
     //
     // We need the node's aType to know what subgraphs to look for. That
     // means a `getNode` round-trip before touching any child DO; the reader

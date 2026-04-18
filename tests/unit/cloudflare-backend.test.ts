@@ -12,14 +12,20 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { createGraphClientFromBackend } from '../../src/client.js';
 import type {
   DurableObjectIdLike,
   FiregraphNamespace,
   FiregraphStub,
 } from '../../src/cloudflare/backend.js';
 import { DORPCBackend } from '../../src/cloudflare/backend.js';
-import { createDOClient } from '../../src/cloudflare/client.js';
+import { createDOClient, createSiblingClient } from '../../src/cloudflare/client.js';
 import type { BatchOp } from '../../src/cloudflare/do.js';
+import type {
+  BatchBackend,
+  StorageBackend,
+  TransactionBackend,
+} from '../../src/internal/backend.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
 import type {
   BulkResult,
@@ -133,19 +139,20 @@ describe('DORPCBackend — identity + routing', () => {
     expect(stubs.get('main')!.calls.filter((c) => c.method === '_fgGetDoc')).toHaveLength(2);
   });
 
-  it('exposes the configured table and scopePath', () => {
+  it('exposes storageKey and scopePath', () => {
     const backend = new DORPCBackend(makeNamespace().ns, {
       storageKey: 'main',
-      table: 'my_graph',
       scopePath: 'memories',
     });
-    expect(backend.collectionPath).toBe('my_graph');
     expect(backend.scopePath).toBe('memories');
     expect(backend.storageKey).toBe('main');
   });
 
-  it('defaults table to "firegraph" and scopePath to ""', () => {
+  it('hardcodes collectionPath to "firegraph" and defaults scopePath to ""', () => {
     const backend = new DORPCBackend(makeNamespace().ns, { storageKey: 'main' });
+    // `collectionPath` is a fixed label on the DO backend — there's no
+    // user-facing knob to change it. The DO owns its SQLite table name
+    // independently; see `FiregraphDOOptions.table`.
     expect(backend.collectionPath).toBe('firegraph');
     expect(backend.scopePath).toBe('');
   });
@@ -387,5 +394,142 @@ describe('createDOClient', () => {
         registryMode: { mode: 'dynamic', collection: 'bad/key' },
       }),
     ).toThrow(/registryMode\.collection must not contain "\/"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createSiblingClient
+// ---------------------------------------------------------------------------
+
+describe('createSiblingClient', () => {
+  it('returns a peer client that addresses a different root DO', async () => {
+    const { ns, stubs } = makeNamespace();
+    const root = createDOClient(ns, 'tenant-a');
+    const sibling = createSiblingClient(root, 'tenant-b');
+
+    // Each client's first write should hit its own DO stub — same namespace,
+    // different keys. This is what `createSiblingClient` is supposed to
+    // achieve: ergonomic peer access without re-plumbing options.
+    await root.putNode('tour', 'node-a', {});
+    await sibling.putNode('tour', 'node-b', {});
+
+    expect(stubs.has('tenant-a')).toBe(true);
+    expect(stubs.has('tenant-b')).toBe(true);
+    expect(stubs.get('tenant-a')!.records.size).toBe(1);
+    expect(stubs.get('tenant-b')!.records.size).toBe(1);
+  });
+
+  it('works when the source client is a subgraph of the original root', async () => {
+    const { ns, stubs } = makeNamespace();
+    const root = createDOClient(ns, 'tenant-a');
+    const subgraph = root.subgraph('parent', 'memories');
+    const sibling = createSiblingClient(subgraph, 'tenant-b');
+
+    // Sibling should point at root `tenant-b`, not at a subgraph of
+    // `tenant-a`. Verified by watching which DO stub the write lands on.
+    await sibling.putNode('tour', 'node-b', {});
+    expect(stubs.has('tenant-b')).toBe(true);
+    expect(stubs.has('tenant-a/parent/memories')).toBe(false);
+  });
+
+  it('throws on empty siblingRootKey', () => {
+    const root = createDOClient(makeNamespace().ns, 'tenant-a');
+    expect(() => createSiblingClient(root, '')).toThrow(
+      /siblingRootKey must be a non-empty string/,
+    );
+  });
+
+  it('throws when siblingRootKey contains "/"', () => {
+    const root = createDOClient(makeNamespace().ns, 'tenant-a');
+    expect(() => createSiblingClient(root, 'a/b')).toThrow(/siblingRootKey must not contain "\/"/);
+  });
+
+  it('throws UNSUPPORTED_OPERATION when the client is not DO-backed', () => {
+    // Hand-build a DORPCBackend WITHOUT the sibling-factory wiring, so
+    // `createSiblingClient` has no way to construct a peer. This simulates
+    // callers who bypass `createDOClient` and instantiate the backend
+    // directly — the helper should refuse rather than silently construct a
+    // broken sibling.
+    const { ns } = makeNamespace();
+    const bareBackend = new DORPCBackend(ns, { storageKey: 'bare' });
+    const bareClient = createGraphClientFromBackend(bareBackend);
+
+    expect(() => createSiblingClient(bareClient, 'tenant-b')).toThrow(
+      /not backed by a DO client produced by `createDOClient`/,
+    );
+    expect(() => createSiblingClient(bareClient, 'tenant-b')).toThrow(
+      expect.objectContaining({ code: 'UNSUPPORTED_OPERATION' }),
+    );
+  });
+
+  it('throws UNSUPPORTED_OPERATION when the backend is a different storage class (e.g. Firestore-like)', () => {
+    // The more common misuse: passing a client backed by Firestore,
+    // SQLite, or any other non-DO storage into `createSiblingClient`. The
+    // previous test exercises a bare `DORPCBackend`; this one exercises
+    // the path where the backend isn't a `DORPCBackend` at all — the
+    // duck-typed `typeof maker === 'function'` check has to reject both
+    // shapes identically, which `instanceof DORPCBackend` would not (it
+    // would still reject, but for the wrong reason, and would be fragile
+    // across module boundaries in monorepos with duplicated copies).
+    const noop = async (): Promise<void> => {};
+    const fakeBackend: StorageBackend = {
+      collectionPath: 'firestore-graphs',
+      scopePath: '',
+      async getDoc() {
+        return null;
+      },
+      async query() {
+        return [];
+      },
+      setDoc: noop,
+      updateDoc: noop,
+      deleteDoc: noop,
+      async runTransaction<T>(_fn: (tx: TransactionBackend) => Promise<T>): Promise<T> {
+        throw new Error('runTransaction unused in stub');
+      },
+      createBatch(): BatchBackend {
+        return {
+          setDoc() {},
+          updateDoc() {},
+          deleteDoc() {},
+          async commit() {},
+        };
+      },
+      subgraph() {
+        return fakeBackend;
+      },
+      async removeNodeCascade() {
+        return {
+          deleted: 0,
+          batches: 0,
+          errors: [],
+          edgesDeleted: 0,
+          nodeDeleted: false,
+        };
+      },
+      async bulkRemoveEdges() {
+        return { deleted: 0, batches: 0, errors: [] };
+      },
+    };
+    const foreignClient = createGraphClientFromBackend(fakeBackend);
+
+    expect(() => createSiblingClient(foreignClient, 'tenant-b')).toThrow(
+      /not backed by a DO client produced by `createDOClient`/,
+    );
+    expect(() => createSiblingClient(foreignClient, 'tenant-b')).toThrow(
+      expect.objectContaining({ code: 'UNSUPPORTED_OPERATION' }),
+    );
+  });
+
+  it('inherits registry/options from the original createDOClient call', async () => {
+    const { ns } = makeNamespace();
+    // Dynamic mode exposes `defineNodeType`, so checking that the sibling
+    // is dynamic proves the options propagated (the only way a sibling
+    // would have a `defineNodeType` is if `registryMode` carried across).
+    const root = createDOClient(ns, 'tenant-a', { registryMode: { mode: 'dynamic' } });
+    const sibling = createSiblingClient(root, 'tenant-b');
+    expect(typeof sibling.defineNodeType).toBe('function');
+    expect(typeof sibling.defineEdgeType).toBe('function');
+    expect(typeof sibling.reloadRegistry).toBe('function');
   });
 });

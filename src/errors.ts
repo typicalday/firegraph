@@ -95,9 +95,10 @@ export class MigrationError extends FiregraphError {
  * Thrown when a caller tries to perform an operation that would require
  * atomicity across two physical storage backends — e.g. opening a routed
  * subgraph client from inside a transaction callback. Cross-backend
- * atomicity cannot be honoured by any of the underlying drivers (D1, DO
- * SQLite, Firestore), so firegraph surfaces this as a typed error instead
- * of silently confining the write to the base backend.
+ * atomicity cannot be honoured by real-world storage engines (Firestore,
+ * SQLite drivers over D1/DO/better-sqlite3, etc.), so firegraph surfaces
+ * this as a typed error instead of silently confining the write to the
+ * base backend.
  *
  * Normally `TransactionBackend` and `BatchBackend` don't expose `subgraph()`
  * at the type level, so this error is unreachable through well-typed code.
