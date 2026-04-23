@@ -24,17 +24,23 @@ gated: you can stack many PRs into a single release.
 
 ## One-time setup
 
-### `NPM_TOKEN` repo secret
+### npm Trusted Publishing
 
-Create an npm access token with publish permission on `@typicalday/firegraph`
-and add it as a repo secret named `NPM_TOKEN`:
+We publish via [Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
+(OIDC). GitHub Actions mints a short-lived token that npm verifies against the
+repo + workflow you register — no `NPM_TOKEN` secret to store or rotate.
 
-1. `npm login` (if needed)
-2. <https://www.npmjs.com/settings/typicalday/tokens> → **Generate New Token**
-   → **Automation** (CI-safe; bypasses 2FA). Max expiration is 90 days —
-   rotate when it nears expiry.
-3. In GitHub: **Settings → Secrets and variables → Actions → New repository
-   secret** → name `NPM_TOKEN`, paste the token.
+On <https://www.npmjs.com/package/@typicalday/firegraph/access> →
+**Publishing access** → **Add trusted publisher** (GitHub Actions). Fill in:
+
+- Organization: `typicalday`
+- Repository: `firegraph`
+- Workflow filename: `release-please.yml`
+- Environment name: _(leave blank)_
+
+The workflow already requests `id-token: write` and uses `npm publish`
+(not `pnpm publish`, which doesn't support OIDC yet — see
+[pnpm#9812](https://github.com/pnpm/pnpm/issues/9812)).
 
 ### Actions permissions
 
