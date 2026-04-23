@@ -13,5 +13,5 @@
     }
   },
   "include-component-in-tag": false,
-  "separate-pull-requests": false
+  "separate-pull-requests": true
 }
