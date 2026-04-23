@@ -3,6 +3,7 @@ name: release-please
 on:
   push:
     branches: [main]
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -21,36 +22,42 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # Everything below runs only when a release PR is merged and
-      # release-please tags a new version.
+      # Everything below runs when release-please tags a new version OR
+      # when the workflow is dispatched manually (escape hatch for republishing).
 
       - uses: actions/checkout@v4
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
 
       - uses: pnpm/action-setup@v4
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
         with:
           run_install: false
 
       - uses: actions/setup-node@v4
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
         with:
           node-version: 22
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
         run: pnpm build
+
+      # Trusted Publishing OIDC requires npm >= 11.5.1, but Node 22.x ships
+      # with npm 10.x. Upgrade explicitly before publishing.
+      - name: Upgrade npm for Trusted Publishing
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
+        run: npm install -g npm@latest
 
       # Publish via `npm publish` (not `pnpm publish`) because pnpm does not
       # yet support npm's Trusted Publishing OIDC flow. The npm CLI detects
       # the GitHub Actions OIDC environment automatically — no NPM_TOKEN
-      # secret is needed. Requires npm >= 11.5.1 (shipped with Node 22.14+).
+      # secret is needed.
       - name: Publish to npm
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created || github.event_name == 'workflow_dispatch' }}
         run: npm publish --access public
