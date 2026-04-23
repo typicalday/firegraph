@@ -8,7 +8,6 @@ permissions:
   contents: write
   issues: write
   pull-requests: write
-  id-token: write
 
 jobs:
   release-please:
@@ -35,7 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: ${{ steps.release.outputs.release_created }}
         with:
-          node-version: 22
+          node-version: 20
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
@@ -47,10 +46,8 @@ jobs:
         if: ${{ steps.release.outputs.release_created }}
         run: pnpm build
 
-      # Publish via `npm publish` (not `pnpm publish`) because pnpm does not
-      # yet support npm's Trusted Publishing OIDC flow. The npm CLI detects
-      # the GitHub Actions OIDC environment automatically — no NPM_TOKEN
-      # secret is needed. Requires npm >= 11.5.1 (shipped with Node 22.14+).
       - name: Publish to npm
         if: ${{ steps.release.outputs.release_created }}
-        run: npm publish --access public
+        run: pnpm publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
