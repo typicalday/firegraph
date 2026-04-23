@@ -41,6 +41,7 @@ import type {
   DiscoveredEntity,
   DiscoveryResult,
   EdgeTopology,
+  IndexSpec,
   MigrationStep,
   MigrationWriteBack,
 } from './types.js';
@@ -205,6 +206,7 @@ function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
         viewDefaults?: ViewResolverConfig;
         allowedIn?: string[];
         migrationWriteBack?: MigrationWriteBack;
+        indexes?: IndexSpec[];
       }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
@@ -229,6 +231,7 @@ function loadNodeEntity(dir: string, name: string): DiscoveredEntity {
     allowedIn: meta?.allowedIn,
     migrations,
     migrationWriteBack: meta?.migrationWriteBack,
+    indexes: meta?.indexes,
   };
 }
 
@@ -261,6 +264,7 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
         allowedIn?: string[];
         targetGraph?: string;
         migrationWriteBack?: MigrationWriteBack;
+        indexes?: IndexSpec[];
       }
     | undefined;
   const sampleData = readJsonIfExists(join(dir, 'sample.json')) as
@@ -288,6 +292,7 @@ function loadEdgeEntity(dir: string, name: string): DiscoveredEntity {
       topology.targetGraph ?? (meta as { targetGraph?: string } | undefined)?.targetGraph,
     migrations,
     migrationWriteBack: meta?.migrationWriteBack,
+    indexes: meta?.indexes,
   };
 }
 

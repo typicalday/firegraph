@@ -54,23 +54,39 @@ export interface CompiledStatement {
 
 /**
  * Translate a firegraph filter field to either a column reference or a
- * `json_extract(data, ?)` expression. Built-in fields go straight to their
- * column; `data.<key>` and bare `data` are projected through json_extract.
- * The JSON path (if any) is returned separately so it can be appended to
- * the parameter list in the correct order.
+ * `json_extract("data", '$.<path>')` expression. Built-in fields go
+ * straight to their column; `data.<key>[.<key>…]` and bare `data` are
+ * projected through `json_extract` with the JSON path **inlined as a
+ * string literal** — not parametrized.
+ *
+ * Inlining matters: SQLite's query planner matches an expression index
+ * (`CREATE INDEX … ON tbl(json_extract("data", '$.status'))`) against
+ * *textually identical* expressions in the WHERE clause. `json_extract(
+ * "data", ?)` parametrizes the path and would never hit the index, even
+ * though it evaluates to the same value. Inlining here makes the
+ * expression literal in the SQL, which is what the index builder in
+ * `sqlite-index-ddl.ts` also emits.
+ *
+ * Inlining is safe: each path component is validated against
+ * `JSON_PATH_KEY_RE` (`/^[A-Za-z_][A-Za-z0-9_-]*$/`) before it reaches
+ * this function — the pattern excludes every character SQLite would
+ * treat as syntax (quote, backslash, dot, bracket, whitespace), so
+ * string concatenation can't produce injection.
  */
-function compileFieldRef(field: string): { expr: string; pathParam?: string } {
+function compileFieldRef(field: string): { expr: string } {
   const column = DO_FIELD_TO_COLUMN[field];
   if (column) {
     return { expr: quoteDOIdent(column) };
   }
   if (field.startsWith('data.')) {
-    const key = field.slice(5);
-    validateJsonPathKey(key);
-    return { expr: 'json_extract("data", ?)', pathParam: `$.${key}` };
+    const suffix = field.slice(5);
+    for (const part of suffix.split('.')) {
+      validateJsonPathKey(part);
+    }
+    return { expr: `json_extract("data", '$.${suffix}')` };
   }
   if (field === 'data') {
-    return { expr: 'json_extract("data", ?)', pathParam: '$' };
+    return { expr: `json_extract("data", '$')` };
   }
   throw new FiregraphError(
     `DO SQLite backend cannot resolve filter field: ${field}`,
@@ -161,8 +177,7 @@ function validateJsonPathKey(key: string): void {
 }
 
 function compileFilter(filter: QueryFilter, params: unknown[]): string {
-  const { expr, pathParam } = compileFieldRef(filter.field);
-  if (pathParam !== undefined) params.push(pathParam);
+  const { expr } = compileFieldRef(filter.field);
 
   switch (filter.op) {
     case '==':
@@ -220,11 +235,10 @@ function asArray(value: unknown, op: string): unknown[] {
   return value;
 }
 
-function compileOrderBy(options: QueryOptions | undefined, params: unknown[]): string {
+function compileOrderBy(options: QueryOptions | undefined, _params: unknown[]): string {
   if (!options?.orderBy) return '';
   const { field, direction } = options.orderBy;
-  const { expr, pathParam } = compileFieldRef(field);
-  if (pathParam !== undefined) params.push(pathParam);
+  const { expr } = compileFieldRef(field);
   const dir = direction === 'desc' ? 'DESC' : 'ASC';
   return ` ORDER BY ${expr} ${dir}`;
 }

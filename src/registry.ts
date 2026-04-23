@@ -270,6 +270,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
       allowedIn: entity.allowedIn,
       migrations: entity.migrations,
       migrationWriteBack: entity.migrationWriteBack,
+      indexes: entity.indexes,
     });
   }
 
@@ -303,6 +304,7 @@ function discoveryToEntries(discovery: DiscoveryResult): RegistryEntry[] {
           targetGraph: resolvedTargetGraph,
           migrations: entity.migrations,
           migrationWriteBack: entity.migrationWriteBack,
+          indexes: entity.indexes,
         });
       }
     }
