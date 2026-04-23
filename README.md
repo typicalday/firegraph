@@ -877,6 +877,14 @@ pnpm test:emulator  # Full test suite against Firestore emulator
 
 Requires Node.js 18+.
 
+## Releasing
+
+Versions and npm publishes are automated via [release-please](https://github.com/googleapis/release-please).
+Land PRs to `main` with conventional-commit messages; release-please opens a
+Release PR that, when merged, tags + publishes to npm. See
+[docs/releasing.md](docs/releasing.md) for maintainer setup (NPM token,
+workflow permissions) and the full flow.
+
 ## License
 
 MIT
