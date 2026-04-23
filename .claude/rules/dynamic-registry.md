@@ -1,8 +1,8 @@
 ---
 paths:
-  - "**/dynamic-registry*"
-  - "**/dynamic*registry*"
-  - "src/client.ts"
+  - '**/dynamic-registry*'
+  - '**/dynamic*registry*'
+  - 'src/client.ts'
 ---
 
 # Dynamic Registry
@@ -12,6 +12,7 @@ The dynamic registry allows agents to define new node and edge types at runtime 
 ## Concept
 
 Type definitions are stored as regular firegraph nodes using two reserved meta-types:
+
 - **`nodeType`** -- defines a node type (name + JSON Schema + optional description)
 - **`edgeType`** -- defines an edge type (name + topology + optional JSON Schema)
 
@@ -34,16 +35,20 @@ const client = createGraphClient(db, 'graph', {
   registryMode: { mode: 'dynamic' },
 });
 
-await client.defineNodeType('milestone', {
-  type: 'object',
-  required: ['title', 'date'],
-  properties: {
-    title: { type: 'string', minLength: 1 },
-    date: { type: 'string' },
-    status: { type: 'string', enum: ['planned', 'reached'] },
+await client.defineNodeType(
+  'milestone',
+  {
+    type: 'object',
+    required: ['title', 'date'],
+    properties: {
+      title: { type: 'string', minLength: 1 },
+      date: { type: 'string' },
+      status: { type: 'string', enum: ['planned', 'reached'] },
+    },
+    additionalProperties: false,
   },
-  additionalProperties: false,
-}, 'A project milestone');
+  'A project milestone',
+);
 
 await client.defineEdgeType(
   'hasMilestone',
@@ -88,7 +93,9 @@ await client.reloadRegistry();
 const client = createGraphClient(db, 'graph', {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
-    const compartment = new Compartment({ /* endowments */ });
+    const compartment = new Compartment({
+      /* endowments */
+    });
     return compartment.evaluate(source);
   },
 });
@@ -109,6 +116,7 @@ When `collection` is set, meta-type writes go to the meta-collection, domain wri
 ## How It Works
 
 **Meta-type data shapes:**
+
 - `nodeType`: `{ "name": "milestone", "jsonSchema": { ... }, "description": "..." }`
 - `edgeType`: `{ "name": "hasMilestone", "from": "project", "to": "milestone", "jsonSchema": { ... }, "inverseLabel": "milestoneOf", "targetGraph": "milestones" }`
 
@@ -117,6 +125,7 @@ When `collection` is set, meta-type writes go to the meta-collection, domain wri
 **Deterministic UIDs:** SHA-256 hash of `nodeType:tour` truncated to 21 chars. Calling `defineNodeType` again upserts the same document.
 
 **Validation routing:**
+
 - Meta-type writes always validated against hardcoded bootstrap registry
 - Domain writes validated against compiled dynamic registry
 - Before `reloadRegistry()`, domain writes are rejected (`RegistryViolationError`)
@@ -137,14 +146,14 @@ const client = createGraphClient(db, 'graph', { registry });
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/dynamic-registry.ts` | Bootstrap schemas, `createRegistryFromGraph()`, `generateDeterministicUid()`, meta-type constants |
-| `src/registry.ts` | `createMergedRegistry()` -- wraps base + extension with base-wins semantics |
-| `src/client.ts` | `DynamicGraphClient` implementation: validation routing, convenience methods, meta-reader, merged mode |
-| `src/types.ts` | `DynamicGraphClient`, `DynamicRegistryConfig`, `NodeTypeData`, `EdgeTypeData` interfaces |
-| `src/errors.ts` | `DynamicRegistryError` |
-| `tests/unit/dynamic-registry.test.ts` | Unit tests (pure dynamic) |
-| `tests/unit/merged-registry.test.ts` | Unit tests for `createMergedRegistry` |
-| `tests/integration/dynamic-registry.test.ts` | Integration tests (pure dynamic) |
-| `tests/integration/merged-registry.test.ts` | Integration tests (merged mode) |
+| File                                         | Purpose                                                                                                |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `src/dynamic-registry.ts`                    | Bootstrap schemas, `createRegistryFromGraph()`, `generateDeterministicUid()`, meta-type constants      |
+| `src/registry.ts`                            | `createMergedRegistry()` -- wraps base + extension with base-wins semantics                            |
+| `src/client.ts`                              | `DynamicGraphClient` implementation: validation routing, convenience methods, meta-reader, merged mode |
+| `src/types.ts`                               | `DynamicGraphClient`, `DynamicRegistryConfig`, `NodeTypeData`, `EdgeTypeData` interfaces               |
+| `src/errors.ts`                              | `DynamicRegistryError`                                                                                 |
+| `tests/unit/dynamic-registry.test.ts`        | Unit tests (pure dynamic)                                                                              |
+| `tests/unit/merged-registry.test.ts`         | Unit tests for `createMergedRegistry`                                                                  |
+| `tests/integration/dynamic-registry.test.ts` | Integration tests (pure dynamic)                                                                       |
+| `tests/integration/merged-registry.test.ts`  | Integration tests (merged mode)                                                                        |

@@ -76,10 +76,7 @@ export async function applyMigrationChain(
  * Called at registry construction time to catch incomplete chains early,
  * rather than at read time when a record is migrated.
  */
-export function validateMigrationChain(
-  migrations: MigrationStep[],
-  label: string,
-): void {
+export function validateMigrationChain(migrations: MigrationStep[], label: string): void {
   if (migrations.length === 0) return;
 
   // Validate individual steps
@@ -169,7 +166,5 @@ export async function migrateRecords(
   registry: GraphRegistry,
   globalWriteBack: MigrationWriteBack = 'off',
 ): Promise<MigrationResult[]> {
-  return Promise.all(
-    records.map((r) => migrateRecord(r, registry, globalWriteBack)),
-  );
+  return Promise.all(records.map((r) => migrateRecord(r, registry, globalWriteBack)));
 }

@@ -90,6 +90,7 @@ const g = createGraphClient(db, 'graph', { registry });
 ```
 
 **Parameters:**
+
 - `db` — A `Firestore` instance from `@google-cloud/firestore`
 - `collectionPath` — Firestore collection path for all graph data
 - `options.registry` — Optional `GraphRegistry` for schema validation
@@ -207,10 +208,10 @@ const result = await createTraversal(g, tourId)
   })
   .run({ maxReads: 200, returnIntermediates: true });
 
-result.nodes;      // StoredGraphRecord[] — edges from the final hop
-result.hops;       // HopResult[] — per-hop breakdown
+result.nodes; // StoredGraphRecord[] — edges from the final hop
+result.hops; // HopResult[] — per-hop breakdown
 result.totalReads; // number — Firestore reads consumed
-result.truncated;  // boolean — true if budget was hit
+result.truncated; // boolean — true if budget was hit
 ```
 
 `createTraversal` accepts a `GraphClient` or `GraphReader`. When passed a `GraphClient`, cross-graph hops via `targetGraph` are supported (see [Cross-Graph Edges](#cross-graph-edges)).
@@ -233,33 +234,30 @@ const result = await createTraversal(g, riderId)
 
 ```typescript
 await g.runTransaction(async (tx) => {
-  const result = await createTraversal(tx, tourId)
-    .follow('hasDeparture')
-    .follow('hasRider')
-    .run();
+  const result = await createTraversal(tx, tourId).follow('hasDeparture').follow('hasRider').run();
   // Use result to make transactional writes...
 });
 ```
 
 #### Hop Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `direction` | `'forward' \| 'reverse'` | `'forward'` | Edge direction |
-| `aType` | `string` | — | Filter source node type |
-| `bType` | `string` | — | Filter target node type |
-| `limit` | `number` | `10` | Max edges per source node |
-| `orderBy` | `{ field, direction? }` | — | Firestore-level ordering |
-| `filter` | `(edge) => boolean` | — | In-memory post-filter |
-| `targetGraph` | `string` | — | Subgraph to cross into (forward only). See [Cross-Graph Edges](#cross-graph-edges) |
+| Option        | Type                     | Default     | Description                                                                        |
+| ------------- | ------------------------ | ----------- | ---------------------------------------------------------------------------------- |
+| `direction`   | `'forward' \| 'reverse'` | `'forward'` | Edge direction                                                                     |
+| `aType`       | `string`                 | —           | Filter source node type                                                            |
+| `bType`       | `string`                 | —           | Filter target node type                                                            |
+| `limit`       | `number`                 | `10`        | Max edges per source node                                                          |
+| `orderBy`     | `{ field, direction? }`  | —           | Firestore-level ordering                                                           |
+| `filter`      | `(edge) => boolean`      | —           | In-memory post-filter                                                              |
+| `targetGraph` | `string`                 | —           | Subgraph to cross into (forward only). See [Cross-Graph Edges](#cross-graph-edges) |
 
 #### Run Options
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `maxReads` | `number` | `100` | Total Firestore read budget |
-| `concurrency` | `number` | `5` | Max parallel queries per hop |
-| `returnIntermediates` | `boolean` | `false` | Include edges from all hops |
+| Option                | Type      | Default | Description                  |
+| --------------------- | --------- | ------- | ---------------------------- |
+| `maxReads`            | `number`  | `100`   | Total Firestore read budget  |
+| `concurrency`         | `number`  | `5`     | Max parallel queries per hop |
+| `returnIntermediates` | `boolean` | `false` | Include edges from all hops  |
 
 When `filter` is set, the `limit` is applied after filtering (in-memory), so Firestore returns all matching edges and the filter + slice happens client-side.
 
@@ -363,7 +361,7 @@ const registry = createRegistry([
     axbType: 'is',
     bType: 'tour',
     jsonSchema: tourSchemaV2,
-    migrations,                    // version derived as max(toVersion) = 2
+    migrations, // version derived as max(toVersion) = 2
     migrationWriteBack: 'eager',
   },
 ]);
@@ -386,11 +384,11 @@ const tour = await g.getNode(tourId);
 
 Write-back controls whether migrated data is persisted back to Firestore after a read-triggered migration:
 
-| Mode | Behavior |
-|------|----------|
-| `'off'` | In-memory only; Firestore document unchanged (default) |
-| `'eager'` | Fire-and-forget write after read; inline update in transactions |
-| `'background'` | Same as eager but errors are swallowed with a `console.warn` |
+| Mode           | Behavior                                                        |
+| -------------- | --------------------------------------------------------------- |
+| `'off'`        | In-memory only; Firestore document unchanged (default)          |
+| `'eager'`      | Fire-and-forget write after read; inline update in transactions |
+| `'background'` | Same as eager but errors are swallowed with a `console.warn`    |
 
 Resolution order: `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
 
@@ -402,11 +400,15 @@ const g = createGraphClient(db, 'graph', {
 });
 
 // Entry-level override (takes priority)
-createRegistry([{
-  aType: 'tour', axbType: 'is', bType: 'tour',
-  migrations,
-  migrationWriteBack: 'eager',
-}]);
+createRegistry([
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    migrations,
+    migrationWriteBack: 'eager',
+  },
+]);
 ```
 
 #### Dynamic Registry Migrations
@@ -415,9 +417,7 @@ In dynamic mode, migrations are stored as source code strings:
 
 ```typescript
 await g.defineNodeType('tour', tourSchema, 'A tour', {
-  migrations: [
-    { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "draft" })' },
-  ],
+  migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "draft" })' }],
   migrationWriteBack: 'eager',
 });
 await g.reloadRegistry();
@@ -431,7 +431,9 @@ For custom sandboxing, pass `migrationSandbox` to `createGraphClient()`:
 const g = createGraphClient(db, 'graph', {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
-    const compartment = new Compartment({ /* endowments */ });
+    const compartment = new Compartment({
+      /* endowments */
+    });
     return compartment.evaluate(source);
   },
 });
@@ -507,14 +509,14 @@ await g.putNode('memory', generateId(), {}); // throws RegistryScopeError
 
 **Pattern syntax:**
 
-| Pattern | Matches |
-|---------|---------|
-| `root` | Top-level collection only |
-| `memories` | Exact subgraph name |
-| `workspace/tasks` | Exact path |
-| `*/memories` | `*` matches one segment |
-| `**/memories` | `**` matches zero or more segments |
-| `**` | Everything including root |
+| Pattern           | Matches                            |
+| ----------------- | ---------------------------------- |
+| `root`            | Top-level collection only          |
+| `memories`        | Exact subgraph name                |
+| `workspace/tasks` | Exact path                         |
+| `*/memories`      | `*` matches one segment            |
+| `**/memories`     | `**` matches zero or more segments |
+| `**`              | Everything including root          |
 
 Omitting `allowedIn` (or passing an empty array) means the type is allowed everywhere.
 
@@ -592,9 +594,7 @@ await workflow.putNode('agent', agentId, { name: 'Backend Dev' });
 await workflow.putEdge('task', taskId, 'assignedTo', 'agent', agentId, { role: 'lead' });
 
 // Forward traversal: task → agents (automatically crosses into workflow subgraph)
-const result = await createTraversal(g, taskId, registry)
-  .follow('assignedTo')
-  .run();
+const result = await createTraversal(g, taskId, registry).follow('assignedTo').run();
 // result.nodes contains the agent edges from the workflow subgraph
 ```
 
@@ -632,9 +632,7 @@ You can override the registry's `targetGraph` on a per-hop basis:
 
 ```typescript
 // Use 'team' subgraph instead of registry's default
-const result = await createTraversal(g, taskId)
-  .follow('assignedTo', { targetGraph: 'team' })
-  .run();
+const result = await createTraversal(g, taskId).follow('assignedTo', { targetGraph: 'team' }).run();
 ```
 
 Resolution priority: explicit hop `targetGraph` > registry `targetGraph` > no cross-graph.
@@ -647,7 +645,7 @@ For cross-cutting reads across all subgraphs, use `findEdgesGlobal`:
 // Find all 'assignedTo' edges across all 'workflow' subgraphs in the database
 const allAssignments = await g.findEdgesGlobal(
   { axbType: 'assignedTo', allowCollectionScan: true },
-  'workflow',  // collection name to query across
+  'workflow', // collection name to query across
 );
 ```
 
@@ -659,17 +657,13 @@ Each hop resolves its reader from the root client. If hop 1 crosses into a subgr
 
 ```typescript
 // This traversal finds agents in the workflow subgraph
-const agents = await createTraversal(g, taskId, registry)
-  .follow('assignedTo')
-  .run();
+const agents = await createTraversal(g, taskId, registry).follow('assignedTo').run();
 
 // To continue traversing within the workflow subgraph,
 // create a new traversal from the subgraph client
 const workflow = g.subgraph(taskId, 'workflow');
 for (const agent of agents.nodes) {
-  const mentees = await createTraversal(workflow, agent.bUid)
-    .follow('mentors')
-    .run();
+  const mentees = await createTraversal(workflow, agent.bUid).follow('mentors').run();
 }
 ```
 
@@ -695,19 +689,19 @@ const id = generateId(); // 21-char URL-safe nanoid
 
 All errors extend `FiregraphError` with a `code` property:
 
-| Error Class | Code | When |
-|------------|------|------|
-| `FiregraphError` | varies | Base class |
-| `NodeNotFoundError` | `NODE_NOT_FOUND` | Node lookup fails (not thrown by `getNode` — it returns `null`) |
-| `EdgeNotFoundError` | `EDGE_NOT_FOUND` | Edge lookup fails |
-| `ValidationError` | `VALIDATION_ERROR` | Schema validation fails (registry + Zod) |
-| `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
-| `RegistryScopeError` | `REGISTRY_SCOPE` | Type not allowed at this subgraph scope |
-| `MigrationError` | `MIGRATION_ERROR` | Migration function fails or chain is incomplete |
-| `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
-| `InvalidQueryError` | `INVALID_QUERY` | `findEdges` called with no filters |
-| `QuerySafetyError` | `QUERY_SAFETY` | Query would cause a full collection scan |
-| `TraversalError` | `TRAVERSAL_ERROR` | `run()` called with zero hops |
+| Error Class              | Code                     | When                                                            |
+| ------------------------ | ------------------------ | --------------------------------------------------------------- |
+| `FiregraphError`         | varies                   | Base class                                                      |
+| `NodeNotFoundError`      | `NODE_NOT_FOUND`         | Node lookup fails (not thrown by `getNode` — it returns `null`) |
+| `EdgeNotFoundError`      | `EDGE_NOT_FOUND`         | Edge lookup fails                                               |
+| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry + Zod)                        |
+| `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                                           |
+| `RegistryScopeError`     | `REGISTRY_SCOPE`         | Type not allowed at this subgraph scope                         |
+| `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete                 |
+| `DynamicRegistryError`   | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse                     |
+| `InvalidQueryError`      | `INVALID_QUERY`          | `findEdges` called with no filters                              |
+| `QuerySafetyError`       | `QUERY_SAFETY`           | Query would cause a full collection scan                        |
+| `TraversalError`         | `TRAVERSAL_ERROR`        | `run()` called with zero hops                                   |
 
 ```typescript
 import { FiregraphError, ValidationError } from 'firegraph';
@@ -716,7 +710,7 @@ try {
   await g.putNode('tour', generateId(), { name: 123 });
 } catch (err) {
   if (err instanceof ValidationError) {
-    console.error(err.code);    // 'VALIDATION_ERROR'
+    console.error(err.code); // 'VALIDATION_ERROR'
     console.error(err.details); // Zod error details
   }
 }
@@ -748,9 +742,9 @@ import type {
   GraphClientOptions,
 
   // Registry
-  RegistryEntry,       // includes targetGraph, allowedIn
-  GraphRegistry,       // includes lookupByAxbType
-  EdgeTopology,        // includes targetGraph
+  RegistryEntry, // includes targetGraph, allowedIn
+  GraphRegistry, // includes lookupByAxbType
+  EdgeTopology, // includes targetGraph
 
   // Dynamic Registry
   DynamicGraphClient,
@@ -766,7 +760,7 @@ import type {
   MigrationWriteBack,
 
   // Traversal
-  HopDefinition,       // includes targetGraph
+  HopDefinition, // includes targetGraph
   TraversalOptions,
   HopResult,
   TraversalResult,
@@ -784,17 +778,17 @@ import type {
 
 All data lives in one Firestore collection. Each document has these fields:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `aType` | string | Source node type |
-| `aUid` | string | Source node ID |
-| `axbType` | string | Relationship type (`is` for nodes) |
-| `bType` | string | Target node type |
-| `bUid` | string | Target node ID |
-| `data` | object | User payload |
-| `v` | number? | Schema version (derived from `max(toVersion)` of migrations; set when entry has migrations) |
-| `createdAt` | Timestamp | Server-set on create |
-| `updatedAt` | Timestamp | Server-set on create/update |
+| Field       | Type      | Description                                                                                 |
+| ----------- | --------- | ------------------------------------------------------------------------------------------- |
+| `aType`     | string    | Source node type                                                                            |
+| `aUid`      | string    | Source node ID                                                                              |
+| `axbType`   | string    | Relationship type (`is` for nodes)                                                          |
+| `bType`     | string    | Target node type                                                                            |
+| `bUid`      | string    | Target node ID                                                                              |
+| `data`      | object    | User payload                                                                                |
+| `v`         | number?   | Schema version (derived from `max(toVersion)` of migrations; set when entry has migrations) |
+| `createdAt` | Timestamp | Server-set on create                                                                        |
+| `updatedAt` | Timestamp | Server-set on create/update                                                                 |
 
 ### Query Planning
 
@@ -840,12 +834,13 @@ Uses the Firestore Pipeline API (`db.pipeline()`). This is the recommended mode 
 
 Uses standard Firestore queries (`.where().get()`). Use only if you understand the limitations:
 
-| Firestore Edition | With `data.*` Filters | Risk |
-|---|---|---|
-| Enterprise | Full collection scan (no index needed) | High billing on large collections |
-| Standard | Fails without composite index | Query errors for unindexed fields |
+| Firestore Edition | With `data.*` Filters                  | Risk                              |
+| ----------------- | -------------------------------------- | --------------------------------- |
+| Enterprise        | Full collection scan (no index needed) | High billing on large collections |
+| Standard          | Fails without composite index          | Query errors for unindexed fields |
 
 Standard mode is appropriate for:
+
 - **Emulator** — the emulator doesn't support pipelines, so firegraph auto-falls back to standard mode when `FIRESTORE_EMULATOR_HOST` is set
 - **Small datasets** where full scans are acceptable
 - Projects that manage their own composite indexes
@@ -881,6 +876,14 @@ pnpm test:emulator  # Full test suite against Firestore emulator
 ```
 
 Requires Node.js 18+.
+
+## Releasing
+
+Versions and npm publishes are automated via [release-please](https://github.com/googleapis/release-please).
+Land PRs to `main` with conventional-commit messages; release-please opens a
+Release PR that, when merged, tags + publishes to npm. See
+[docs/releasing.md](docs/releasing.md) for maintainer setup (NPM token,
+workflow permissions) and the full flow.
 
 ## License
 

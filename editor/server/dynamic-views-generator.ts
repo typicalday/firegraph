@@ -56,18 +56,17 @@ function _render(tmpl,ctx){
 // ---------------------------------------------------------------------------
 
 function sanitize(name: string): string {
-  return name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').toLowerCase();
+  return name
+    .replace(/[^a-zA-Z0-9]/g, '-')
+    .replace(/-+/g, '-')
+    .toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
 // Element code generation
 // ---------------------------------------------------------------------------
 
-function generateElementCode(
-  tagName: string,
-  template: string,
-  css?: string,
-): string {
+function generateElementCode(tagName: string, template: string, css?: string): string {
   const templateJson = JSON.stringify(template);
   const cssBlock = css
     ? `const _s=new CSSStyleSheet();_s.replaceSync(${JSON.stringify(css)});this._shadow.adoptedStyleSheets=[_s];`
@@ -98,10 +97,7 @@ if(!customElements.get('${tagName}')){
  * Extract field references from a Mustache template and validate them
  * against JSON Schema properties. Returns warning strings for unknown fields.
  */
-export function validateTemplate(
-  template: string,
-  jsonSchema: object | undefined,
-): string[] {
+export function validateTemplate(template: string, jsonSchema: object | undefined): string[] {
   if (!jsonSchema) return [];
 
   const schemaProps = (jsonSchema as Record<string, unknown>).properties;
@@ -121,7 +117,9 @@ export function validateTemplate(
     seen.add(field);
 
     if (!propNames.has(field)) {
-      warnings.push(`Template references "{{${field}}}" but it is not defined in the JSON Schema properties.`);
+      warnings.push(
+        `Template references "{{${field}}}" but it is not defined in the JSON Schema properties.`,
+      );
     }
   }
 
@@ -138,9 +136,7 @@ export function validateTemplate(
  *
  * Returns null if no types have templates.
  */
-export function generateDynamicViewsBundle(
-  dynamicTypeMeta: DynamicTypeMetadata,
-): string | null {
+export function generateDynamicViewsBundle(dynamicTypeMeta: DynamicTypeMetadata): string | null {
   const elements: string[] = [];
 
   for (const [name, meta] of Object.entries(dynamicTypeMeta.nodes)) {
@@ -164,9 +160,10 @@ export function generateDynamicViewsBundle(
  * Build a map of tag names for dynamic types that have templates.
  * Used to merge into the ViewRegistry response.
  */
-export function getDynamicViewTags(
-  dynamicTypeMeta: DynamicTypeMetadata,
-): { nodes: Record<string, string>; edges: Record<string, string> } {
+export function getDynamicViewTags(dynamicTypeMeta: DynamicTypeMetadata): {
+  nodes: Record<string, string>;
+  edges: Record<string, string>;
+} {
   const nodes: Record<string, string> = {};
   const edges: Record<string, string> = {};
 

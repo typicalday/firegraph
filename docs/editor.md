@@ -40,23 +40,23 @@ npx firegraph editor --registry ./src/registry.ts --collection my-graph --readon
 
 ## CLI Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--registry <path>` | *(required)* | Path to TypeScript file exporting a `GraphRegistry` |
-| `--project <id>` | *(auto-detect via ADC)* | GCP project ID |
-| `--collection <path>` | `graph` | Firestore collection path |
-| `--port <number>` | `3883` | Server port |
-| `--emulator [host:port]` | *(none)* | Use Firestore emulator (default: `127.0.0.1:8080`) |
-| `--readonly` | `false` | Force read-only mode |
+| Flag                     | Default                 | Description                                         |
+| ------------------------ | ----------------------- | --------------------------------------------------- |
+| `--registry <path>`      | _(required)_            | Path to TypeScript file exporting a `GraphRegistry` |
+| `--project <id>`         | _(auto-detect via ADC)_ | GCP project ID                                      |
+| `--collection <path>`    | `graph`                 | Firestore collection path                           |
+| `--port <number>`        | `3883`                  | Server port                                         |
+| `--emulator [host:port]` | _(none)_                | Use Firestore emulator (default: `127.0.0.1:8080`)  |
+| `--readonly`             | `false`                 | Force read-only mode                                |
 
 Flags also respect environment variables:
 
-| Env Var | Maps To |
-|---------|---------|
-| `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` | `--project` |
-| `FIREGRAPH_COLLECTION` | `--collection` |
-| `FIRESTORE_EMULATOR_HOST` | `--emulator` |
-| `PORT` | `--port` |
+| Env Var                                    | Maps To        |
+| ------------------------------------------ | -------------- |
+| `GOOGLE_CLOUD_PROJECT` or `GCLOUD_PROJECT` | `--project`    |
+| `FIREGRAPH_COLLECTION`                     | `--collection` |
+| `FIRESTORE_EMULATOR_HOST`                  | `--emulator`   |
+| `PORT`                                     | `--port`       |
 
 ## Writing a Registry File
 
@@ -87,16 +87,41 @@ const emptyEdge = z.object({});
 // 3. Register every valid triple
 export const registry = createRegistry([
   // Nodes — axbType 'is' marks a node entry
-  { aType: 'tour',      axbType: 'is', bType: 'tour',      dataSchema: tourSchema,      description: 'A cycling tour' },
-  { aType: 'departure', axbType: 'is', bType: 'departure', dataSchema: departureSchema, description: 'A scheduled departure' },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    dataSchema: tourSchema,
+    description: 'A cycling tour',
+  },
+  {
+    aType: 'departure',
+    axbType: 'is',
+    bType: 'departure',
+    dataSchema: departureSchema,
+    description: 'A scheduled departure',
+  },
 
   // Edges — define valid relationships
-  { aType: 'tour', axbType: 'hasDeparture', bType: 'departure', dataSchema: orderEdge,  description: 'Tour has a departure' },
-  { aType: 'tour', axbType: 'hasGuide',     bType: 'user',      dataSchema: emptyEdge,  description: 'Tour has a guide' },
+  {
+    aType: 'tour',
+    axbType: 'hasDeparture',
+    bType: 'departure',
+    dataSchema: orderEdge,
+    description: 'Tour has a departure',
+  },
+  {
+    aType: 'tour',
+    axbType: 'hasGuide',
+    bType: 'user',
+    dataSchema: emptyEdge,
+    description: 'Tour has a guide',
+  },
 ]);
 ```
 
 **Key rules:**
+
 - Nodes are registered with `axbType: 'is'` and `aType === bType`
 - Every edge triple `(aType, axbType, bType)` must be explicitly registered
 - `dataSchema` is optional but recommended — without it, any data payload is accepted
@@ -120,17 +145,17 @@ When the editor loads your registry, it walks each Zod schema's internal `._def`
 
 **Supported Zod types and what they produce:**
 
-| Zod Type | Editor Input | Extracted Constraints |
-|----------|-------------|----------------------|
-| `z.string()` | Text input | `minLength`, `maxLength`, `pattern` |
-| `z.number()` | Number input | `min`, `max`, `isInt` (step=1 for integers) |
-| `z.boolean()` | Checkbox | — |
-| `z.enum([...])` | Select dropdown | `enumValues` |
-| `z.array(...)` | Repeatable group with add/remove | `itemMeta` (recursive) |
-| `z.object({...})` | Nested fieldset | `fields` (recursive) |
-| `z.optional(...)` | Marked as optional | `required: false` |
-| `z.default(...)` | Unwrapped to inner type | *(default value not shown)* |
-| `z.nullable(...)` | Marked as optional | `required: false` |
+| Zod Type          | Editor Input                     | Extracted Constraints                       |
+| ----------------- | -------------------------------- | ------------------------------------------- |
+| `z.string()`      | Text input                       | `minLength`, `maxLength`, `pattern`         |
+| `z.number()`      | Number input                     | `min`, `max`, `isInt` (step=1 for integers) |
+| `z.boolean()`     | Checkbox                         | —                                           |
+| `z.enum([...])`   | Select dropdown                  | `enumValues`                                |
+| `z.array(...)`    | Repeatable group with add/remove | `itemMeta` (recursive)                      |
+| `z.object({...})` | Nested fieldset                  | `fields` (recursive)                        |
+| `z.optional(...)` | Marked as optional               | `required: false`                           |
+| `z.default(...)`  | Unwrapped to inner type          | _(default value not shown)_                 |
+| `z.nullable(...)` | Marked as optional               | `required: false`                           |
 
 Unsupported types (unions, intersections, transforms, etc.) fall back to a JSON textarea where you can enter raw JSON.
 
@@ -144,15 +169,15 @@ interface FieldMeta {
   type: 'string' | 'number' | 'boolean' | 'enum' | 'array' | 'object' | 'unknown';
   required: boolean;
   description?: string;
-  enumValues?: string[];          // for enums
-  minLength?: number;             // for strings
+  enumValues?: string[]; // for enums
+  minLength?: number; // for strings
   maxLength?: number;
-  pattern?: string;               // regex source
-  min?: number;                   // for numbers
+  pattern?: string; // regex source
+  min?: number; // for numbers
   max?: number;
   isInt?: boolean;
-  itemMeta?: FieldMeta;           // for arrays (describes each item)
-  fields?: FieldMeta[];           // for nested objects
+  itemMeta?: FieldMeta; // for arrays (describes each item)
+  fields?: FieldMeta[]; // for nested objects
 }
 ```
 
@@ -286,33 +311,33 @@ The `--emulator` flag accepts an optional `host:port` argument. If omitted, it d
 
 The editor server exposes these endpoints (useful if you want to script interactions):
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/config` | Server configuration (project, collection, readonly) |
-| `GET` | `/api/schema` | Full schema with field metadata from registry (zero Firestore reads) |
-| `GET` | `/api/nodes?type=X&limit=25&sortBy=aUid&sortDir=asc` | Browse nodes by type with sorting, filtering, pagination |
-| `GET` | `/api/node/:uid` | Single node with outgoing and incoming edges |
-| `GET` | `/api/edges?aType=X&axbType=Y` | Query edges with optional filters |
-| `GET` | `/api/search?q=term` | Search by UID (exact match + aUid/bUid lookups) |
-| `POST` | `/api/traverse` | Multi-hop graph traversal |
-| `POST` | `/api/node` | Create a node `{ aType, uid?, data }` |
-| `PUT` | `/api/node/:uid` | Update a node `{ data }` |
-| `DELETE` | `/api/node/:uid` | Delete a node |
-| `POST` | `/api/edge` | Create an edge `{ aType, aUid, axbType, bType, bUid, data }` |
-| `DELETE` | `/api/edge` | Delete an edge `{ aUid, axbType, bUid }` |
+| Method   | Path                                                 | Description                                                          |
+| -------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
+| `GET`    | `/api/config`                                        | Server configuration (project, collection, readonly)                 |
+| `GET`    | `/api/schema`                                        | Full schema with field metadata from registry (zero Firestore reads) |
+| `GET`    | `/api/nodes?type=X&limit=25&sortBy=aUid&sortDir=asc` | Browse nodes by type with sorting, filtering, pagination             |
+| `GET`    | `/api/node/:uid`                                     | Single node with outgoing and incoming edges                         |
+| `GET`    | `/api/edges?aType=X&axbType=Y`                       | Query edges with optional filters                                    |
+| `GET`    | `/api/search?q=term`                                 | Search by UID (exact match + aUid/bUid lookups)                      |
+| `POST`   | `/api/traverse`                                      | Multi-hop graph traversal                                            |
+| `POST`   | `/api/node`                                          | Create a node `{ aType, uid?, data }`                                |
+| `PUT`    | `/api/node/:uid`                                     | Update a node `{ data }`                                             |
+| `DELETE` | `/api/node/:uid`                                     | Delete a node                                                        |
+| `POST`   | `/api/edge`                                          | Create an edge `{ aType, aUid, axbType, bType, bUid, data }`         |
+| `DELETE` | `/api/edge`                                          | Delete an edge `{ aUid, axbType, bUid }`                             |
 
 ### Browse endpoint query params
 
-| Param | Default | Description |
-|-------|---------|-------------|
-| `type` | — | Node type to filter by |
-| `limit` | `25` | Results per page (max 200) |
-| `startAfter` | — | Cursor for pagination |
-| `sortBy` | `aUid` | Sort field: `aUid`, `createdAt`, `updatedAt` |
-| `sortDir` | `asc` | Sort direction: `asc` or `desc` |
-| `filterField` | — | Data subfield to filter (e.g., `status` or `data.status`) |
-| `filterOp` | — | Comparison operator: `==`, `!=`, `<`, `<=`, `>`, `>=` |
-| `filterValue` | — | Value to compare against |
+| Param         | Default | Description                                               |
+| ------------- | ------- | --------------------------------------------------------- |
+| `type`        | —       | Node type to filter by                                    |
+| `limit`       | `25`    | Results per page (max 200)                                |
+| `startAfter`  | —       | Cursor for pagination                                     |
+| `sortBy`      | `aUid`  | Sort field: `aUid`, `createdAt`, `updatedAt`              |
+| `sortDir`     | `asc`   | Sort direction: `asc` or `desc`                           |
+| `filterField` | —       | Data subfield to filter (e.g., `status` or `data.status`) |
+| `filterOp`    | —       | Comparison operator: `==`, `!=`, `<`, `<=`, `>`, `>=`     |
+| `filterValue` | —       | Value to compare against                                  |
 
 Write endpoints return `403` when in read-only mode, and `400` with structured error details when validation fails.
 
@@ -367,7 +392,12 @@ const stepData = z.object({
 export const iveRegistry = createRegistry([
   { aType: 'task', axbType: 'is', bType: 'task', dataSchema: taskData },
   { aType: 'step', axbType: 'is', bType: 'step', dataSchema: stepData },
-  { aType: 'task', axbType: 'hasStep', bType: 'step', dataSchema: z.object({ order: z.number().int().min(0) }) },
+  {
+    aType: 'task',
+    axbType: 'hasStep',
+    bType: 'step',
+    dataSchema: z.object({ order: z.number().int().min(0) }),
+  },
   { aType: 'step', axbType: 'blockedBy', bType: 'step', dataSchema: z.object({}) },
   // ... more entries ...
 ]);
@@ -398,6 +428,7 @@ The editor uses [jiti](https://github.com/nicolo-ribaudo/jiti) to import TypeScr
 ### "Registry must export a GraphRegistry"
 
 The editor looks for:
+
 1. A `default` export
 2. A named export called `registry`
 

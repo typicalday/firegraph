@@ -31,7 +31,7 @@ Set `chat: false` in your config to disable chat even if `claude` is available:
 // firegraph.config.ts
 export default defineConfig({
   entities: './entities',
-  chat: false,  // disables the Chat tab
+  chat: false, // disables the Chat tab
 });
 ```
 
@@ -41,8 +41,8 @@ export default defineConfig({
 export default defineConfig({
   entities: './entities',
   chat: {
-    model: 'haiku',       // default: 'sonnet'
-    maxConcurrency: 4,     // default: 2
+    model: 'haiku', // default: 'sonnet'
+    maxConcurrency: 4, // default: 2
   },
 });
 ```
@@ -91,15 +91,14 @@ The editor sends a `context` object with each request containing the user's curr
 
 The chat module registers these Express routes (alongside the existing tRPC routes):
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/chat` | Start a chat request. Body: `{ prompt, context?, sessionId? }`. Returns `{ requestId, sessionId }` |
-| `GET` | `/api/chat/stream?requestId=X` | SSE stream. Events: `chunk` (data: `{text}`), `done`, `error` (data: `{message}`) |
-| `GET` | `/api/chat/status` | Returns `{ enabled, model, active, maxConcurrency }` |
-| `DELETE` | `/api/chat/session/:sessionId` | Clear session memory (called on "Clear") |
+| Method   | Path                           | Description                                                                                        |
+| -------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `POST`   | `/api/chat`                    | Start a chat request. Body: `{ prompt, context?, sessionId? }`. Returns `{ requestId, sessionId }` |
+| `GET`    | `/api/chat/stream?requestId=X` | SSE stream. Events: `chunk` (data: `{text}`), `done`, `error` (data: `{message}`)                  |
+| `GET`    | `/api/chat/status`             | Returns `{ enabled, model, active, maxConcurrency }`                                               |
+| `DELETE` | `/api/chat/session/:sessionId` | Clear session memory (called on "Clear")                                                           |
 
 ## Prerequisites
 
 - **Claude CLI**: Install from [claude.ai](https://claude.ai). The editor checks for `claude` on PATH at startup.
 - **Editor server running**: The chat uses `npx firegraph query` under the hood, which talks to the running editor server's API.
-

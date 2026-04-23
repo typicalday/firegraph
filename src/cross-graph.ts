@@ -35,10 +35,7 @@
  * // → null
  * ```
  */
-export function resolveAncestorCollection(
-  collectionPath: string,
-  uid: string,
-): string | null {
+export function resolveAncestorCollection(collectionPath: string, uid: string): string | null {
   const segments = collectionPath.split('/');
 
   // Walk odd-indexed segments (document IDs in Firestore's alternating path structure)
@@ -59,9 +56,6 @@ export function resolveAncestorCollection(
  * @param uid - The UID to check
  * @returns `true` if the UID appears as a document segment in the path
  */
-export function isAncestorUid(
-  collectionPath: string,
-  uid: string,
-): boolean {
+export function isAncestorUid(collectionPath: string, uid: string): boolean {
   return resolveAncestorCollection(collectionPath, uid) !== null;
 }

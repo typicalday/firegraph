@@ -111,7 +111,10 @@ export class ChatRequestHandle {
           } else if (event === 'artifact' && data) {
             yield { kind: 'artifact', artifact: JSON.parse(data) as ChatArtifact };
           } else if (event === 'tool_start' && data) {
-            yield { kind: 'tool_start', command: (JSON.parse(data) as { command: string }).command };
+            yield {
+              kind: 'tool_start',
+              command: (JSON.parse(data) as { command: string }).command,
+            };
           } else if (event === 'session' && data) {
             sessionId = (JSON.parse(data) as { sessionId: string }).sessionId;
           } else if (event === 'done') {

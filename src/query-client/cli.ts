@@ -81,24 +81,24 @@ export async function runQueryCli(argv: string[]): Promise<void> {
         const jsonStr = positional.join(' ');
         if (!jsonStr) {
           die(
-            'Usage: firegraph query traverse \'<JSON>\'\n\n' +
-            'JSON shape:\n' +
-            '{\n' +
-            '  "startUid": "nodeUid",\n' +
-            '  "hops": [\n' +
-            '    {\n' +
-            '      "axbType": "relationName",\n' +
-            '      "direction": "forward" | "reverse",\n' +
-            '      "limit": 10,\n' +
-            '      "aType": "filterSourceType",\n' +
-            '      "bType": "filterTargetType",\n' +
-            '      "orderBy": { "field": "data.name", "direction": "asc" },\n' +
-            '      "where": [{ "field": "data.status", "op": "==", "value": "active" }]\n' +
-            '    }\n' +
-            '  ],\n' +
-            '  "maxReads": 100,\n' +
-            '  "concurrency": 5\n' +
-            '}',
+            "Usage: firegraph query traverse '<JSON>'\n\n" +
+              'JSON shape:\n' +
+              '{\n' +
+              '  "startUid": "nodeUid",\n' +
+              '  "hops": [\n' +
+              '    {\n' +
+              '      "axbType": "relationName",\n' +
+              '      "direction": "forward" | "reverse",\n' +
+              '      "limit": 10,\n' +
+              '      "aType": "filterSourceType",\n' +
+              '      "bType": "filterTargetType",\n' +
+              '      "orderBy": { "field": "data.name", "direction": "asc" },\n' +
+              '      "where": [{ "field": "data.status", "op": "==", "value": "active" }]\n' +
+              '    }\n' +
+              '  ],\n' +
+              '  "maxReads": 100,\n' +
+              '  "concurrency": 5\n' +
+              '}',
           );
         }
         let input: TraverseInput;
@@ -127,7 +127,7 @@ export async function runQueryCli(argv: string[]): Promise<void> {
       default:
         die(
           `Unknown query command: ${command}\n` +
-          'Commands: schema, get, find-nodes, find-edges, traverse, search',
+            'Commands: schema, get, find-nodes, find-edges, traverse, search',
         );
     }
 
@@ -151,7 +151,7 @@ function printHelp(): void {
   console.log('    get <uid>                       Get node detail with edges');
   console.log('    find-nodes <type> [--limit N]   List nodes of a type');
   console.log('    find-edges [filters]            List edges matching filters');
-  console.log('    traverse \'<JSON>\'               Multi-hop graph traversal');
+  console.log("    traverse '<JSON>'               Multi-hop graph traversal");
   console.log('    search <query>                  Search nodes by text');
   console.log('');
   console.log('  Global options:');

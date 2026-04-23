@@ -35,6 +35,7 @@ npm install -D tsup typescript
 Without this, the `prepare` script is silently skipped and the `dist/` directory won't exist.
 
 For framework adapters (optional):
+
 - React projects also need: `react` and `react-dom` (^18 or ^19)
 - Svelte projects also need: `svelte` (^5) and `esbuild-svelte`
 
@@ -77,14 +78,14 @@ Create `firegraph.config.ts` in your project root:
 import { defineConfig } from 'firegraph';
 
 export default defineConfig({
-  entities: './entities',           // path to entities directory
-  project: 'my-project',           // Firebase project ID
-  collection: 'my-collection',     // Firestore collection name
-  emulator: '127.0.0.1:8080',      // emulator host:port (omit for production)
+  entities: './entities', // path to entities directory
+  project: 'my-project', // Firebase project ID
+  collection: 'my-collection', // Firestore collection name
+  emulator: '127.0.0.1:8080', // emulator host:port (omit for production)
 
   editor: {
-    port: 3883,                     // editor server port
-    readonly: false,                // set true for read-only mode
+    port: 3883, // editor server port
+    readonly: false, // set true for read-only mode
   },
 
   // chat: { model: 'haiku' },     // optional AI chat config (auto-detected)
@@ -182,7 +183,7 @@ import { createRegistry } from 'firegraph';
 const registry = createRegistry([
   {
     aType: 'task',
-    axbType: 'is',        // 'is' = node self-loop
+    axbType: 'is', // 'is' = node self-loop
     bType: 'task',
     jsonSchema: taskSchema,
   },
@@ -197,6 +198,7 @@ const registry = createRegistry([
 ```
 
 The registry validates:
+
 - **Triple validation** — (aType, axbType, bType) must be registered
 - **Data validation** — payload validates against JSON Schema via ajv
 - Unregistered triples throw `RegistryViolationError`
@@ -220,8 +222,8 @@ const registry = createRegistry([
     axbType: 'is',
     bType: 'tour',
     jsonSchema: tourSchemaV2,
-    migrations: tourMigrations,          // version derived as max(toVersion) = 2
-    migrationWriteBack: 'eager',         // persist migrated data back to Firestore
+    migrations: tourMigrations, // version derived as max(toVersion) = 2
+    migrationWriteBack: 'eager', // persist migrated data back to Firestore
   },
 ]);
 ```
@@ -259,15 +261,19 @@ This returns a `DynamicGraphClient` which extends `GraphClient` with three addit
 
 ```typescript
 // 1. Define node types — stored as meta-nodes in the graph
-await g.defineNodeType('task', {
-  type: 'object',
-  required: ['title', 'status'],
-  properties: {
-    title: { type: 'string', minLength: 1 },
-    status: { type: 'string', enum: ['created', 'active', 'completed'] },
+await g.defineNodeType(
+  'task',
+  {
+    type: 'object',
+    required: ['title', 'status'],
+    properties: {
+      title: { type: 'string', minLength: 1 },
+      status: { type: 'string', enum: ['created', 'active', 'completed'] },
+    },
+    additionalProperties: false,
   },
-  additionalProperties: false,
-}, 'A unit of work');  // optional description
+  'A unit of work',
+); // optional description
 
 await g.defineNodeType('step', {
   type: 'object',
@@ -338,7 +344,7 @@ await g.defineNodeType('tour', {
 await g.reloadRegistry();
 
 await g.putNode('tour', id, { title: 'X' }); // OK — uses latest schema
-await g.putNode('tour', id, { name: 'Y' });  // throws ValidationError
+await g.putNode('tour', id, { name: 'Y' }); // throws ValidationError
 ```
 
 ### Transactions and batches
@@ -374,8 +380,8 @@ const { result } = discoverEntities('./entities');
 const staticRegistry = createRegistry(result);
 
 const g = createGraphClient(db, 'my-collection', {
-  registry: staticRegistry,                  // core types (immutable at runtime)
-  registryMode: { mode: 'dynamic' },         // runtime extensions
+  registry: staticRegistry, // core types (immutable at runtime)
+  registryMode: { mode: 'dynamic' }, // runtime extensions
 });
 
 // Static types work immediately — no reload needed
@@ -513,10 +519,10 @@ const result = await createTraversal(g, taskId)
   .follow('assignedTo')
   .run({ maxReads: 100, returnIntermediates: true });
 
-result.nodes;      // edges from final hop
-result.hops;       // per-hop breakdown
+result.nodes; // edges from final hop
+result.hops; // per-hop breakdown
 result.totalReads; // Firestore reads consumed
-result.truncated;  // true if budget exceeded
+result.truncated; // true if budget exceeded
 ```
 
 Reverse traversal:
@@ -531,9 +537,7 @@ Traversal works inside transactions too:
 
 ```typescript
 await g.runTransaction(async (tx) => {
-  const result = await createTraversal(tx, taskId)
-    .follow('hasStep')
-    .run();
+  const result = await createTraversal(tx, taskId).follow('hasStep').run();
   // make writes based on traversal results
 });
 ```
@@ -542,14 +546,14 @@ await g.runTransaction(async (tx) => {
 
 All errors extend `FiregraphError` with a `code` property:
 
-| Error Class | Code | When |
-|---|---|---|
-| `ValidationError` | `VALIDATION_ERROR` | Data fails JSON Schema |
-| `RegistryViolationError` | `REGISTRY_VIOLATION` | Triple not registered |
-| `MigrationError` | `MIGRATION_ERROR` | Migration function fails or chain is incomplete |
-| `DynamicRegistryError` | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse |
-| `InvalidQueryError` | `INVALID_QUERY` | findEdges with no filters |
-| `TraversalError` | `TRAVERSAL_ERROR` | run() with zero hops |
+| Error Class              | Code                     | When                                            |
+| ------------------------ | ------------------------ | ----------------------------------------------- |
+| `ValidationError`        | `VALIDATION_ERROR`       | Data fails JSON Schema                          |
+| `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                           |
+| `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete |
+| `DynamicRegistryError`   | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse     |
+| `InvalidQueryError`      | `INVALID_QUERY`          | findEdges with no filters                       |
+| `TraversalError`         | `TRAVERSAL_ERROR`        | run() with zero hops                            |
 
 ```typescript
 import { ValidationError, RegistryViolationError } from 'firegraph';
@@ -622,9 +626,10 @@ To customize or disable:
 // firegraph.config.ts
 export default defineConfig({
   entities: './entities',
-  chat: {                      // optional — auto-enabled by default
-    model: 'haiku',            // default: 'sonnet'
-    maxConcurrency: 4,         // default: 2
+  chat: {
+    // optional — auto-enabled by default
+    model: 'haiku', // default: 'sonnet'
+    maxConcurrency: 4, // default: 2
   },
   // chat: false,              // disables chat even if claude is on PATH
 });
@@ -644,9 +649,16 @@ class TaskCard extends HTMLElement {
   static viewName = 'card';
   static description = 'Compact task card';
   private _data: Record<string, unknown> = {};
-  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
-  get data() { return this._data; }
-  connectedCallback() { this.render(); }
+  set data(v: Record<string, unknown>) {
+    this._data = v;
+    this.render();
+  }
+  get data() {
+    return this._data;
+  }
+  connectedCallback() {
+    this.render();
+  }
   private render() {
     this.innerHTML = `<strong>${this._data.title ?? ''}</strong>`;
   }
@@ -661,11 +673,14 @@ export default [TaskCard]; // MUST be default export of array
 // entities/nodes/task/views.tsx
 import { wrapReact } from 'firegraph/react';
 
-const TaskCard = wrapReact(({ data }) => (
-  <div style={{ padding: 12 }}>
-    <strong>{String(data.title ?? '')}</strong>
-  </div>
-), { viewName: 'card', description: 'Compact task card' });
+const TaskCard = wrapReact(
+  ({ data }) => (
+    <div style={{ padding: 12 }}>
+      <strong>{String(data.title ?? '')}</strong>
+    </div>
+  ),
+  { viewName: 'card', description: 'Compact task card' },
+);
 
 export default [TaskCard];
 ```
@@ -677,9 +692,7 @@ export default [TaskCard];
 import { wrapSvelte } from 'firegraph/svelte';
 import TaskCard from './TaskCard.svelte';
 
-export default [
-  wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact task card' }),
-];
+export default [wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact task card' })];
 ```
 
 ## Quick-Start Checklist

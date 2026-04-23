@@ -197,7 +197,9 @@ export function scopeToNamesPath(scope: string): string {
 }
 
 /** Parse a graph scope into breadcrumb segments. */
-export function parseScopeSegments(scope: string): Array<{ parentUid: string; subgraphName: string }> {
+export function parseScopeSegments(
+  scope: string,
+): Array<{ parentUid: string; subgraphName: string }> {
   if (!scope) return [];
   const parts = scope.split('/');
   const segs: Array<{ parentUid: string; subgraphName: string }> = [];
@@ -241,7 +243,9 @@ export function fsUrl(fsPath: string, pageAction?: string): string {
 }
 
 export function resolveViewForEntity(
-  resolverConfig: { default?: string; listing?: string; detail?: string; inline?: string } | undefined,
+  resolverConfig:
+    | { default?: string; listing?: string; detail?: string; inline?: string }
+    | undefined,
   availableViews: Array<{ viewName: string; tagName: string }>,
   context?: 'listing' | 'detail' | 'inline',
 ): string {

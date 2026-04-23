@@ -49,12 +49,7 @@ export function matchScopeAny(scopePath: string, patterns: string[]): boolean {
  * Recursive segment matcher with support for `*` (one segment) and
  * `**` (zero or more segments).
  */
-function matchSegments(
-  path: string[],
-  pi: number,
-  pattern: string[],
-  qi: number,
-): boolean {
+function matchSegments(path: string[], pi: number, pattern: string[], qi: number): boolean {
   // Both exhausted — match
   if (pi === path.length && qi === pattern.length) return true;
 

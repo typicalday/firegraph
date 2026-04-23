@@ -16,10 +16,14 @@ import type { MigrationStep } from 'firegraph';
 
 const migrations: MigrationStep[] = [
   { fromVersion: 0, toVersion: 1, up: (d) => ({ ...d, status: d.status ?? 'draft' }) },
-  { fromVersion: 1, toVersion: 2, up: async (d) => {
-    // Full power: imports, async, DB calls, etc.
-    return { ...d, active: true };
-  }},
+  {
+    fromVersion: 1,
+    toVersion: 2,
+    up: async (d) => {
+      // Full power: imports, async, DB calls, etc.
+      return { ...d, active: true };
+    },
+  },
 ];
 
 const registry = createRegistry([
@@ -40,6 +44,7 @@ const registry = createRegistry([
 Dynamic migrations are stored as source code strings in Firestore. They are compiled at `reloadRegistry()` time via a configurable sandbox executor.
 
 The default executor uses [SES (Secure ECMAScript)](https://github.com/endojs/endo/tree/master/packages/ses) Compartments with JSON marshaling, running in a **dedicated worker thread** so that `lockdown()` does not affect the main process's intrinsics. This provides robust isolation:
+
 1. **Worker-thread confinement:** `lockdown()` runs in a separate V8 isolate (via `node:worker_threads`). The main process's built-in prototypes remain unmodified.
 2. **Hardened primordials:** `lockdown()` freezes all intrinsics inside the worker, preventing prototype pollution.
 3. **No ambient authority:** Each compartment has its own `globalThis` with no host APIs (`process`, `require`, `fetch`, `setTimeout`, etc.).
@@ -48,9 +53,7 @@ The default executor uses [SES (Secure ECMAScript)](https://github.com/endojs/en
 
 ```typescript
 await client.defineNodeType('tour', tourSchema, 'A tour', {
-  migrations: [
-    { fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "draft" })' },
-  ],
+  migrations: [{ fromVersion: 0, toVersion: 1, up: '(d) => ({ ...d, status: "draft" })' }],
   migrationWriteBack: 'eager',
 });
 // Version is derived as max(toVersion) = 1
@@ -99,11 +102,11 @@ Write-back controls whether migrated data is persisted back to Firestore after a
 
 **Two-tier resolution:** `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
 
-| Mode | Behavior |
-|------|----------|
-| `'off'` | In-memory only; Firestore document unchanged |
-| `'eager'` | Fire-and-forget write after read (client); inline update (transaction) |
-| `'background'` | Same as eager but errors are swallowed with a `console.warn` |
+| Mode           | Behavior                                                               |
+| -------------- | ---------------------------------------------------------------------- |
+| `'off'`        | In-memory only; Firestore document unchanged                           |
+| `'eager'`      | Fire-and-forget write after read (client); inline update (transaction) |
+| `'background'` | Same as eager but errors are swallowed with a `console.warn`           |
 
 ```typescript
 // Global default
@@ -113,11 +116,15 @@ const g = createGraphClient(db, 'graph', {
 });
 
 // Entry-level override (takes priority)
-createRegistry([{
-  aType: 'tour', axbType: 'is', bType: 'tour',
-  migrations,
-  migrationWriteBack: 'eager',
-}]);
+createRegistry([
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    migrations,
+    migrationWriteBack: 'eager',
+  },
+]);
 ```
 
 ## Entity Discovery
@@ -134,8 +141,9 @@ entities/nodes/tour/
 ## Key Types
 
 ```typescript
-type MigrationFn = (data: Record<string, unknown>) =>
-  Record<string, unknown> | Promise<Record<string, unknown>>;
+type MigrationFn = (
+  data: Record<string, unknown>,
+) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
 interface MigrationStep {
   fromVersion: number;
@@ -155,21 +163,21 @@ type MigrationWriteBack = 'off' | 'eager' | 'background';
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/migration.ts` | `applyMigrationChain`, `migrateRecord`, `migrateRecords` |
-| `src/sandbox.ts` | `defaultExecutor`, `compileMigrationFn`, `compileMigrations`, `precompileSource`, `destroySandboxWorker` |
-| `src/serialization.ts` | `serializeFirestoreTypes`, `deserializeFirestoreTypes`, `SERIALIZATION_TAG`, `isTaggedValue` |
-| `src/registry.ts` | Migration field propagation, validation |
-| `src/client.ts` | Read-path migration, write-path version stamping, write-back |
-| `src/transaction.ts` | Migration on transaction reads, version stamping on writes |
-| `src/batch.ts` | Version stamping on batch writes |
-| `src/dynamic-registry.ts` | Stored migration schemas, compilation at reload |
-| `src/discover.ts` | `migrations.ts` file detection and loading |
-| `src/errors.ts` | `MigrationError` |
-| `tests/unit/migration.test.ts` | Unit tests for migration pipeline |
-| `tests/unit/sandbox.test.ts` | Unit tests for sandbox compilation + Firestore type round-trips |
-| `tests/unit/serialization.test.ts` | Unit tests for tagged serialization |
-| `tests/integration/migration.test.ts` | Static registry migration integration tests |
-| `tests/integration/migration-dynamic.test.ts` | Dynamic registry migration integration tests |
-| `tests/integration/migration-writeback.test.ts` | Write-back integration tests |
+| File                                            | Purpose                                                                                                  |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `src/migration.ts`                              | `applyMigrationChain`, `migrateRecord`, `migrateRecords`                                                 |
+| `src/sandbox.ts`                                | `defaultExecutor`, `compileMigrationFn`, `compileMigrations`, `precompileSource`, `destroySandboxWorker` |
+| `src/serialization.ts`                          | `serializeFirestoreTypes`, `deserializeFirestoreTypes`, `SERIALIZATION_TAG`, `isTaggedValue`             |
+| `src/registry.ts`                               | Migration field propagation, validation                                                                  |
+| `src/client.ts`                                 | Read-path migration, write-path version stamping, write-back                                             |
+| `src/transaction.ts`                            | Migration on transaction reads, version stamping on writes                                               |
+| `src/batch.ts`                                  | Version stamping on batch writes                                                                         |
+| `src/dynamic-registry.ts`                       | Stored migration schemas, compilation at reload                                                          |
+| `src/discover.ts`                               | `migrations.ts` file detection and loading                                                               |
+| `src/errors.ts`                                 | `MigrationError`                                                                                         |
+| `tests/unit/migration.test.ts`                  | Unit tests for migration pipeline                                                                        |
+| `tests/unit/sandbox.test.ts`                    | Unit tests for sandbox compilation + Firestore type round-trips                                          |
+| `tests/unit/serialization.test.ts`              | Unit tests for tagged serialization                                                                      |
+| `tests/integration/migration.test.ts`           | Static registry migration integration tests                                                              |
+| `tests/integration/migration-dynamic.test.ts`   | Dynamic registry migration integration tests                                                             |
+| `tests/integration/migration-writeback.test.ts` | Write-back integration tests                                                                             |

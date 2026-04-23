@@ -15,9 +15,16 @@ class TourCard extends HTMLElement {
   static viewName = 'card';
   static description = 'Compact tour overview card';
   private _data: Record<string, unknown> = {};
-  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
-  get data() { return this._data; }
-  connectedCallback() { this.render(); }
+  set data(v: Record<string, unknown>) {
+    this._data = v;
+    this.render();
+  }
+  get data() {
+    return this._data;
+  }
+  connectedCallback() {
+    this.render();
+  }
   private render() {
     const d = this._data;
     const color = difficultyColors[d.difficulty as string] ?? '#94a3b8';
@@ -37,9 +44,16 @@ class TourRow extends HTMLElement {
   static viewName = 'row';
   static description = 'Compact listing row';
   private _data: Record<string, unknown> = {};
-  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
-  get data() { return this._data; }
-  connectedCallback() { this.render(); }
+  set data(v: Record<string, unknown>) {
+    this._data = v;
+    this.render();
+  }
+  get data() {
+    return this._data;
+  }
+  connectedCallback() {
+    this.render();
+  }
   private render() {
     const d = this._data;
     const color = difficultyColors[d.difficulty as string] ?? '#94a3b8';
