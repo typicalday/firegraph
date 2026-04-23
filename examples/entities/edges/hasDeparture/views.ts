@@ -8,9 +8,16 @@ class HasDepartureCard extends HTMLElement {
   static viewName = 'card';
   static description = 'Departure ordering badge';
   private _data: Record<string, unknown> = {};
-  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
-  get data() { return this._data; }
-  connectedCallback() { this.render(); }
+  set data(v: Record<string, unknown>) {
+    this._data = v;
+    this.render();
+  }
+  get data() {
+    return this._data;
+  }
+  connectedCallback() {
+    this.render();
+  }
   private render() {
     const d = this._data;
     const order = typeof d.order === 'number' ? String(d.order) : '?';

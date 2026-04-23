@@ -13,7 +13,13 @@ export const DEFAULT_QUERY_LIMIT = 500;
  * fields from data.* fields.
  */
 export const BUILTIN_FIELDS = new Set([
-  'aType', 'aUid', 'axbType', 'bType', 'bUid', 'createdAt', 'updatedAt',
+  'aType',
+  'aUid',
+  'axbType',
+  'bType',
+  'bUid',
+  'createdAt',
+  'updatedAt',
 ]);
 
 export const SHARD_ALGORITHM = 'sha256';

@@ -24,26 +24,30 @@ const difficultyColors: Record<string, string> = {
 function TourCardView({ data }: { data: Record<string, unknown> }) {
   const color = difficultyColors[data.difficulty as string] ?? '#94a3b8';
   return (
-    <div style={{
-      padding: '14px 16px',
-      borderRadius: 10,
-      background: '#1e293b',
-      border: '1px solid #334155',
-      fontFamily: 'system-ui, sans-serif',
-    }}>
+    <div
+      style={{
+        padding: '14px 16px',
+        borderRadius: 10,
+        background: '#1e293b',
+        border: '1px solid #334155',
+        fontFamily: 'system-ui, sans-serif',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <strong style={{ color: '#e2e8f0', fontSize: 14 }}>
           {String(data.name ?? 'Unnamed Tour')}
         </strong>
-        <span style={{
-          padding: '2px 8px',
-          borderRadius: 9999,
-          fontSize: 11,
-          fontWeight: 600,
-          background: `${color}20`,
-          color,
-          border: `1px solid ${color}40`,
-        }}>
+        <span
+          style={{
+            padding: '2px 8px',
+            borderRadius: 9999,
+            fontSize: 11,
+            fontWeight: 600,
+            background: `${color}20`,
+            color,
+            border: `1px solid ${color}40`,
+          }}
+        >
           {String(data.difficulty ?? '—')}
         </span>
       </div>
@@ -57,22 +61,26 @@ function TourCardView({ data }: { data: Record<string, unknown> }) {
 function TourRowView({ data }: { data: Record<string, unknown> }) {
   const color = difficultyColors[data.difficulty as string] ?? '#94a3b8';
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      fontFamily: 'system-ui, sans-serif',
-      padding: '2px 0',
-    }}>
-      <span style={{
-        padding: '2px 8px',
-        borderRadius: 9999,
-        fontSize: 11,
-        fontWeight: 600,
-        background: `${color}20`,
-        color,
-        border: `1px solid ${color}40`,
-      }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        fontFamily: 'system-ui, sans-serif',
+        padding: '2px 0',
+      }}
+    >
+      <span
+        style={{
+          padding: '2px 8px',
+          borderRadius: 9999,
+          fontSize: 11,
+          fontWeight: 600,
+          background: `${color}20`,
+          color,
+          border: `1px solid ${color}40`,
+        }}
+      >
         {String(data.difficulty ?? '—')}
       </span>
       <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 500 }}>

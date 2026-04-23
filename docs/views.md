@@ -27,6 +27,7 @@ The editor renders entities in three contexts. Each context has different space 
 The listing context appears in the **NodeBrowser** table. Each entity is one row in a table, alongside UID and timestamp columns.
 
 **Design guidelines:**
+
 - **Horizontal layout** — use `display: flex; align-items: center` to flow content in a single line
 - **Minimal height** — aim for a single line (24-32px). The row height auto-fits, but tall views create uneven tables
 - **Show only identifiers** — title/name, status badge, maybe one key attribute. No descriptions, no nested content
@@ -42,7 +43,7 @@ class TaskRow extends HTMLElement {
     const d = this._data;
     this.innerHTML = `
       <div style="display:flex;align-items:center;gap:12px;padding:2px 0;">
-        ${badge(d.status as string ?? 'created')}
+        ${badge((d.status as string) ?? 'created')}
         <span style="color:#e2e8f0;font-size:13px;font-weight:500;
                       flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
           ${d.title ?? 'Untitled'}
@@ -59,6 +60,7 @@ class TaskRow extends HTMLElement {
 The inline context appears when an entity is shown **inside another entity's page** — as a resolved node in an edge row, or as a traversal result. Space is limited but not as tight as listing.
 
 **Design guidelines:**
+
 - **Compact card** — a small, self-contained unit with a subtle border/background
 - **2-4 lines max** — title, status, one or two key fields
 - **No expandable content** — the user can click through to the full detail page
@@ -81,7 +83,7 @@ class TaskCard extends HTMLElement {
                          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
             ${d.title ?? 'Untitled'}
           </strong>
-          ${badge(d.status as string ?? 'created')}
+          ${badge((d.status as string) ?? 'created')}
         </div>
         <div style="color:#94a3b8;font-size:12px;line-height:1.5;
                     display:-webkit-box;-webkit-line-clamp:2;
@@ -99,6 +101,7 @@ class TaskCard extends HTMLElement {
 The detail context is the main content area of a **node's dedicated page**. Full width available, no height constraints.
 
 **Design guidelines:**
+
 - **Show everything** — all fields, full descriptions, nested data, results, errors
 - **Use sections and labels** — group related fields with headers
 - **Whitespace is fine** — this is the one place where vertical space is abundant
@@ -119,13 +122,15 @@ class TaskDetail extends HTMLElement {
           <h3 style="margin:0;color:#e2e8f0;font-size:16px;font-weight:600;flex:1;">
             ${d.title ?? 'Untitled'}
           </h3>
-          ${badge(d.status as string ?? 'created')}
+          ${badge((d.status as string) ?? 'created')}
         </div>
         <div style="color:#cbd5e1;font-size:13px;line-height:1.6;
                     white-space:pre-wrap;margin-bottom:12px;">
           ${d.description ?? ''}
         </div>
-        ${d.result ? `
+        ${
+          d.result
+            ? `
           <div style="margin-top:12px;">
             <div style="color:#4ade80;font-size:11px;font-weight:600;
                         margin-bottom:4px;text-transform:uppercase;">Result</div>
@@ -133,7 +138,9 @@ class TaskDetail extends HTMLElement {
                         border:1px solid #22c55e20;color:#86efac;font-size:12px;
                         line-height:1.5;white-space:pre-wrap;">${d.result}</div>
           </div>
-        ` : ''}
+        `
+            : ''
+        }
       </div>
     `;
   }
@@ -144,11 +151,11 @@ class TaskDetail extends HTMLElement {
 
 Not every entity type needs all three views. Here's a practical guide:
 
-| Entity complexity | Recommended views | Notes |
-|---|---|---|
-| **Simple** (1-2 fields) | `card` only | Card works in all contexts |
-| **Medium** (3-5 fields) | `row` + `card` | Row for listings, card for detail + inline |
-| **Rich** (many fields, long text) | `row` + `card` + `detail` | Each context gets a tailored view |
+| Entity complexity                 | Recommended views         | Notes                                      |
+| --------------------------------- | ------------------------- | ------------------------------------------ |
+| **Simple** (1-2 fields)           | `card` only               | Card works in all contexts                 |
+| **Medium** (3-5 fields)           | `row` + `card`            | Row for listings, card for detail + inline |
+| **Rich** (many fields, long text) | `row` + `card` + `detail` | Each context gets a tailored view          |
 
 If you only define one view (e.g. `card`), it will be used everywhere. The context system gracefully falls back: if a `listing` context-specific default isn't set, the global `default` is used. If no default is set, `json` is shown.
 
@@ -158,7 +165,7 @@ Every view is a class extending `HTMLElement` with:
 
 ```typescript
 class MyView extends HTMLElement {
-  static viewName = 'card';           // required — short identifier
+  static viewName = 'card'; // required — short identifier
   static description = 'A card view'; // optional — shown in gallery
 
   private _data: Record<string, unknown> = {};
@@ -184,6 +191,7 @@ class MyView extends HTMLElement {
 ```
 
 Key rules:
+
 - The `data` setter **must trigger a re-render** — the editor calls it whenever data changes
 - `connectedCallback()` should also render (for initial mount)
 - The component receives only the `data` portion of the record, never firegraph fields (`aType`, `aUid`, etc.)
@@ -232,10 +240,10 @@ export default defineConfig({
   viewDefaults: {
     nodes: {
       task: {
-        default: 'card',       // fallback for any context
-        listing: 'row',        // NodeBrowser table rows
-        detail: 'detail',      // node detail page
-        inline: 'card',        // edge rows, traversal results
+        default: 'card', // fallback for any context
+        listing: 'row', // NodeBrowser table rows
+        detail: 'detail', // node detail page
+        inline: 'card', // edge rows, traversal results
       },
     },
     edges: {
@@ -276,9 +284,9 @@ Extract common rendering logic into helper functions to keep view code DRY:
 const font = 'system-ui, -apple-system, sans-serif';
 
 const statusColors: Record<string, { bg: string; fg: string; border: string }> = {
-  active:    { bg: '#3b82f620', fg: '#60a5fa', border: '#3b82f640' },
+  active: { bg: '#3b82f620', fg: '#60a5fa', border: '#3b82f640' },
   completed: { bg: '#22c55e20', fg: '#4ade80', border: '#22c55e40' },
-  failed:    { bg: '#ef444420', fg: '#f87171', border: '#ef444440' },
+  failed: { bg: '#ef444420', fg: '#f87171', border: '#ef444440' },
 };
 
 function badge(status: string): string {

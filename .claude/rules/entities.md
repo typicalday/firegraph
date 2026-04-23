@@ -1,12 +1,12 @@
 ---
 paths:
-  - "**/entities/**/*"
-  - "**/schema.json"
-  - "**/edge.json"
-  - "**/meta.json"
-  - "**/sample.json"
-  - "src/discover.ts"
-  - "src/codegen/**/*"
+  - '**/entities/**/*'
+  - '**/schema.json'
+  - '**/edge.json'
+  - '**/meta.json'
+  - '**/sample.json'
+  - 'src/discover.ts'
+  - 'src/codegen/**/*'
 ---
 
 # Per-Entity Folder Convention
@@ -35,6 +35,7 @@ entities/
 ## File Formats
 
 `schema.json` -- Standard JSON Schema describing the `data` payload:
+
 ```json
 {
   "type": "object",
@@ -48,18 +49,23 @@ entities/
 ```
 
 `edge.json` -- Topology declaration (replaces old `{ aType, axbType, bType }` triples):
+
 ```json
 { "from": "task", "to": "step", "inverseLabel": "stepOf" }
 ```
+
 `from`/`to` accept string or string[] for edges connecting multiple node types.
 
 For cross-graph edges, add `targetGraph` to declare which subgraph the edge lives in:
+
 ```json
 { "from": "task", "to": "agent", "targetGraph": "workflow" }
 ```
+
 `targetGraph` must be a single segment (no `/`). See `subgraphs.md` for details.
 
 `meta.json` -- Optional description, view defaults, scope constraints, and migration write-back:
+
 ```json
 {
   "description": "A unit of work",
@@ -68,11 +74,13 @@ For cross-graph edges, add `targetGraph` to declare which subgraph the edge live
   "migrationWriteBack": "eager"
 }
 ```
+
 `allowedIn` constrains where this type can exist in subgraphs. Patterns: `root`, exact names, `*` (one segment), `**` (zero or more). Omit to allow everywhere.
 
 `migrationWriteBack` enables write-back of migrated data. The schema version is derived automatically as `max(toVersion)` from the `migrations.ts` file. See `migration.md` for details.
 
 `migrations.ts` -- Per-entity migration steps. **Must `export default` a `MigrationStep[]` array:**
+
 ```typescript
 import type { MigrationStep } from 'firegraph';
 
@@ -87,14 +95,22 @@ export default migrations;
 Discovery picks up `migrations.ts` (or `.js`/`.mts`/`.mjs`) automatically. The schema version is derived as `max(toVersion)` from the migrations array.
 
 `views.ts` -- Per-entity Web Component view classes. **Must `export default` an array of view classes:**
+
 ```typescript
 class TaskCard extends HTMLElement {
   static viewName = 'card';
   static description = 'Compact task card';
   private _data: Record<string, unknown> = {};
-  set data(v: Record<string, unknown>) { this._data = v; this.render(); }
-  get data() { return this._data; }
-  connectedCallback() { this.render(); }
+  set data(v: Record<string, unknown>) {
+    this._data = v;
+    this.render();
+  }
+  get data() {
+    return this._data;
+  }
+  connectedCallback() {
+    this.render();
+  }
   private render() {
     this.innerHTML = `<strong>${this._data.title ?? ''}</strong>`;
   }
@@ -105,6 +121,7 @@ export default [TaskCard];
 ```
 
 View files can import shared helpers from a sibling or parent `shared.ts`. The editor loads views via two mechanisms:
+
 - **Server (metadata):** `jiti` imports the file; expects `exported.default` (array) or `exported.views` (array)
 - **Browser (bundle):** esbuild creates a synthetic entry using default imports from each entity's views.ts
 
@@ -125,6 +142,7 @@ entities/
 ```
 
 `collection.json` -- Collection definition (required):
+
 ```json
 {
   "path": "graph/{tourUid}/logs",
@@ -136,14 +154,14 @@ entities/
 }
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `path` | Yes | Firestore collection path. Use `{paramName}` for path parameters. |
-| `description` | No | Shown in the sidebar and browse header. |
-| `typeField` | No | Field name for type discrimination (e.g. `"kind"`). |
-| `typeValue` | No | Value that `typeField` must match. Filters reads, auto-set on writes. |
-| `parentNodeType` | No | When set, shows this collection on NodeDetail for matching node type. |
-| `orderBy` | No | Default sort: `{ field, direction? }`. Direction defaults to `"asc"`. |
+| Field            | Required | Description                                                           |
+| ---------------- | -------- | --------------------------------------------------------------------- |
+| `path`           | Yes      | Firestore collection path. Use `{paramName}` for path parameters.     |
+| `description`    | No       | Shown in the sidebar and browse header.                               |
+| `typeField`      | No       | Field name for type discrimination (e.g. `"kind"`).                   |
+| `typeValue`      | No       | Value that `typeField` must match. Filters reads, auto-set on writes. |
+| `parentNodeType` | No       | When set, shows this collection on NodeDetail for matching node type. |
+| `orderBy`        | No       | Default sort: `{ field, direction? }`. Direction defaults to `"asc"`. |
 
 Path parameters are extracted automatically from `{paramName}` tokens. When a user navigates to a parameterized collection, the editor prompts for missing values. Parameter values are validated against `/` injection.
 

@@ -99,9 +99,9 @@ An edge's `data` field carries information **about the relationship itself**, no
 
 ```typescript
 // The "assignedTo" relationship has its own properties
-await g.putEdge("task", taskId, "assignedTo", "agent", agentId, {
-  role: "lead",
-  assignedAt: "2025-01-15",
+await g.putEdge('task', taskId, 'assignedTo', 'agent', agentId, {
+  role: 'lead',
+  assignedAt: '2025-01-15',
   priority: 1,
 });
 ```
@@ -111,7 +111,7 @@ Here `role`, `assignedAt`, and `priority` describe the assignment — not the ta
 If the information belongs to a node, put it on the node — edge data should not duplicate node data. Some edges are pure relationships with no data at all, and that is fine:
 
 ```typescript
-await g.putEdge("user", alice, "follows", "user", bob, {});
+await g.putEdge('user', alice, 'follows', 'user', bob, {});
 ```
 
 Edges are directional, but they can carry an `inverseLabel` for display purposes. An edge named `hasDeparture` might have `inverseLabel: 'departureOf'`. This does not create a real inverse edge — it is a cosmetic hint for the editor UI and for developers reading the schema.

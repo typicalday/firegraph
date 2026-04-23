@@ -1,9 +1,9 @@
 ---
 paths:
-  - "**/firegraph.config.*"
-  - "src/config.ts"
-  - "editor/server/config-loader.ts"
-  - "editor/src/utils.ts"
+  - '**/firegraph.config.*'
+  - 'src/config.ts'
+  - 'editor/server/config-loader.ts'
+  - 'editor/src/utils.ts'
 ---
 
 # Configuration
@@ -57,9 +57,9 @@ View resolution is implemented as a pure function (`resolveView()` in `src/confi
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/config.ts` | `FiregraphConfig` interface, `defineConfig()`, `resolveView()` |
-| `editor/server/config-loader.ts` | `discoverConfigPath()`, `loadConfig()` -- jiti-based loading |
-| `editor/src/utils.ts` | `resolveViewForEntity()` -- client-side view resolution |
-| `examples/firegraph.config.ts` | Example config file |
+| File                             | Purpose                                                        |
+| -------------------------------- | -------------------------------------------------------------- |
+| `src/config.ts`                  | `FiregraphConfig` interface, `defineConfig()`, `resolveView()` |
+| `editor/server/config-loader.ts` | `discoverConfigPath()`, `loadConfig()` -- jiti-based loading   |
+| `editor/src/utils.ts`            | `resolveViewForEntity()` -- client-side view resolution        |
+| `examples/firegraph.config.ts`   | Example config file                                            |

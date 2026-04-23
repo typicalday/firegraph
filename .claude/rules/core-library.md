@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/**/*.ts"
+  - 'src/**/*.ts'
 ---
 
 # Core Library Patterns
@@ -21,11 +21,13 @@ Three adapters (`FirestoreAdapter`, `TransactionAdapter`, `BatchAdapter`) provid
 - **`'standard'`** -- Uses `FirestoreAdapter.query()` which builds standard `.where().get()` queries. Risky for production: Enterprise Firestore does full collection scans for `data.*` filters; Standard Firestore fails without composite indexes.
 
 **Query execution flow:**
+
 1. `findEdges(params)` / `findNodes(params)` -> `buildEdgeQueryPlan()` / `buildNodeQueryPlan()`
 2. If GET strategy (all 3 identifiers present) -> `adapter.getDoc()` (bypasses query mode)
 3. If QUERY strategy -> `executeQuery(filters, options)` -> dispatches to either `pipelineAdapter.query()` or `adapter.query()` based on `queryMode`
 
 **Key rules:**
+
 - Pipeline is the default. Users must explicitly opt into standard mode.
 - Emulator auto-fallback: `FIRESTORE_EMULATOR_HOST` set -> always standard (emulator doesn't support pipelines).
 - Transactions always use standard queries (`TransactionAdapter`) regardless of `queryMode` -- Pipeline is not transactionally bound.

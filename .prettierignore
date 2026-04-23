@@ -5,3 +5,6 @@ pnpm-lock.yaml
 *.tsbuildinfo
 editor/node_modules
 editor/dist
+
+# Intentionally malformed fixture used by discovery tests.
+tests/fixtures/entities/collections/badJson/collection.json

@@ -1,16 +1,16 @@
 ---
 paths:
-  - "**/views*.ts"
-  - "**/views*.tsx"
-  - "**/*.svelte"
-  - "src/views.ts"
-  - "src/react.ts"
-  - "src/svelte.ts"
-  - "editor/server/views-bundler.ts"
-  - "editor/server/entities-loader.ts"
-  - "editor/src/components/CustomView.tsx"
-  - "editor/src/components/ViewSwitcher.tsx"
-  - "editor/src/components/ViewGallery.tsx"
+  - '**/views*.ts'
+  - '**/views*.tsx'
+  - '**/*.svelte'
+  - 'src/views.ts'
+  - 'src/react.ts'
+  - 'src/svelte.ts'
+  - 'editor/server/views-bundler.ts'
+  - 'editor/server/entities-loader.ts'
+  - 'editor/src/components/CustomView.tsx'
+  - 'editor/src/components/ViewSwitcher.tsx'
+  - 'editor/src/components/ViewGallery.tsx'
 ---
 
 # Model Views
@@ -22,12 +22,13 @@ Model views let projects define **multiple, purpose-driven visual representation
 ```typescript
 interface ViewComponentClass {
   new (...args: any[]): { data: Record<string, unknown> };
-  viewName: string;        // required -- short identifier (e.g. 'card')
-  description?: string;    // optional -- shown in gallery and tooltips
+  viewName: string; // required -- short identifier (e.g. 'card')
+  description?: string; // optional -- shown in gallery and tooltips
 }
 ```
 
 Key rules:
+
 - The `data` setter must trigger a re-render
 - `connectedCallback()` should also render (for initial mount)
 - Use inline styles or Shadow DOM for styling
@@ -47,24 +48,30 @@ Tag name format: `fg-{entityType}-{viewName}` for nodes, `fg-edge-{axbType}-{vie
 ## Framework Adapters
 
 **React** (`firegraph/react`):
+
 ```tsx
 import { wrapReact } from 'firegraph/react';
-const TaskCard = wrapReact(({ data }) => (
-  <div style={{ padding: 12 }}><strong>{String(data.title ?? '')}</strong></div>
-), { viewName: 'card', description: 'Compact task card' });
+const TaskCard = wrapReact(
+  ({ data }) => (
+    <div style={{ padding: 12 }}>
+      <strong>{String(data.title ?? '')}</strong>
+    </div>
+  ),
+  { viewName: 'card', description: 'Compact task card' },
+);
 export default [TaskCard];
 ```
 
 **Svelte 5** (`firegraph/svelte`):
+
 ```ts
 import { wrapSvelte } from 'firegraph/svelte';
 import TaskCard from './TaskCard.svelte';
-export default [
-  wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact task card' }),
-];
+export default [wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact task card' })];
 ```
 
 How adapters work:
+
 - `wrapReact` returns an HTMLElement that lazily imports `react` and `react-dom/client`, creates a React root
 - `wrapSvelte` returns an HTMLElement that lazily imports `svelte`, mounts with `{ data }` props
 - React/Svelte resolved from project's `node_modules` by esbuild

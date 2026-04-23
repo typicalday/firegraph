@@ -1,7 +1,7 @@
 ---
 paths:
-  - "editor/**/*"
-  - "bin/**/*"
+  - 'editor/**/*'
+  - 'bin/**/*'
 ---
 
 # Editor
@@ -10,21 +10,21 @@ The `editor/` directory contains a full-stack web UI for browsing and editing gr
 
 ## Architecture
 
-| Directory | Purpose |
-|-----------|---------|
-| `editor/server/index.ts` | Express server -- reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
-| `editor/server/config-loader.ts` | Discovers and loads `firegraph.config.ts` via `jiti` |
-| `editor/server/entities-loader.ts` | Loads per-entity views via `jiti`, builds `ViewRegistry`, merges view defaults |
-| `editor/server/schema-introspect.ts` | Converts JSON Schema -> `FieldMeta[]` for form generation |
-| `editor/server/schema-views-validator.ts` | Validates sample data against JSON Schemas, detects orphaned views |
-| `editor/server/views-bundler.ts` | esbuild bundles per-entity views into browser-loadable ES module |
-| `editor/src/` | React 19 + React Router + Tailwind CSS frontend |
-| `editor/src/components/SchemaForm.tsx` | Dynamic form generator from `FieldMeta[]` |
-| `editor/src/components/NodeEditor.tsx` | Create/edit node form |
-| `editor/src/components/EdgeEditor.tsx` | Create edge form |
-| `editor/src/components/CustomView.tsx` | React wrapper for rendering Web Component views |
-| `editor/src/components/ViewSwitcher.tsx` | Tab bar for switching between JSON and custom views |
-| `editor/src/components/ViewGallery.tsx` | Storybook-like preview page for all registered views |
+| Directory                                 | Purpose                                                                                             |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `editor/server/index.ts`                  | Express server -- reads (raw Firestore queries), writes (via `GraphClient` for registry validation) |
+| `editor/server/config-loader.ts`          | Discovers and loads `firegraph.config.ts` via `jiti`                                                |
+| `editor/server/entities-loader.ts`        | Loads per-entity views via `jiti`, builds `ViewRegistry`, merges view defaults                      |
+| `editor/server/schema-introspect.ts`      | Converts JSON Schema -> `FieldMeta[]` for form generation                                           |
+| `editor/server/schema-views-validator.ts` | Validates sample data against JSON Schemas, detects orphaned views                                  |
+| `editor/server/views-bundler.ts`          | esbuild bundles per-entity views into browser-loadable ES module                                    |
+| `editor/src/`                             | React 19 + React Router + Tailwind CSS frontend                                                     |
+| `editor/src/components/SchemaForm.tsx`    | Dynamic form generator from `FieldMeta[]`                                                           |
+| `editor/src/components/NodeEditor.tsx`    | Create/edit node form                                                                               |
+| `editor/src/components/EdgeEditor.tsx`    | Create edge form                                                                                    |
+| `editor/src/components/CustomView.tsx`    | React wrapper for rendering Web Component views                                                     |
+| `editor/src/components/ViewSwitcher.tsx`  | Tab bar for switching between JSON and custom views                                                 |
+| `editor/src/components/ViewGallery.tsx`   | Storybook-like preview page for all registered views                                                |
 
 ## Commands
 
