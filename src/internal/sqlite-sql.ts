@@ -21,21 +21,36 @@ export interface CompiledStatement {
 
 /**
  * Translate a firegraph filter field to either a column reference or a
- * `json_extract(data, ?)` expression. The JSON path is returned separately
- * so it can be appended to the parameter list.
+ * `json_extract("data", '$.<path>')` expression with the JSON path
+ * **inlined as a string literal** — not parametrized.
+ *
+ * Inlining matters: SQLite's query planner matches an expression index
+ * (`CREATE INDEX … ON tbl(json_extract("data", '$.status'))`) against
+ * *textually identical* expressions in the WHERE clause. `json_extract(
+ * "data", ?)` with the path as a bound parameter would never hit the
+ * index, so every `data.*` filter would fall back to a full scan even
+ * when a matching expression index exists. The index builder in
+ * `sqlite-index-ddl.ts` emits the inlined form, and this compiler must
+ * match it verbatim.
+ *
+ * Safety: each path component passes `JSON_PATH_KEY_RE`
+ * (`/^[A-Za-z_][A-Za-z0-9_-]*$/`) before embedding, which excludes every
+ * character SQLite treats as syntax (quote, dot, bracket, whitespace).
  */
-function compileFieldRef(field: string): { expr: string; pathParam?: string } {
+function compileFieldRef(field: string): { expr: string } {
   const column = FIELD_TO_COLUMN[field];
   if (column) {
     return { expr: quoteIdent(column) };
   }
   if (field.startsWith('data.')) {
-    const key = field.slice(5);
-    validateJsonPathKey(key);
-    return { expr: 'json_extract("data", ?)', pathParam: `$.${key}` };
+    const suffix = field.slice(5);
+    for (const part of suffix.split('.')) {
+      validateJsonPathKey(part);
+    }
+    return { expr: `json_extract("data", '$.${suffix}')` };
   }
   if (field === 'data') {
-    return { expr: 'json_extract("data", ?)', pathParam: '$' };
+    return { expr: `json_extract("data", '$')` };
   }
   throw new FiregraphError(`SQLite backend cannot resolve filter field: ${field}`, 'INVALID_QUERY');
 }
@@ -137,8 +152,7 @@ function validateJsonPathKey(key: string): void {
 }
 
 function compileFilter(filter: QueryFilter, params: unknown[]): string {
-  const { expr, pathParam } = compileFieldRef(filter.field);
-  if (pathParam !== undefined) params.push(pathParam);
+  const { expr } = compileFieldRef(filter.field);
 
   switch (filter.op) {
     case '==':
@@ -196,11 +210,10 @@ function asArray(value: unknown, op: string): unknown[] {
   return value;
 }
 
-function compileOrderBy(options: QueryOptions | undefined, params: unknown[]): string {
+function compileOrderBy(options: QueryOptions | undefined, _params: unknown[]): string {
   if (!options?.orderBy) return '';
   const { field, direction } = options.orderBy;
-  const { expr, pathParam } = compileFieldRef(field);
-  if (pathParam !== undefined) params.push(pathParam);
+  const { expr } = compileFieldRef(field);
   const dir = direction === 'desc' ? 'DESC' : 'ASC';
   return ` ORDER BY ${expr} ${dir}`;
 }

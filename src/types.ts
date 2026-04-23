@@ -127,6 +127,72 @@ export type MigrationExecutor = (source: string) => MigrationFn;
 /** Write-back mode for auto-migrated records. */
 export type MigrationWriteBack = 'off' | 'eager' | 'background';
 
+// ---------------------------------------------------------------------------
+// Secondary Index Types
+// ---------------------------------------------------------------------------
+
+/**
+ * One field in a composite index. The string shorthand form defaults to
+ * ascending order; use the object form when a field needs to be indexed
+ * descending (e.g., pagination by `{ path: 'updatedAt', desc: true }`).
+ */
+export interface IndexFieldSpec {
+  /**
+   * Field path. Top-level firegraph fields (`aType`, `aUid`, `axbType`,
+   * `bType`, `bUid`, `createdAt`, `updatedAt`, `v`) resolve to their
+   * underlying columns. Dotted paths like `'data.status'` or
+   * `'data.author.name'` index into the JSON data payload.
+   *
+   * Each dotted component must match `/^[A-Za-z_][A-Za-z0-9_-]*$/` — keys
+   * with dots, quotes, brackets, spaces, or other syntax characters are
+   * rejected at DDL build time. Indexes on exotic keys are not supported
+   * because SQLite expression indexes must match the query compiler's
+   * output verbatim, and inlining quoted path components into DDL would
+   * desynchronize the two compilers. If you need to filter by an exotic
+   * key, use `replaceData` writes rather than an indexed field.
+   */
+  path: string;
+  /** Descending order; defaults to ascending. */
+  desc?: boolean;
+}
+
+/**
+ * Declarative secondary index. Translators emit a `CREATE INDEX` statement
+ * (SQLite) or a `FirestoreIndex` composite (Firestore) per spec.
+ *
+ * Composite indexes support the prefix of their `fields` list — a spec
+ * `{ fields: ['aType', 'axbType'] }` also covers queries filtering on
+ * `aType` alone.
+ *
+ * @example
+ * ```ts
+ * // Plain composite on top-level fields
+ * { fields: ['aType', 'axbType'] }
+ *
+ * // Mixed string + object form; `updatedAt` descending
+ * { fields: ['aType', 'aUid', 'axbType', { path: 'updatedAt', desc: true }] }
+ *
+ * // JSON data-field index (SQLite: expression index on json_extract)
+ * { fields: ['aType', 'axbType', 'data.status'] }
+ *
+ * // Partial index (SQLite only — Firestore ignores the `where` clause)
+ * { fields: ['aType'], where: "json_extract(data, '$.archived') = 0" }
+ * ```
+ */
+export interface IndexSpec {
+  /**
+   * Ordered field list. String shorthand = ascending. Use `IndexFieldSpec`
+   * form to mark individual fields descending.
+   */
+  fields: Array<string | IndexFieldSpec>;
+  /**
+   * Partial-index predicate. Applied verbatim after `WHERE` in the emitted
+   * SQLite DDL. Ignored (with a one-time warning) by the Firestore
+   * generator — Firestore composite indexes do not support predicates.
+   */
+  where?: string;
+}
+
 export interface RegistryEntry {
   aType: string;
   axbType: string;
@@ -193,6 +259,19 @@ export interface RegistryEntry {
    * Omit to inherit the global setting.
    */
   migrationWriteBack?: MigrationWriteBack;
+
+  /**
+   * Secondary indexes tied to this triple. Each spec becomes a single
+   * backend-native composite index scoped to rows matching
+   * `(aType, axbType, bType)` — though the DDL does not currently restrict
+   * by triple, so authors should think of these as globally-applied indexes
+   * declared on the triple's behalf.
+   *
+   * Use this to accelerate `findNodes` / `findEdges` queries that filter
+   * on `data.*` fields or compose with firegraph's top-level fields in ways
+   * the default preset doesn't cover.
+   */
+  indexes?: IndexSpec[];
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +317,8 @@ export interface DiscoveredEntity {
   migrations?: MigrationStep[];
   /** Per-entity write-back override from meta.json. */
   migrationWriteBack?: MigrationWriteBack;
+  /** Secondary indexes loaded from meta.json (`indexes` field). */
+  indexes?: IndexSpec[];
 }
 
 /** Result of scanning an entities directory. */

@@ -9,6 +9,7 @@ export type {
 } from './config.js';
 export { defineConfig, resolveView } from './config.js';
 export { isAncestorUid, resolveAncestorCollection } from './cross-graph.js';
+export { DEFAULT_CORE_INDEXES } from './default-indexes.js';
 export type { DiscoverResult, DiscoveryWarning } from './discover.js';
 export { discoverEntities } from './discover.js';
 export { DiscoveryError } from './discover.js';
@@ -39,7 +40,12 @@ export {
 } from './errors.js';
 export { createGraphClient } from './firestore.js';
 export { generateId } from './id.js';
-export type { FirestoreIndex, FirestoreIndexConfig, FirestoreIndexField } from './indexes.js';
+export type {
+  FirestoreIndex,
+  FirestoreIndexConfig,
+  FirestoreIndexField,
+  GenerateIndexOptions,
+} from './indexes.js';
 export { generateIndexConfig } from './indexes.js';
 export { DEFAULT_QUERY_LIMIT } from './internal/constants.js';
 export type { FieldMeta } from './json-schema.js';
@@ -105,6 +111,8 @@ export type {
   GraphWriter,
   HopDefinition,
   HopResult,
+  IndexFieldSpec,
+  IndexSpec,
   MigrationExecutor,
   MigrationFn,
   MigrationStep,

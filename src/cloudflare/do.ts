@@ -57,6 +57,8 @@ import type {
   BulkResult,
   CascadeResult,
   FindEdgesParams,
+  GraphRegistry,
+  IndexSpec,
   QueryFilter,
   QueryOptions,
 } from '../types.js';
@@ -118,6 +120,24 @@ export interface FiregraphDOOptions {
   table?: string;
   /** Run schema DDL on first boot. Default: `true`. */
   autoMigrate?: boolean;
+  /**
+   * Registry whose per-entry `indexes` get compiled into `CREATE INDEX`
+   * statements during schema bootstrap. Supply the same registry you pass
+   * to `createGraphClient` on the Worker side to keep DO and client in sync.
+   */
+  registry?: GraphRegistry;
+  /**
+   * Replaces the built-in core index preset
+   * (`DEFAULT_CORE_INDEXES`). Supply this when the default set of
+   * `(aUid, axbType)`, `(axbType, bUid)`, etc. composites doesn't fit your
+   * query shapes — e.g., you want descending timestamps or a reduced set.
+   * Entry-level `RegistryEntry.indexes` remain additive on top.
+   *
+   * Pass `[]` to disable core indexes entirely (advanced — only safe when
+   * the provided `registry`'s entries cover every query shape your app
+   * issues).
+   */
+  coreIndexes?: IndexSpec[];
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +147,12 @@ export interface FiregraphDOOptions {
 /**
  * Default `FiregraphDO` options, used when a subclass calls `super(ctx, env)`
  * without passing options. Overridable in subclasses via constructor args.
+ *
+ * Only fields with a universal sensible default go here — optional index
+ * and registry wiring is `undefined` by default and threaded through
+ * `runSchema` as-is.
  */
-const DEFAULT_OPTIONS: Required<FiregraphDOOptions> = {
+const DEFAULT_OPTIONS: Required<Pick<FiregraphDOOptions, 'table' | 'autoMigrate'>> = {
   table: 'firegraph',
   autoMigrate: true,
 };
@@ -140,6 +164,10 @@ export class FiregraphDO {
   protected readonly env: unknown;
   /** @internal — table name used by every compiled statement. */
   protected readonly table: string;
+  /** @internal — registry consulted by `runSchema` for per-entry indexes. */
+  protected readonly registry?: GraphRegistry;
+  /** @internal — overrides `DEFAULT_CORE_INDEXES` when set. */
+  protected readonly coreIndexes?: IndexSpec[];
 
   constructor(ctx: DurableObjectStateLike, env: unknown, options: FiregraphDOOptions = {}) {
     this.ctx = ctx;
@@ -147,6 +175,8 @@ export class FiregraphDO {
     const table = options.table ?? DEFAULT_OPTIONS.table;
     validateDOTableName(table);
     this.table = table;
+    this.registry = options.registry;
+    this.coreIndexes = options.coreIndexes;
 
     const autoMigrate = options.autoMigrate ?? DEFAULT_OPTIONS.autoMigrate;
     if (autoMigrate) {
@@ -385,7 +415,11 @@ export class FiregraphDO {
   // ---------------------------------------------------------------------------
 
   protected runSchema(): void {
-    for (const sql of buildDOSchemaStatements(this.table)) {
+    const statements = buildDOSchemaStatements(this.table, {
+      coreIndexes: this.coreIndexes,
+      registry: this.registry,
+    });
+    for (const sql of statements) {
       this.ctx.storage.sql.exec(sql).toArray();
     }
   }

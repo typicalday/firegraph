@@ -12,9 +12,21 @@
  *   - Nodes: the UID itself
  *   - Edges: `shard:aUid:axbType:bUid`
  *
- * Indexes are defined for the patterns the query planner emits
- * (`src/query.ts`). No scope prefix is needed because rows never carry one.
+ * Indexes come from two sources and are appended to the DDL list:
+ *
+ *  1. The core preset (`DEFAULT_CORE_INDEXES`), overridable per-DO via
+ *     `FiregraphDOOptions.coreIndexes`.
+ *  2. Per-registry-entry `indexes` declared on `RegistryEntry` (from code or
+ *     `meta.json` via entity discovery).
+ *
+ * Both sets are deduplicated by canonical fingerprint, so declaring the same
+ * composite twice (e.g., by preset + registry entry) collapses to one
+ * `CREATE INDEX`.
  */
+
+import { DEFAULT_CORE_INDEXES } from '../default-indexes.js';
+import { buildIndexDDL, dedupeIndexSpecs } from '../internal/sqlite-index-ddl.js';
+import type { GraphRegistry, IndexSpec } from '../types.js';
 
 export const DO_COLUMNS = [
   'doc_id',
@@ -70,13 +82,37 @@ export function quoteDOIdent(name: string): string {
 }
 
 /**
+ * Options controlling DDL emission for `buildDOSchemaStatements`.
+ */
+export interface BuildDOSchemaOptions {
+  /**
+   * Replaces the built-in core preset. Defaults to `DEFAULT_CORE_INDEXES`.
+   * Pass `[]` to disable core indexes entirely.
+   */
+  coreIndexes?: IndexSpec[];
+  /**
+   * Registry contributing per-triple `indexes` declarations. Entries with
+   * no `indexes` field are ignored; the rest are flattened and deduplicated
+   * against the core preset by canonical fingerprint.
+   */
+  registry?: GraphRegistry;
+}
+
+/**
  * DDL statements that create the firegraph table and its indexes. Returned
  * as separate statements because DO SQLite's `exec()` runs one statement per
  * call. Run via `FiregraphDO.ensureSchema()` on DO boot.
+ *
+ * The CREATE TABLE statement is always first; index statements follow in
+ * deterministic order. Same specs across runs produce the same statements,
+ * so `CREATE INDEX IF NOT EXISTS` is idempotent.
  */
-export function buildDOSchemaStatements(table: string): string[] {
+export function buildDOSchemaStatements(
+  table: string,
+  options: BuildDOSchemaOptions = {},
+): string[] {
   const t = quoteDOIdent(table);
-  return [
+  const statements: string[] = [
     `CREATE TABLE IF NOT EXISTS ${t} (
       doc_id      TEXT NOT NULL PRIMARY KEY,
       a_type      TEXT NOT NULL,
@@ -89,10 +125,14 @@ export function buildDOSchemaStatements(table: string): string[] {
       created_at  INTEGER NOT NULL,
       updated_at  INTEGER NOT NULL
     )`,
-    `CREATE INDEX IF NOT EXISTS ${quoteDOIdent(`${table}_idx_a_uid`)} ON ${t}(a_uid)`,
-    `CREATE INDEX IF NOT EXISTS ${quoteDOIdent(`${table}_idx_b_uid`)} ON ${t}(b_uid)`,
-    `CREATE INDEX IF NOT EXISTS ${quoteDOIdent(`${table}_idx_axb_type_b_uid`)} ON ${t}(axb_type, b_uid)`,
-    `CREATE INDEX IF NOT EXISTS ${quoteDOIdent(`${table}_idx_a_type`)} ON ${t}(a_type)`,
-    `CREATE INDEX IF NOT EXISTS ${quoteDOIdent(`${table}_idx_b_type`)} ON ${t}(b_type)`,
   ];
+
+  const core = options.coreIndexes ?? [...DEFAULT_CORE_INDEXES];
+  const fromRegistry = options.registry?.entries().flatMap((e) => e.indexes ?? []) ?? [];
+
+  const deduped = dedupeIndexSpecs([...core, ...fromRegistry]);
+  for (const spec of deduped) {
+    statements.push(buildIndexDDL(spec, { table, fieldToColumn: DO_FIELD_TO_COLUMN }));
+  }
+  return statements;
 }

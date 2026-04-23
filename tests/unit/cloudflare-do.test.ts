@@ -305,15 +305,16 @@ describe('FiregraphDO — batch', () => {
       };
     })();
 
-    // Schema creation runs 6 `exec` calls (CREATE TABLE + 5 CREATE INDEX).
-    // The batch then runs 2 more. We let the first batch op succeed and
-    // throw on the second so the transaction has uncommitted work to roll
-    // back. `transactionSync` must propagate the throw after rollback.
+    // Schema creation runs 9 `exec` calls (CREATE TABLE + 8 CREATE INDEX
+    // from DEFAULT_CORE_INDEXES). The batch then runs 2 more. We let the
+    // first batch op succeed and throw on the second so the transaction has
+    // uncommitted work to roll back. `transactionSync` must propagate the
+    // throw after rollback.
     let callCount = 0;
     const wrappedSql: DOSqlExecutor = {
       exec(text, ...params) {
         callCount++;
-        if (callCount === 8) {
+        if (callCount === 11) {
           throw new Error('simulated SQL failure');
         }
         return baseStorage.sql.exec(text, ...params);

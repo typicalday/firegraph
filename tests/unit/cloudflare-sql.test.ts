@@ -24,6 +24,8 @@ import {
   hydrateDORecord,
   rowToDORecord,
 } from '../../src/cloudflare/sql.js';
+import { DEFAULT_CORE_INDEXES } from '../../src/default-indexes.js';
+import { createRegistry } from '../../src/registry.js';
 import type { GraphTimestamp } from '../../src/timestamp.js';
 import { GraphTimestampImpl } from '../../src/timestamp.js';
 
@@ -69,6 +71,114 @@ describe('cloudflare/schema', () => {
     expect(joined).toContain('axb_type');
     expect(joined).not.toContain('scope'); // critical invariant
   });
+
+  it('defaults to DEFAULT_CORE_INDEXES (1 CREATE TABLE + 8 CREATE INDEX)', () => {
+    const stmts = buildDOSchemaStatements('firegraph');
+    expect(stmts).toHaveLength(1 + DEFAULT_CORE_INDEXES.length);
+    expect(stmts[0]).toContain('CREATE TABLE IF NOT EXISTS "firegraph"');
+    for (const s of stmts.slice(1)) {
+      expect(s).toMatch(/CREATE INDEX IF NOT EXISTS/);
+    }
+  });
+
+  it('coreIndexes: [] disables the default preset — only CREATE TABLE is emitted', () => {
+    const stmts = buildDOSchemaStatements('firegraph', { coreIndexes: [] });
+    expect(stmts).toHaveLength(1);
+    expect(stmts[0]).toContain('CREATE TABLE IF NOT EXISTS "firegraph"');
+  });
+
+  it('coreIndexes override replaces the preset entirely', () => {
+    const stmts = buildDOSchemaStatements('firegraph', {
+      coreIndexes: [{ fields: ['aType', 'axbType', 'data.status'] }],
+    });
+    // 1 CREATE TABLE + 1 CREATE INDEX
+    expect(stmts).toHaveLength(2);
+    // JSON path inlined (not parametrized) so the SQLite planner matches the
+    // same expression the query compiler emits.
+    expect(stmts[1]).toContain(`json_extract("data", '$.status')`);
+    expect(stmts[1]).not.toContain(`json_extract("data", ?)`);
+  });
+
+  it('emits composite DDL with ASC/DESC from IndexFieldSpec', () => {
+    const stmts = buildDOSchemaStatements('firegraph', {
+      coreIndexes: [{ fields: ['aType', { path: 'updatedAt', desc: true }] }],
+    });
+    const ddl = stmts[1];
+    expect(ddl).toContain('"a_type"');
+    expect(ddl).toMatch(/"updated_at" DESC/);
+  });
+
+  it('appends partial-index WHERE clause when `where` is set', () => {
+    const stmts = buildDOSchemaStatements('firegraph', {
+      coreIndexes: [
+        {
+          fields: ['aType', 'axbType'],
+          where: `json_extract("data", '$.archived') = 0`,
+        },
+      ],
+    });
+    const ddl = stmts[1];
+    expect(ddl).toMatch(/WHERE json_extract\("data", '\$\.archived'\) = 0$/);
+  });
+
+  it('merges RegistryEntry.indexes with the core preset', () => {
+    const registry = createRegistry([
+      {
+        aType: 'task',
+        axbType: 'is',
+        bType: 'task',
+        indexes: [{ fields: ['aType', 'axbType', 'data.status'] }],
+      },
+    ]);
+    const stmts = buildDOSchemaStatements('firegraph', { registry });
+    // 1 CREATE TABLE + 8 preset + 1 registry = 10
+    expect(stmts).toHaveLength(10);
+    const registryDDL = stmts.find((s) => s.includes(`'$.status'`));
+    expect(registryDDL).toBeDefined();
+  });
+
+  it('dedupes identical specs across core preset and registry entries', () => {
+    const registry = createRegistry([
+      {
+        aType: 'task',
+        axbType: 'is',
+        bType: 'task',
+        // This duplicates a DEFAULT_CORE_INDEXES composite — the fingerprint
+        // matches, so only one CREATE INDEX emits.
+        indexes: [{ fields: ['aType', 'axbType'] }],
+      },
+    ]);
+    const stmts = buildDOSchemaStatements('firegraph', { registry });
+    // 1 CREATE TABLE + 8 preset (no extra from registry)
+    expect(stmts).toHaveLength(9);
+  });
+
+  it('emits deterministic index names (same spec across runs produces same DDL)', () => {
+    const a = buildDOSchemaStatements('firegraph', {
+      coreIndexes: [{ fields: ['aType', 'data.status'] }],
+    });
+    const b = buildDOSchemaStatements('firegraph', {
+      coreIndexes: [{ fields: ['aType', 'data.status'] }],
+    });
+    expect(a).toEqual(b);
+    // The name is `firegraph_idx_{hash}` with a stable 8-char hex hash.
+    expect(a[1]).toMatch(/CREATE INDEX IF NOT EXISTS "firegraph_idx_[0-9a-f]{8}"/);
+  });
+
+  it('rejects invalid JSON path components in data.* specs', () => {
+    expect(() =>
+      buildDOSchemaStatements('firegraph', {
+        coreIndexes: [{ fields: ['aType', 'data.bad key'] }],
+      }),
+    ).toThrow(/invalid component/);
+  });
+
+  it('emits IF NOT EXISTS on every index so bootstrap is idempotent', () => {
+    const stmts = buildDOSchemaStatements('firegraph');
+    for (const s of stmts.slice(1)) {
+      expect(s).toContain('CREATE INDEX IF NOT EXISTS');
+    }
+  });
 });
 
 describe('cloudflare/sql compileDOSelect', () => {
@@ -86,12 +196,31 @@ describe('cloudflare/sql compileDOSelect', () => {
     expect(params).toEqual(['abc']);
   });
 
-  it('compiles `data.*` filters via json_extract', () => {
+  it('compiles `data.*` filters via json_extract with an inlined JSON path', () => {
+    // The JSON path literal is inlined (not parametrized) so SQLite's query
+    // planner matches the expression index emitted by `sqlite-index-ddl.ts`
+    // — a parametrized `json_extract("data", ?)` would never hit the index.
     const { sql, params } = compileDOSelect('firegraph', [
       { field: 'data.status', op: '==', value: 'active' },
     ]);
-    expect(sql).toBe('SELECT * FROM "firegraph" WHERE json_extract("data", ?) = ?');
-    expect(params).toEqual(['$.status', 'active']);
+    expect(sql).toBe(`SELECT * FROM "firegraph" WHERE json_extract("data", '$.status') = ?`);
+    expect(params).toEqual(['active']);
+  });
+
+  it('inlines nested JSON paths too', () => {
+    const { sql, params } = compileDOSelect('firegraph', [
+      { field: 'data.author.name', op: '==', value: 'alex' },
+    ]);
+    expect(sql).toBe(`SELECT * FROM "firegraph" WHERE json_extract("data", '$.author.name') = ?`);
+    expect(params).toEqual(['alex']);
+  });
+
+  it('compiles bare `data` as json_extract on $', () => {
+    const { sql, params } = compileDOSelect('firegraph', [
+      { field: 'data', op: '==', value: '{}' },
+    ]);
+    expect(sql).toBe(`SELECT * FROM "firegraph" WHERE json_extract("data", '$') = ?`);
+    expect(params).toEqual(['{}']);
   });
 
   it('rejects `data.<unsafe-key>` paths at compile time', () => {
@@ -108,14 +237,14 @@ describe('cloudflare/sql compileDOSelect', () => {
     expect(params).toEqual(['a', 'b', 'c']);
   });
 
-  it('emits array-contains via EXISTS + json_each', () => {
+  it('emits array-contains via EXISTS + json_each with inlined JSON path', () => {
     const { sql, params } = compileDOSelect('firegraph', [
       { field: 'data.tags', op: 'array-contains', value: 'x' },
     ]);
     expect(sql).toContain(
-      'EXISTS (SELECT 1 FROM json_each(json_extract("data", ?)) WHERE value = ?)',
+      `EXISTS (SELECT 1 FROM json_each(json_extract("data", '$.tags')) WHERE value = ?)`,
     );
-    expect(params).toEqual(['$.tags', 'x']);
+    expect(params).toEqual(['x']);
   });
 
   it('appends ORDER BY and LIMIT', () => {

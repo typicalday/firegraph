@@ -57,3 +57,5 @@ export type {
   FiregraphDOOptions,
 } from './do.js';
 export { FiregraphDO } from './do.js';
+export type { BuildDOSchemaOptions } from './schema.js';
+export { buildDOSchemaStatements } from './schema.js';

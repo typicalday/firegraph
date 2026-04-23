@@ -36,7 +36,9 @@ if (subcommand === 'editor') {
     try {
       execSync('npm run build:editor', { cwd: pkgDir, stdio: 'inherit' });
     } catch {
-      console.error('Failed to build editor. Run "npm run build:editor" manually in the firegraph package directory.');
+      console.error(
+        'Failed to build editor. Run "npm run build:editor" manually in the firegraph package directory.',
+      );
       process.exit(1);
     }
   }
@@ -93,16 +95,20 @@ if (subcommand === 'editor') {
   const outPath = args.out || null;
 
   const distIndex = path.join(__dirname, '..', 'dist', 'index.js');
-  const { generateIndexConfig, discoverEntities } = await import(distIndex);
+  const { generateIndexConfig, discoverEntities, createRegistry } = await import(distIndex);
 
   try {
     let entities = undefined;
+    let registryEntries = undefined;
     if (entitiesDir) {
       const { result, warnings } = discoverEntities(entitiesDir);
       for (const w of warnings) {
         console.warn(`  warning: ${w.message}`);
       }
       entities = result;
+      // Build a registry so per-entity `indexes` (from meta.json) reach
+      // the generator via RegistryEntry.indexes.
+      registryEntries = createRegistry(result).entries();
       const nodeCount = result.nodes.size;
       const edgeCount = result.edges.size;
       if (nodeCount > 0 || edgeCount > 0) {
@@ -110,7 +116,7 @@ if (subcommand === 'editor') {
       }
     }
 
-    const config = generateIndexConfig(collection, entities);
+    const config = generateIndexConfig(collection, { entities, registryEntries });
     const output = JSON.stringify(config, null, 2) + '\n';
 
     if (outPath) {
@@ -136,7 +142,9 @@ if (subcommand === 'editor') {
   console.log('    indexes        Generate recommended Firestore index definitions');
   console.log('');
   console.log('  Editor options:');
-  console.log('    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)');
+  console.log(
+    '    --config <path>        Path to firegraph.config.ts (default: auto-discover in cwd)',
+  );
   console.log('    --entities <path>      Path to entities directory');
   console.log('    --project <id>         GCP project ID (default: auto-detect via ADC)');
   console.log('    --collection <path>    Firestore collection path (default: graph)');
@@ -152,7 +160,9 @@ if (subcommand === 'editor') {
   console.log('    --out <path>           Output file path (default: stdout)');
   console.log('');
   console.log('  Indexes options:');
-  console.log('    --entities <path>      Path to entities directory (adds per-entity data field indexes)');
+  console.log(
+    '    --entities <path>      Path to entities directory (adds per-entity data field indexes)',
+  );
   console.log('    --collection <name>    Firestore collection name (default: graph)');
   console.log('    --out <path>           Output file path (default: stdout)');
   console.log('');
@@ -161,12 +171,16 @@ if (subcommand === 'editor') {
   console.log('    flags every time. CLI flags override config file values.');
   console.log('');
   console.log('  Examples:');
-  console.log('    npx firegraph editor                                  # uses firegraph.config.ts');
+  console.log(
+    '    npx firegraph editor                                  # uses firegraph.config.ts',
+  );
   console.log('    npx firegraph editor --config ./custom-config.ts      # explicit config file');
   console.log('    npx firegraph editor --entities ./entities            # per-entity convention');
   console.log('    npx firegraph codegen --entities ./entities           # types to stdout');
   console.log('    npx firegraph codegen --entities ./entities --out src/generated/types.ts');
-  console.log('    npx firegraph indexes                                  # 4 base indexes to stdout');
+  console.log(
+    '    npx firegraph indexes                                  # 4 base indexes to stdout',
+  );
   console.log('    npx firegraph indexes --entities ./entities --out firestore.indexes.json');
   console.log('');
 } else {
