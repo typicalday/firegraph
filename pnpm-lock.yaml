@@ -33,6 +33,9 @@ importers:
         specifier: ^5.0.0
         version: 5.53.7
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260424.1
+        version: 4.20260425.1
       '@commitlint/cli':
         specifier: ^20.5.0
         version: 20.5.0(@types/node@22.19.11)(conventional-commits-parser@6.3.0)(typescript@5.9.3)
@@ -174,6 +177,9 @@ packages:
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
+
+  '@cloudflare/workers-types@4.20260425.1':
+    resolution: {integrity: sha512-f6dlo3SsA+TNqjveavPDN73nxRfCOOd0iMdf8iEosgR/RJtQlrGwfr5L5Vf7x/5cpeeguxScKevuaMmdjpOECw==}
 
   '@commitlint/cli@20.5.0':
     resolution: {integrity: sha512-yNkyN/tuKTJS3wdVfsZ2tXDM4G4Gi7z+jW54Cki8N8tZqwKBltbIvUUrSbT4hz1bhW/h0CdR+5sCSpXD+wMKaQ==}
@@ -2486,6 +2492,8 @@ snapshots:
   '@bcoe/v8-coverage@1.0.2': {}
 
   '@cfworker/json-schema@4.1.1': {}
+
+  '@cloudflare/workers-types@4.20260425.1': {}
 
   '@commitlint/cli@20.5.0(@types/node@22.19.11)(conventional-commits-parser@6.3.0)(typescript@5.9.3)':
     dependencies:
