@@ -1,13 +1,20 @@
 /**
  * JSON Schema validation and introspection utilities.
  *
- * Standard JSON Schema validation and introspection
- * processing. Uses ajv for validation and a recursive walker for converting
- * JSON Schema properties into FieldMeta objects for editor form generation.
+ * Uses `@cfworker/json-schema` for validation — a runtime-interpreter
+ * JSON Schema validator that does not rely on `new Function()` and is
+ * therefore compatible with Cloudflare Workers (which run V8 with
+ * `--disallow-code-generation-from-strings`). Ajv was used here
+ * previously, but its `ajv.compile(schema)` generates a validator via
+ * the Function constructor and fails with "Code generation from strings
+ * disallowed for this context" whenever firegraph's dynamic-registry
+ * bootstrap or `reloadRegistry` runs inside a Worker.
+ *
+ * The introspection half (`jsonSchemaToFieldMeta`) is pure string/object
+ * manipulation with no validator dependency.
  */
 
-import Ajv from 'ajv';
-import addFormats from 'ajv-formats';
+import { type OutputUnit, type Schema, Validator } from '@cfworker/json-schema';
 
 import { ValidationError } from './errors.js';
 
@@ -35,24 +42,33 @@ export interface FieldMeta {
 // Validation
 // ---------------------------------------------------------------------------
 
-const ajv = new Ajv({ allErrors: true, strict: false });
-addFormats(ajv);
-
 /**
  * Compile a JSON Schema into a validation function.
- * The returned function throws `ValidationError` if data is invalid.
+ *
+ * The returned function throws `ValidationError` if data is invalid. The
+ * error's `details` is the `OutputUnit[]` array produced by
+ * `@cfworker/json-schema` — consumers that previously inspected Ajv's
+ * `ErrorObject[]` need to map to the cfworker shape
+ * (`{ keyword, keywordLocation, instanceLocation, error }`).
+ *
+ * Draft 2020-12 is requested by default to match the library's richest
+ * feature set; schemas that omit `$schema` still validate under it
+ * since keyword semantics back-compat to draft-07 for the fields
+ * firegraph actually uses.
  */
 export function compileSchema(schema: object, label?: string): (data: unknown) => void {
-  const validate = ajv.compile(schema);
+  const validator = new Validator(schema as Schema, '2020-12');
   return (data: unknown) => {
-    if (!validate(data)) {
-      const errors = validate.errors ?? [];
-      const messages = errors
-        .map((err) => `${err.instancePath || '/'}${err.message ? ': ' + err.message : ''}`)
+    const result = validator.validate(data);
+    if (!result.valid) {
+      const messages = result.errors
+        .map(
+          (err: OutputUnit) => `${err.instanceLocation || '/'}${err.error ? ': ' + err.error : ''}`,
+        )
         .join('; ');
       throw new ValidationError(
         `Data validation failed${label ? ' for ' + label : ''}: ${messages}`,
-        errors,
+        result.errors,
       );
     }
   };
