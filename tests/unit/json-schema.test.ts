@@ -53,7 +53,7 @@ describe('compileSchema', () => {
     }
   });
 
-  it('error details contain ajv error objects', () => {
+  it('error details contain cfworker OutputUnit objects', () => {
     const validate = compileSchema({
       type: 'object',
       required: ['x'],
@@ -63,9 +63,104 @@ describe('compileSchema', () => {
       validate({ x: 'not a number' });
       expect.fail('Should throw');
     } catch (err) {
-      expect((err as ValidationError).details).toBeDefined();
-      expect(Array.isArray((err as ValidationError).details)).toBe(true);
+      const details = (err as ValidationError).details as Array<Record<string, unknown>>;
+      expect(Array.isArray(details)).toBe(true);
+      expect(details.length).toBeGreaterThan(0);
+      // OutputUnit shape from @cfworker/json-schema
+      expect(details[0]).toMatchObject({
+        keyword: expect.any(String),
+        keywordLocation: expect.any(String),
+        instanceLocation: expect.any(String),
+        error: expect.any(String),
+      });
     }
+  });
+
+  it('collects all violations (shortCircuit disabled)', () => {
+    // Two distinct violations: `name` wrong type, and `age` wrong type.
+    // With shortCircuit=true (the cfworker default), only one would
+    // surface — this test guards against accidentally re-enabling it.
+    const validate = compileSchema({
+      type: 'object',
+      required: ['name', 'age'],
+      properties: { name: { type: 'string' }, age: { type: 'number' } },
+    });
+    try {
+      validate({ name: 123, age: 'old' });
+      expect.fail('Should throw');
+    } catch (err) {
+      const e = err as ValidationError;
+      const details = e.details as Array<Record<string, unknown>>;
+      expect(details.length).toBeGreaterThanOrEqual(2);
+      expect(e.message).toContain('/name');
+      expect(e.message).toContain('/age');
+    }
+  });
+
+  it('renders root-level errors with `/` rather than `#`', () => {
+    // `additionalProperties: false` rejects at the root; cfworker
+    // reports `instanceLocation: '#'`, which the formatter must strip
+    // so the message reads `/: ...` (Ajv-shaped) instead of `#: ...`.
+    const validate = compileSchema({
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      additionalProperties: false,
+    });
+    try {
+      validate({ name: 'ok', extra: true });
+      expect.fail('Should throw');
+    } catch (err) {
+      const msg = (err as ValidationError).message;
+      expect(msg).not.toContain('#:');
+      expect(msg).not.toContain('#/');
+      expect(msg).toMatch(/(^|: |; )\//);
+    }
+  });
+
+  it('error message includes the JSON Schema keyword tag', () => {
+    const validate = compileSchema({
+      type: 'object',
+      required: ['name'],
+      properties: { name: { type: 'string' } },
+    });
+    try {
+      validate({});
+      expect.fail('Should throw');
+    } catch (err) {
+      // `[required]` (or similar bracketed keyword) makes the message
+      // actionable when cfworker's `error` text is terse.
+      expect((err as ValidationError).message).toMatch(/\[[a-zA-Z]+\]/);
+    }
+  });
+
+  it('enforces email format', () => {
+    const validate = compileSchema({
+      type: 'object',
+      required: ['email'],
+      properties: { email: { type: 'string', format: 'email' } },
+    });
+    expect(() => validate({ email: 'alice@example.com' })).not.toThrow();
+    expect(() => validate({ email: 'not-an-email' })).toThrow(ValidationError);
+  });
+
+  it('enforces uuid format', () => {
+    const validate = compileSchema({
+      type: 'object',
+      required: ['id'],
+      properties: { id: { type: 'string', format: 'uuid' } },
+    });
+    expect(() => validate({ id: '550e8400-e29b-41d4-a716-446655440000' })).not.toThrow();
+    expect(() => validate({ id: 'not-a-uuid' })).toThrow(ValidationError);
+  });
+
+  it('enforces date-time format', () => {
+    const validate = compileSchema({
+      type: 'object',
+      required: ['ts'],
+      properties: { ts: { type: 'string', format: 'date-time' } },
+    });
+    expect(() => validate({ ts: '2026-04-24T10:00:00Z' })).not.toThrow();
+    expect(() => validate({ ts: 'yesterday' })).toThrow(ValidationError);
   });
 });
 

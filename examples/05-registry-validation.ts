@@ -3,7 +3,7 @@
  *
  * Shows that firegraph validates the full document on every write:
  * - Triple (aType, axbType, bType) is validated by the registry lookup
- * - Data payload is validated by JSON Schema (via ajv)
+ * - Data payload is validated by JSON Schema (via @cfworker/json-schema, draft 2020-12)
  * - UIDs are user-controlled strings
  * - Timestamps are set by the library
  *

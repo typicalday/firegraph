@@ -22,7 +22,7 @@ pnpm dev:editor         # dev mode (Express :3884 + Vite :3883)
 - tsup with `esm` + `cjs` dual format, target Node 18+
 - External: `@google-cloud/firestore`, `json-schema-to-typescript`
 - Entry: `src/index.ts`, `src/codegen/index.ts`
-- Runtime deps: `nanoid` (ID generation), `ajv` (JSON Schema validation)
+- Runtime deps: `nanoid` (ID generation), `@cfworker/json-schema` (JSON Schema validation, draft 2020-12 — runtime interpreter, no `new Function()` codegen, Cloudflare-Workers-compatible)
 - Peer dep: `@google-cloud/firestore` `^8.0.0`
 
 ## Conventions

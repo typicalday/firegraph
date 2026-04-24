@@ -55,23 +55,45 @@ export interface FieldMeta {
  * feature set; schemas that omit `$schema` still validate under it
  * since keyword semantics back-compat to draft-07 for the fields
  * firegraph actually uses.
+ *
+ * `shortCircuit` is explicitly disabled so `result.errors` contains
+ * every violation, not just the first one — humans rely on the joined
+ * error message to debug bad writes from the editor / chat UI.
  */
 export function compileSchema(schema: object, label?: string): (data: unknown) => void {
-  const validator = new Validator(schema as Schema, '2020-12');
+  // `object` is the public type used throughout `RegistryEntry.jsonSchema`
+  // and the dynamic-client API; cfworker's `Schema` is structurally
+  // `{ [k: string]: any }`, which a JSON Schema document always
+  // satisfies at runtime. The cast is therefore safe in practice —
+  // pass anything other than a plain JSON-Schema-shaped object and
+  // `dereference()` inside the validator will throw at construction.
+  const validator = new Validator(schema as Schema, '2020-12', false);
   return (data: unknown) => {
     const result = validator.validate(data);
     if (!result.valid) {
-      const messages = result.errors
-        .map(
-          (err: OutputUnit) => `${err.instanceLocation || '/'}${err.error ? ': ' + err.error : ''}`,
-        )
-        .join('; ');
+      const messages = result.errors.map(formatError).join('; ');
       throw new ValidationError(
         `Data validation failed${label ? ' for ' + label : ''}: ${messages}`,
         result.errors,
       );
     }
   };
+}
+
+/**
+ * Format a single cfworker `OutputUnit` into a human-readable line.
+ *
+ * cfworker's `instanceLocation` is a JSON-Pointer-as-URI-fragment
+ * (`#`, `#/foo`, `#/foo/0/bar`); strip the leading `#` so the rendered
+ * path looks like Ajv's `instancePath` (`/foo/0/bar`) and root errors
+ * read as `/` rather than `#`. The `[keyword]` prefix is included so
+ * messages stay actionable when `error` is terse (e.g. `not`, `enum`).
+ */
+function formatError(err: OutputUnit): string {
+  const path = err.instanceLocation.replace(/^#/, '') || '/';
+  const keyword = err.keyword ? `[${err.keyword}] ` : '';
+  const detail = err.error ? `: ${keyword}${err.error}` : '';
+  return `${path}${detail}`;
 }
 
 // ---------------------------------------------------------------------------

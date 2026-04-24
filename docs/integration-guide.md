@@ -200,7 +200,7 @@ const registry = createRegistry([
 The registry validates:
 
 - **Triple validation** — (aType, axbType, bType) must be registered
-- **Data validation** — payload validates against JSON Schema via ajv
+- **Data validation** — payload validates against JSON Schema (draft 2020-12) via `@cfworker/json-schema`
 - Unregistered triples throw `RegistryViolationError`
 - Invalid data throws `ValidationError`
 
