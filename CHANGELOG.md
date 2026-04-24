@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.1](https://github.com/typicalday/firegraph/compare/v0.11.0...v0.11.1) (2026-04-24)
+
+
+### Bug Fixes
+
+* **ci:** upgrade npm for Trusted Publishing + add manual dispatch ([947751e](https://github.com/typicalday/firegraph/commit/947751e38678d777174b32224c0b800262413e13))
+* **ci:** upgrade npm for Trusted Publishing + add manual dispatch ([e1c3e0c](https://github.com/typicalday/firegraph/commit/e1c3e0c4597d03714ef07427f492ec8ae9137c3e))
+* **ci:** use Node 24 so npm publish has OIDC support ([2b92d1b](https://github.com/typicalday/firegraph/commit/2b92d1b4e27b98e565c151f454c0b206b3b82226))
+* **ci:** use Node 24 so npm publish has OIDC support ([37db47c](https://github.com/typicalday/firegraph/commit/37db47c4a2206e41ebd422ebbe4910139e0a4698))
+
 ## [0.11.0](https://github.com/typicalday/firegraph/compare/v0.10.0...v0.11.0) (2026-04-23)
 
 
