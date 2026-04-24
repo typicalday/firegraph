@@ -153,6 +153,32 @@ describe('compileSchema', () => {
     expect(() => validate({ id: 'not-a-uuid' })).toThrow(ValidationError);
   });
 
+  it('caps the rendered message at MAX_RENDERED_ERRORS but preserves all in details', () => {
+    // Build a schema with 30 required string properties, then validate
+    // an empty object — cfworker emits one error per missing property.
+    // The rendered message should cap at 20 with an "(+N more)" tail;
+    // `details` should contain every error.
+    const properties: Record<string, unknown> = {};
+    const required: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      properties[`f${i}`] = { type: 'string' };
+      required.push(`f${i}`);
+    }
+    const validate = compileSchema({ type: 'object', required, properties });
+    try {
+      validate({});
+      expect.fail('Should throw');
+    } catch (err) {
+      const e = err as ValidationError;
+      const details = e.details as unknown[];
+      expect(details.length).toBeGreaterThanOrEqual(30);
+      expect(e.message).toContain('(+');
+      expect(e.message).toContain('more)');
+      // Sanity: not every field name should appear in the truncated message.
+      expect(e.message).not.toContain('f29');
+    }
+  });
+
   it('enforces date-time format', () => {
     const validate = compileSchema({
       type: 'object',

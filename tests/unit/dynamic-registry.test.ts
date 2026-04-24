@@ -316,6 +316,16 @@ describe('createBootstrapRegistry', () => {
       RegistryViolationError,
     );
   });
+
+  it('memoizes the registry across calls (Worker hot-path optimization)', () => {
+    // The DO client constructor calls createBootstrapRegistry() on every
+    // request. Re-walking + re-dereferencing the meta-type schemas per
+    // request was wasteful, so the result is cached at module scope.
+    // This test guards against accidental reverts of that memoization.
+    const a = createBootstrapRegistry();
+    const b = createBootstrapRegistry();
+    expect(a).toBe(b);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,9 @@ export interface FieldMeta {
 // Validation
 // ---------------------------------------------------------------------------
 
+/** Cap on how many errors get joined into the human-readable message. */
+const MAX_RENDERED_ERRORS = 20;
+
 /**
  * Compile a JSON Schema into a validation function.
  *
@@ -58,7 +61,19 @@ export interface FieldMeta {
  *
  * `shortCircuit` is explicitly disabled so `result.errors` contains
  * every violation, not just the first one — humans rely on the joined
- * error message to debug bad writes from the editor / chat UI.
+ * error message to debug bad writes from the editor / chat UI. The
+ * full array is preserved on `ValidationError.details`; only the
+ * rendered message is capped at `MAX_RENDERED_ERRORS` lines so
+ * pathological `oneOf`/`anyOf` schemas can't blow up log lines.
+ *
+ * Format keywords supported by `@cfworker/json-schema` (anything else
+ * is silently passed through — see node_modules/@cfworker/json-schema/
+ * src/format.ts):
+ *   `date`, `time`, `date-time`, `duration`,
+ *   `email`, `hostname`, `ipv4`, `ipv6`,
+ *   `uri`, `uri-reference`, `uri-template`, `url`,
+ *   `uuid`, `regex`,
+ *   `json-pointer`, `relative-json-pointer`, `json-pointer-uri-fragment`.
  */
 export function compileSchema(schema: object, label?: string): (data: unknown) => void {
   // `object` is the public type used throughout `RegistryEntry.jsonSchema`
@@ -71,9 +86,11 @@ export function compileSchema(schema: object, label?: string): (data: unknown) =
   return (data: unknown) => {
     const result = validator.validate(data);
     if (!result.valid) {
-      const messages = result.errors.map(formatError).join('; ');
+      const total = result.errors.length;
+      const head = result.errors.slice(0, MAX_RENDERED_ERRORS).map(formatError).join('; ');
+      const overflow = total > MAX_RENDERED_ERRORS ? ` (+${total - MAX_RENDERED_ERRORS} more)` : '';
       throw new ValidationError(
-        `Data validation failed${label ? ' for ' + label : ''}: ${messages}`,
+        `Data validation failed${label ? ' for ' + label : ''}: ${head}${overflow}`,
         result.errors,
       );
     }

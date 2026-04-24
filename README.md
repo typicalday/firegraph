@@ -694,7 +694,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `FiregraphError`         | varies                   | Base class                                                      |
 | `NodeNotFoundError`      | `NODE_NOT_FOUND`         | Node lookup fails (not thrown by `getNode` — it returns `null`) |
 | `EdgeNotFoundError`      | `EDGE_NOT_FOUND`         | Edge lookup fails                                               |
-| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry + Zod)                        |
+| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry JSON Schema validation)       |
 | `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                                           |
 | `RegistryScopeError`     | `REGISTRY_SCOPE`         | Type not allowed at this subgraph scope                         |
 | `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete                 |
