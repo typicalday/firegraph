@@ -117,9 +117,21 @@ export const BOOTSTRAP_ENTRIES: readonly RegistryEntry[] = [
 /**
  * Build the bootstrap registry that validates meta-type writes.
  * This is always available, even before any dynamic types are loaded.
+ *
+ * Memoized at module scope: `BOOTSTRAP_ENTRIES` is a `readonly` array
+ * of module-level constants and `createRegistry` is pure over them, so
+ * the resulting registry — including its compiled cfworker
+ * `Validator`s — can be reused across every `GraphClientImpl`
+ * constructor. This matters on Cloudflare Workers, where the dynamic
+ * client constructor runs on every request that touches the
+ * meta-registry path; without memoization we'd re-walk +
+ * re-dereference these schemas per request.
  */
+let _bootstrapRegistry: GraphRegistry | null = null;
 export function createBootstrapRegistry(): GraphRegistry {
-  return createRegistry([...BOOTSTRAP_ENTRIES]);
+  if (_bootstrapRegistry) return _bootstrapRegistry;
+  _bootstrapRegistry = createRegistry([...BOOTSTRAP_ENTRIES]);
+  return _bootstrapRegistry;
 }
 
 // ---------------------------------------------------------------------------

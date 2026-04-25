@@ -694,7 +694,7 @@ All errors extend `FiregraphError` with a `code` property:
 | `FiregraphError`         | varies                   | Base class                                                      |
 | `NodeNotFoundError`      | `NODE_NOT_FOUND`         | Node lookup fails (not thrown by `getNode` — it returns `null`) |
 | `EdgeNotFoundError`      | `EDGE_NOT_FOUND`         | Edge lookup fails                                               |
-| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry + Zod)                        |
+| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry JSON Schema validation)       |
 | `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                                           |
 | `RegistryScopeError`     | `REGISTRY_SCOPE`         | Type not allowed at this subgraph scope                         |
 | `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete                 |
@@ -711,7 +711,7 @@ try {
 } catch (err) {
   if (err instanceof ValidationError) {
     console.error(err.code); // 'VALIDATION_ERROR'
-    console.error(err.details); // Zod error details
+    console.error(err.details); // OutputUnit[] from @cfworker/json-schema
   }
 }
 ```
@@ -876,14 +876,6 @@ pnpm test:emulator  # Full test suite against Firestore emulator
 ```
 
 Requires Node.js 18+.
-
-## Releasing
-
-Versions and npm publishes are automated via [release-please](https://github.com/googleapis/release-please).
-Land PRs to `main` with conventional-commit messages; release-please opens a
-Release PR that, when merged, tags + publishes to npm. See
-[docs/releasing.md](docs/releasing.md) for maintainer setup (NPM token,
-workflow permissions) and the full flow.
 
 ## License
 

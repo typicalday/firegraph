@@ -16,35 +16,35 @@ All records in a graph live in one Firestore collection (subgraphs use nested su
 
 ## Key Modules
 
-| File                                | Purpose                                                                                                              |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `src/client.ts`                     | `GraphClientImpl` -- main entry point implementing `GraphClient`                                                     |
-| `src/transaction.ts`                | `GraphTransactionImpl` -- read/write inside Firestore transactions                                                   |
-| `src/batch.ts`                      | `GraphBatchImpl` -- atomic batch writes                                                                              |
-| `src/query.ts`                      | Query planner: routes `FindEdgesParams` to either `get` (direct doc lookup) or `query` (filtered scan) strategy      |
-| `src/traverse.ts`                   | Multi-hop graph traversal with budget enforcement, concurrency control, and cross-graph hops                         |
-| `src/cross-graph.ts`                | Path-scanning resolution for cross-graph edge references (`resolveAncestorCollection`, `isAncestorUid`)              |
-| `src/registry.ts`                   | Optional schema registry for type-safe edge validation (JSON Schema via ajv)                                         |
-| `src/dynamic-registry.ts`           | Dynamic registry: bootstrap schemas, `createRegistryFromGraph()`, deterministic UIDs                                 |
-| `src/migration.ts`                  | `applyMigrationChain`, `migrateRecord`, `migrateRecords` -- read-path migration pipeline                             |
-| `src/sandbox.ts`                    | `defaultExecutor`, `compileMigrationFn`, `compileMigrations` -- dynamic migration compilation                        |
-| `src/serialization.ts`              | Tagged serialization for Firestore types through JSON boundary (Timestamp, GeoPoint, VectorValue, DocumentReference) |
-| `src/json-schema.ts`                | JSON Schema validation (ajv) and introspection (JSON Schema -> `FieldMeta[]`)                                        |
-| `src/discover.ts`                   | Convention-based entity auto-discovery from per-entity folders                                                       |
-| `src/codegen/index.ts`              | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`)                                       |
-| `src/config.ts`                     | `defineConfig()`, `resolveView()` -- project config file types and view resolution                                   |
-| `src/views.ts`                      | `defineViews()` -- framework-agnostic model view definitions (Web Components)                                        |
-| `src/react.ts`                      | `wrapReact()` -- React adapter for firegraph views (`firegraph/react`)                                               |
-| `src/svelte.ts`                     | `wrapSvelte()` -- Svelte 5 adapter for firegraph views (`firegraph/svelte`)                                          |
-| `src/scope.ts`                      | Scope pattern matching (`matchScope`, `matchScopeAny`) for `allowedIn` constraints                                   |
-| `src/record.ts`                     | Builds `GraphRecord` objects with server timestamps                                                                  |
-| `src/docid.ts`                      | Computes document IDs (passthrough for nodes, sharded hash for edges)                                                |
-| `src/id.ts`                         | 21-char nanoid generation                                                                                            |
-| `src/errors.ts`                     | Error hierarchy: `FiregraphError` base with typed subclasses                                                         |
-| `src/types.ts`                      | All TypeScript interfaces and types                                                                                  |
-| `src/internal/firestore-adapter.ts` | Low-level Firestore operations (standard, transaction, batch adapters)                                               |
-| `src/internal/pipeline-adapter.ts`  | Pipeline query adapter -- translates `QueryFilter[]` to Pipeline expressions                                         |
-| `src/internal/constants.ts`         | `NODE_RELATION = 'is'`, shard config                                                                                 |
+| File                                | Purpose                                                                                                                                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/client.ts`                     | `GraphClientImpl` -- main entry point implementing `GraphClient`                                                                                     |
+| `src/transaction.ts`                | `GraphTransactionImpl` -- read/write inside Firestore transactions                                                                                   |
+| `src/batch.ts`                      | `GraphBatchImpl` -- atomic batch writes                                                                                                              |
+| `src/query.ts`                      | Query planner: routes `FindEdgesParams` to either `get` (direct doc lookup) or `query` (filtered scan) strategy                                      |
+| `src/traverse.ts`                   | Multi-hop graph traversal with budget enforcement, concurrency control, and cross-graph hops                                                         |
+| `src/cross-graph.ts`                | Path-scanning resolution for cross-graph edge references (`resolveAncestorCollection`, `isAncestorUid`)                                              |
+| `src/registry.ts`                   | Optional schema registry for type-safe edge validation (JSON Schema via `@cfworker/json-schema`)                                                     |
+| `src/dynamic-registry.ts`           | Dynamic registry: bootstrap schemas, `createRegistryFromGraph()`, deterministic UIDs                                                                 |
+| `src/migration.ts`                  | `applyMigrationChain`, `migrateRecord`, `migrateRecords` -- read-path migration pipeline                                                             |
+| `src/sandbox.ts`                    | `defaultExecutor`, `compileMigrationFn`, `compileMigrations` -- dynamic migration compilation                                                        |
+| `src/serialization.ts`              | Tagged serialization for Firestore types through JSON boundary (Timestamp, GeoPoint, VectorValue, DocumentReference)                                 |
+| `src/json-schema.ts`                | JSON Schema validation (`@cfworker/json-schema`, draft 2020-12, runtime interpreter — Workers-safe) and introspection (JSON Schema -> `FieldMeta[]`) |
+| `src/discover.ts`                   | Convention-based entity auto-discovery from per-entity folders                                                                                       |
+| `src/codegen/index.ts`              | TypeScript type generation from JSON Schema (uses `json-schema-to-typescript`)                                                                       |
+| `src/config.ts`                     | `defineConfig()`, `resolveView()` -- project config file types and view resolution                                                                   |
+| `src/views.ts`                      | `defineViews()` -- framework-agnostic model view definitions (Web Components)                                                                        |
+| `src/react.ts`                      | `wrapReact()` -- React adapter for firegraph views (`firegraph/react`)                                                                               |
+| `src/svelte.ts`                     | `wrapSvelte()` -- Svelte 5 adapter for firegraph views (`firegraph/svelte`)                                                                          |
+| `src/scope.ts`                      | Scope pattern matching (`matchScope`, `matchScopeAny`) for `allowedIn` constraints                                                                   |
+| `src/record.ts`                     | Builds `GraphRecord` objects with server timestamps                                                                                                  |
+| `src/docid.ts`                      | Computes document IDs (passthrough for nodes, sharded hash for edges)                                                                                |
+| `src/id.ts`                         | 21-char nanoid generation                                                                                                                            |
+| `src/errors.ts`                     | Error hierarchy: `FiregraphError` base with typed subclasses                                                                                         |
+| `src/types.ts`                      | All TypeScript interfaces and types                                                                                                                  |
+| `src/internal/firestore-adapter.ts` | Low-level Firestore operations (standard, transaction, batch adapters)                                                                               |
+| `src/internal/pipeline-adapter.ts`  | Pipeline query adapter -- translates `QueryFilter[]` to Pipeline expressions                                                                         |
+| `src/internal/constants.ts`         | `NODE_RELATION = 'is'`, shard config                                                                                                                 |
 
 ## Interfaces
 
@@ -59,7 +59,7 @@ Both `GraphClient` and `GraphTransaction` implement `GraphReader`, so `createTra
 
 ## Schema Validation
 
-Registry validation uses JSON Schema (via ajv). Each `RegistryEntry` has an optional `jsonSchema` field:
+Registry validation uses JSON Schema draft 2020-12 (via `@cfworker/json-schema` — a runtime interpreter chosen for Cloudflare Workers, where `--disallow-code-generation-from-strings` blocks Ajv's `new Function()` codegen). Each `RegistryEntry` has an optional `jsonSchema` field:
 
 ```typescript
 createRegistry([
