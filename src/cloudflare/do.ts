@@ -59,11 +59,14 @@
  * work; they just go through the stub instead of the real base class.
  */
 
-// Type-only import: workers-types ships the `DurableObjectState` shape that
-// the base class's constructor declares. Importing it as a type means the
-// runtime bundle never references workers-types — only `tsc` does, when
-// resolving the cast below.
-import type { DurableObjectState } from '@cloudflare/workers-types';
+// `cloudflare:workers` is a virtual module — only the workerd runtime resolves
+// it. TypeScript needs to know the `DurableObject` base class shape at compile
+// time, which ships in `@cloudflare/workers-types`'s ambient `index.d.ts`.
+// Listing that package in `compilerOptions.types` would add 479KB of global
+// declarations to every source file's lookup scope (8min typecheck — see the
+// commit that added this file). Instead we pull it in once via the
+// triple-slash reference below so the cost is bounded to this one file.
+/// <reference types="@cloudflare/workers-types" />
 import { DurableObject } from 'cloudflare:workers';
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
