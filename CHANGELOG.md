@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.2](https://github.com/typicalday/firegraph/compare/v0.11.1...v0.11.2) (2026-04-25)
+
+
+### Bug Fixes
+
+* **cloudflare:** make FiregraphDO extend DurableObject + Miniflare RPC test ([39c4b95](https://github.com/typicalday/firegraph/commit/39c4b95d12d8c61fc8a09719879aafaeded42ac2))
+* **cloudflare:** make FiregraphDO extend DurableObject for RPC compatibility ([ddda819](https://github.com/typicalday/firegraph/commit/ddda8198457045b45c21bf0f7178d7c8ce2b49e5))
+* **json-schema:** preserve all errors, fix path rendering, memoize bootstrap ([a68674e](https://github.com/typicalday/firegraph/commit/a68674e1ad0536202c128b3343358504f971bd13))
+* swap Ajv for @cfworker/json-schema for Workers compatibility ([a6ddfe3](https://github.com/typicalday/firegraph/commit/a6ddfe35fcfde6c61f164f5deb23499f76147053))
+* swap Ajv for @cfworker/json-schema so dynamic registries run on Workers ([4804e0e](https://github.com/typicalday/firegraph/commit/4804e0e7de509484b82a5f704210fd9be0b192be))
+
+
+### Performance Improvements
+
+* **typecheck:** scope workers-types import to do.ts via triple-slash ([1616c68](https://github.com/typicalday/firegraph/commit/1616c68a70c34cb4da1f021d2482d8e939103fe3))
+
 ## [0.11.1](https://github.com/typicalday/firegraph/compare/v0.11.0...v0.11.1) (2026-04-24)
 
 
