@@ -22,6 +22,11 @@ export default defineConfig({
     'react-dom',
     'svelte',
     'ses',
+    // Virtual workerd builtin — only resolvable inside Cloudflare Workers.
+    // Mark external so esbuild/tsup leaves the import alone for the runtime
+    // to handle. Without this, bundling fails: there's no real module to
+    // resolve at build time.
+    'cloudflare:workers',
   ],
   esbuildOptions(options) {
     options.logOverride = {

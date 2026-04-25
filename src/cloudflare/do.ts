@@ -37,15 +37,37 @@
  * }
  * ```
  *
- * ## Why a plain class (not `extends DurableObject`)?
+ * ## Why `extends DurableObject`?
  *
- * Cloudflare accepts any class with the `(state, env)` constructor shape as
- * a DO class. Extending `DurableObject` from `cloudflare:workers` would pull
- * a runtime import into this module and prevent it from loading in Node
- * tests. The plain-class form keeps this file runtime-neutral — the only
- * Cloudflare thing we touch is `ctx.storage.sql`, typed via local minimal
- * interfaces.
+ * Cloudflare's modern Durable Objects RPC dispatcher only accepts arbitrary
+ * method invocations on stubs whose backing class extends the special
+ * `DurableObject` base from `cloudflare:workers`. Plain classes with the
+ * `(state, env)` constructor shape still load and serve `fetch()`, but a
+ * stub method call (`stub._fgGetDoc(...)`) on a plain-class DO throws:
+ *
+ *   The receiving Durable Object does not support RPC, because its class
+ *   was not declared with `extends DurableObject`.
+ *
+ * `DORPCBackend` calls every operation as a stub method (see
+ * `src/cloudflare/backend.ts`), so extending `DurableObject` is mandatory
+ * for this library's design to work on production Workers.
+ *
+ * The `cloudflare:workers` import is virtual — only the workerd runtime
+ * resolves it. For Node tests we route the import through a vitest alias
+ * to a tiny stub class (`tests/__shims__/cloudflare-workers.ts`) that just
+ * captures `ctx`/`env`. Tests instantiating `FiregraphDO` directly still
+ * work; they just go through the stub instead of the real base class.
  */
+
+// `cloudflare:workers` is a virtual module — only the workerd runtime resolves
+// it. TypeScript needs to know the `DurableObject` base class shape at compile
+// time, which ships in `@cloudflare/workers-types`'s ambient `index.d.ts`.
+// Listing that package in `compilerOptions.types` would add 479KB of global
+// declarations to every source file's lookup scope (8min typecheck — see the
+// commit that added this file). Instead we pull it in once via the
+// triple-slash reference below so the cost is bounded to this one file.
+/// <reference types="@cloudflare/workers-types" />
+import { DurableObject } from 'cloudflare:workers';
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
 import { FiregraphError } from '../errors.js';
@@ -157,11 +179,23 @@ const DEFAULT_OPTIONS: Required<Pick<FiregraphDOOptions, 'table' | 'autoMigrate'
   autoMigrate: true,
 };
 
-export class FiregraphDO {
-  /** @internal — exposed for subclass access, not part of the public RPC. */
-  protected readonly ctx: DurableObjectStateLike;
-  /** @internal — exposed for subclass access; opaque to this class. */
-  protected readonly env: unknown;
+export class FiregraphDO extends DurableObject<unknown> {
+  /**
+   * @internal — locally-narrowed alias for `this.ctx`, used only by
+   * FiregraphDO's own SQL helpers. Same runtime object as the inherited
+   * `this.ctx`, but typed as `DurableObjectStateLike` (just `storage.sql`
+   * / `transactionSync` / `blockConcurrencyWhile`) so internal calls
+   * don't trip over workers-types' stricter
+   * `SqlStorage.exec<T extends Record<string, SqlStorageValue>>`
+   * constraint vs the `Record<string, unknown>` rows firegraph passes.
+   *
+   * **Subclasses should use `this.ctx`, not `this.state`.** `this.state`
+   * deliberately exposes only the slice FiregraphDO needs internally;
+   * subclasses that want `id`, `acceptWebSocket`, `setAlarm`, `getAlarm`,
+   * `waitUntil`, `props`, etc. must reach for the inherited `this.ctx`
+   * (the full workers-types `DurableObjectState`).
+   */
+  protected readonly state: DurableObjectStateLike;
   /** @internal — table name used by every compiled statement. */
   protected readonly table: string;
   /** @internal — registry consulted by `runSchema` for per-entry indexes. */
@@ -170,8 +204,17 @@ export class FiregraphDO {
   protected readonly coreIndexes?: IndexSpec[];
 
   constructor(ctx: DurableObjectStateLike, env: unknown, options: FiregraphDOOptions = {}) {
-    this.ctx = ctx;
-    this.env = env;
+    // The base `DurableObject` constructor expects the workers-types
+    // `DurableObjectState`. Our public signature uses
+    // `DurableObjectStateLike` (a structural subset) so consumers don't
+    // need workers-types just to subclass. Cast via `unknown as
+    // DurableObjectState` — narrower than `as never`: it still allows the
+    // structurally-compatible value through, but if Cloudflare ever
+    // tightens `DurableObjectState` (extra constructor param, new
+    // required method) the type checker will surface the drift instead
+    // of silently swallowing it.
+    super(ctx as unknown as DurableObjectState, env);
+    this.state = ctx;
     const table = options.table ?? DEFAULT_OPTIONS.table;
     validateDOTableName(table);
     this.table = table;
@@ -188,7 +231,7 @@ export class FiregraphDO {
       // the returned promise, holding the RPC input queue until the schema
       // materializes. We don't need to `await` it from the constructor (which
       // can't be async anyway) — the next incoming RPC already waits.
-      void this.ctx.blockConcurrencyWhile(async () => {
+      void this.state.blockConcurrencyWhile(async () => {
         this.runSchema();
       });
     }
@@ -229,7 +272,7 @@ export class FiregraphDO {
     // `update()` semantics. SQLite ≥3.35 supports UPDATE … RETURNING and DO
     // SQLite is always recent enough.
     const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
-    const rows = this.ctx.storage.sql
+    const rows = this.state.storage.sql
       .exec<Record<string, unknown>>(sqlWithReturning, ...stmt.params)
       .toArray();
     if (rows.length === 0) {
@@ -265,9 +308,9 @@ export class FiregraphDO {
           return compileDODelete(this.table, op.docId);
       }
     });
-    this.ctx.storage.transactionSync(() => {
+    this.state.storage.transactionSync(() => {
       for (const stmt of statements) {
-        this.ctx.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
+        this.state.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
       }
     });
   }
@@ -329,9 +372,9 @@ export class FiregraphDO {
     }
 
     try {
-      this.ctx.storage.transactionSync(() => {
+      this.state.storage.transactionSync(() => {
         for (const stmt of statements) {
-          this.ctx.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
+          this.state.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
         }
       });
       return {
@@ -380,9 +423,9 @@ export class FiregraphDO {
 
     const deleteStmts = docIds.map((id) => compileDODelete(this.table, id));
     try {
-      this.ctx.storage.transactionSync(() => {
+      this.state.storage.transactionSync(() => {
         for (const stmt of deleteStmts) {
-          this.ctx.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
+          this.state.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
         }
       });
       return { deleted: deleteStmts.length, batches: 1, errors: [] };
@@ -420,18 +463,18 @@ export class FiregraphDO {
       registry: this.registry,
     });
     for (const sql of statements) {
-      this.ctx.storage.sql.exec(sql).toArray();
+      this.state.storage.sql.exec(sql).toArray();
     }
   }
 
   private execAll(stmt: CompiledStatement): Record<string, unknown>[] {
-    return this.ctx.storage.sql.exec<Record<string, unknown>>(stmt.sql, ...stmt.params).toArray();
+    return this.state.storage.sql.exec<Record<string, unknown>>(stmt.sql, ...stmt.params).toArray();
   }
 
   private execRun(stmt: CompiledStatement): void {
     // DO SQL `exec` returns a cursor even for writes; consuming it via
     // `toArray()` forces execution and surfaces constraint errors
     // synchronously.
-    this.ctx.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
+    this.state.storage.sql.exec(stmt.sql, ...stmt.params).toArray();
   }
 }

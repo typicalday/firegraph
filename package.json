@@ -104,12 +104,16 @@
     "test:pipeline:integration": "vitest run --config tests/integration-pipeline/vitest.config.ts"
   },
   "peerDependencies": {
+    "@cloudflare/workers-types": "^4.20240419.0",
     "@google-cloud/firestore": "^8.0.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
     "svelte": "^5.0.0"
   },
   "peerDependenciesMeta": {
+    "@cloudflare/workers-types": {
+      "optional": true
+    },
     "react": {
       "optional": true
     },
@@ -128,6 +132,7 @@
     "ses": "^1.15.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260424.1",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
     "@google-cloud/firestore": "^8.3.0",
@@ -143,6 +148,7 @@
     "husky": "^9.1.7",
     "json-schema-to-typescript": "^15.0.4",
     "lint-staged": "^16.4.0",
+    "miniflare": "^4.20260424.0",
     "prettier": "^3.8.1",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
