@@ -59,6 +59,11 @@
  * work; they just go through the stub instead of the real base class.
  */
 
+// Type-only import: workers-types ships the `DurableObjectState` shape that
+// the base class's constructor declares. Importing it as a type means the
+// runtime bundle never references workers-types — only `tsc` does, when
+// resolving the cast below.
+import type { DurableObjectState } from '@cloudflare/workers-types';
 import { DurableObject } from 'cloudflare:workers';
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
@@ -173,16 +178,19 @@ const DEFAULT_OPTIONS: Required<Pick<FiregraphDOOptions, 'table' | 'autoMigrate'
 
 export class FiregraphDO extends DurableObject<unknown> {
   /**
-   * Locally-typed reference to the DO state. Same runtime value as the
-   * inherited `this.ctx` (set by `super(ctx, env)`); we keep a separate
-   * field so internal code can rely on the narrow `DurableObjectStateLike`
-   * surface (just `storage.sql` / `transactionSync` / `blockConcurrencyWhile`)
-   * rather than the wider `DurableObjectState` from workers-types — whose
-   * `SqlStorage.exec<T extends Record<string, SqlStorageValue>>` constraint
-   * is stricter than the `Record<string, unknown>` we pass in places.
+   * @internal — locally-narrowed alias for `this.ctx`, used only by
+   * FiregraphDO's own SQL helpers. Same runtime object as the inherited
+   * `this.ctx`, but typed as `DurableObjectStateLike` (just `storage.sql`
+   * / `transactionSync` / `blockConcurrencyWhile`) so internal calls
+   * don't trip over workers-types' stricter
+   * `SqlStorage.exec<T extends Record<string, SqlStorageValue>>`
+   * constraint vs the `Record<string, unknown>` rows firegraph passes.
    *
-   * Subclasses that need DO state can use either `this.ctx` (workers-types
-   * shape) or `this.state` (firegraph's narrowed shape).
+   * **Subclasses should use `this.ctx`, not `this.state`.** `this.state`
+   * deliberately exposes only the slice FiregraphDO needs internally;
+   * subclasses that want `id`, `acceptWebSocket`, `setAlarm`, `getAlarm`,
+   * `waitUntil`, `props`, etc. must reach for the inherited `this.ctx`
+   * (the full workers-types `DurableObjectState`).
    */
   protected readonly state: DurableObjectStateLike;
   /** @internal — table name used by every compiled statement. */
@@ -194,10 +202,15 @@ export class FiregraphDO extends DurableObject<unknown> {
 
   constructor(ctx: DurableObjectStateLike, env: unknown, options: FiregraphDOOptions = {}) {
     // The base `DurableObject` constructor expects the workers-types
-    // `DurableObjectState`. We don't import that type into our public
-    // signature; cast through `never` so TypeScript accepts our
-    // structurally-compatible local type.
-    super(ctx as never, env);
+    // `DurableObjectState`. Our public signature uses
+    // `DurableObjectStateLike` (a structural subset) so consumers don't
+    // need workers-types just to subclass. Cast via `unknown as
+    // DurableObjectState` — narrower than `as never`: it still allows the
+    // structurally-compatible value through, but if Cloudflare ever
+    // tightens `DurableObjectState` (extra constructor param, new
+    // required method) the type checker will surface the drift instead
+    // of silently swallowing it.
+    super(ctx as unknown as DurableObjectState, env);
     this.state = ctx;
     const table = options.table ?? DEFAULT_OPTIONS.table;
     validateDOTableName(table);
