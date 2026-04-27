@@ -410,8 +410,8 @@ const tour = await g.getNode(tourId);
 
 - **Version storage**: The `v` field lives on the record envelope (top-level, alongside `aType`, `data`, etc.), not inside `data`. Records without `v` are treated as version 0 (legacy data).
 - **Read path**: When a record is read and its `v` is behind the derived version (`max(toVersion)` from migrations), migrations run sequentially to bring data up to the current version.
-- **Write path**: When writing via `putNode`/`putEdge`, the record is stamped with `v` equal to the derived version automatically.
-- **`updateNode`**: Does not stamp `v` — it is a raw partial update without schema context. The next read re-triggers migration (which is idempotent).
+- **Write path**: When writing via `putNode`/`putEdge` (deep-merge) or `replaceNode`/`replaceEdge` (full overwrite), the record is stamped with `v` equal to the derived version automatically.
+- **`updateNode` / `updateEdge`**: Do not stamp `v` — they are raw partial patches without schema context. The next read re-triggers migration (which is idempotent).
 
 #### Write-Back
 
