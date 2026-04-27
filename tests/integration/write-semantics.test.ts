@@ -61,6 +61,20 @@ describe('write semantics contract — put/replace/update/deleteField', () => {
       const node = await g.getNode('a');
       expect(node!.data.tags).toEqual(['gamma']);
     });
+
+    // Cross-backend parity: an empty nested object value on the merge path
+    // wipes the existing subtree on every backend. SQLite/DO via
+    // `json_set('$.meta', json('{}'))`; Firestore via the equivalent
+    // sub-document write inside `.set(record, { merge: true })`. Pinning
+    // this here because it's a counter-intuitive case — Firestore's
+    // top-level "missing keys are preserved" behaviour does NOT extend to
+    // "explicit empty map preserves the existing nested map".
+    it('writing an empty nested object wipes the subtree (parity across backends)', async () => {
+      await g.putNode('tour', 'a', { meta: { region: 'EU', country: 'DE' } });
+      await g.putNode('tour', 'a', { meta: {} });
+      const node = await g.getNode('a');
+      expect(node!.data).toEqual({ meta: {} });
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -112,6 +126,17 @@ describe('write semantics contract — put/replace/update/deleteField', () => {
       await g.updateNode('a', { meta: { region: null } });
       const node = await g.getNode('a');
       expect(node!.data).toEqual({ meta: { region: null } });
+    });
+
+    // Contrast with the put-merge case above: in update mode an empty
+    // nested object literally writes `{}` and wipes the subtree — both
+    // Firestore (dotted-path update) and SQLite/DO (json_set) agree, so
+    // this is the consistent semantics.
+    it('writing an empty object via updateNode wipes the subtree', async () => {
+      await g.putNode('tour', 'a', { name: 'A', meta: { region: 'EU', country: 'DE' } });
+      await g.updateNode('a', { meta: {} });
+      const node = await g.getNode('a');
+      expect(node!.data).toEqual({ name: 'A', meta: {} });
     });
   });
 
