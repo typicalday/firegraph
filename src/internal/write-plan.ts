@@ -274,25 +274,35 @@ function assertNoDeleteSentinelsInArray(arr: readonly unknown[], path: readonly 
     }
     if (Array.isArray(v)) {
       assertNoDeleteSentinelsInArray(v, path);
-    } else if (v !== null && typeof v === 'object') {
-      // Plain-object inside the array: recurse to catch deep sentinels.
-      // Skip tagged values and class instances — they won't carry sentinels.
+    } else if (v !== null && typeof v === 'object' && !isTaggedValue(v)) {
       const proto = Object.getPrototypeOf(v);
       if (proto === null || proto === Object.prototype) {
-        for (const innerKey of Object.keys(v as Record<string, unknown>)) {
-          const inner = (v as Record<string, unknown>)[innerKey];
-          if (isDeleteSentinel(inner)) {
-            throw new Error(
-              `firegraph: deleteField() sentinel inside an array element at ` +
-                `path ${path.map((p) => JSON.stringify(p)).join(' > ')}. ` +
-                `Arrays are terminal in update payloads — the sentinel would ` +
-                `be silently dropped by JSON serialization.`,
-            );
-          }
-          if (Array.isArray(inner)) {
-            assertNoDeleteSentinelsInArray(inner, path);
-          }
-        }
+        assertNoDeleteSentinelsInObjectInArray(v as Record<string, unknown>, path);
+      }
+    }
+  }
+}
+
+function assertNoDeleteSentinelsInObjectInArray(
+  obj: Record<string, unknown>,
+  path: readonly string[],
+): void {
+  for (const key of Object.keys(obj)) {
+    const inner = obj[key];
+    if (isDeleteSentinel(inner)) {
+      throw new Error(
+        `firegraph: deleteField() sentinel inside an array element at ` +
+          `path ${path.map((p) => JSON.stringify(p)).join(' > ')}. ` +
+          `Arrays are terminal in update payloads — the sentinel would ` +
+          `be silently dropped by JSON serialization.`,
+      );
+    }
+    if (Array.isArray(inner)) {
+      assertNoDeleteSentinelsInArray(inner, path);
+    } else if (inner !== null && typeof inner === 'object' && !isTaggedValue(inner)) {
+      const proto = Object.getPrototypeOf(inner);
+      if (proto === null || proto === Object.prototype) {
+        assertNoDeleteSentinelsInObjectInArray(inner as Record<string, unknown>, path);
       }
     }
   }
@@ -354,43 +364,3 @@ function walk(node: unknown, path: string[], out: DataPathOp[]): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Reconstructing a full data object from ops (used by Firestore deep-merge
-// and by tests).
-// ---------------------------------------------------------------------------
-
-/**
- * Build a nested object tree from a list of ops. Delete-ops are dropped —
- * they have no plain-object representation. Used by the Firestore backend
- * to drive `set(..., { merge: true })` for the recursive-merge path.
- */
-export function opsToNested(ops: readonly DataPathOp[]): Record<string, unknown> {
-  const root: Record<string, unknown> = {};
-  for (const op of ops) {
-    if (op.delete) continue;
-    let cursor: Record<string, unknown> = root;
-    for (let i = 0; i < op.path.length - 1; i++) {
-      const seg = op.path[i] as string;
-      const next = cursor[seg];
-      if (next === undefined || next === null || typeof next !== 'object' || Array.isArray(next)) {
-        const fresh: Record<string, unknown> = {};
-        cursor[seg] = fresh;
-        cursor = fresh;
-      } else {
-        cursor = next as Record<string, unknown>;
-      }
-    }
-    cursor[op.path[op.path.length - 1] as string] = op.value;
-  }
-  return root;
-}
-
-/**
- * Returns the subset of ops that are actual deletes — the value-bearing
- * ops are handled via the merge tree from {@link opsToNested}, and the
- * deletes have to be applied via the backend's native delete primitive
- * (`FieldValue.delete()` for Firestore, `json_remove` for SQLite).
- */
-export function deleteOps(ops: readonly DataPathOp[]): DataPathOp[] {
-  return ops.filter((op) => op.delete);
-}

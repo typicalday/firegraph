@@ -1,7 +1,6 @@
 /**
  * Unit tests for the write-plan helpers — `flattenPatch`, `DELETE_FIELD`,
- * `assertNoDeleteSentinels`, `assertSafePath`, `assertUpdatePayloadExclusive`,
- * `opsToNested`, `deleteOps`.
+ * `assertNoDeleteSentinels`, `assertSafePath`, `assertUpdatePayloadExclusive`.
  *
  * The integration suite in `tests/integration/write-semantics.test.ts`
  * covers cross-backend behaviour. This file pins down the lower-level
@@ -17,10 +16,8 @@ import {
   assertUpdatePayloadExclusive,
   DELETE_FIELD,
   deleteField,
-  deleteOps,
   flattenPatch,
   isDeleteSentinel,
-  opsToNested,
 } from '../../src/internal/write-plan.js';
 
 describe('deleteField sentinel', () => {
@@ -121,6 +118,18 @@ describe('flattenPatch — DELETE_FIELD sentinel', () => {
   it('rejects a sentinel inside an object inside an array', () => {
     expect(() => flattenPatch({ list: [{ a: deleteField() }] })).toThrow(
       /sentinel inside an array element/,
+    );
+  });
+
+  it('rejects a sentinel deep inside an object inside an array', () => {
+    expect(() => flattenPatch({ tags: [{ deep: { drop: deleteField() } }] })).toThrow(
+      /sentinel inside an array element/,
+    );
+  });
+
+  it('rejects a sentinel inside a nested array inside an object inside an array', () => {
+    expect(() => flattenPatch({ list: [{ inner: [deleteField()] }] })).toThrow(
+      /sentinel at index 0 inside an array/,
     );
   });
 });
@@ -272,40 +281,3 @@ describe('assertNoDeleteSentinels', () => {
   });
 });
 
-describe('opsToNested', () => {
-  it('reconstructs a flat object from value ops', () => {
-    const ops = flattenPatch({ a: 1, b: 'two' });
-    expect(opsToNested(ops)).toEqual({ a: 1, b: 'two' });
-  });
-
-  it('reconstructs a deep object', () => {
-    const ops = flattenPatch({ a: { b: { c: 1 } }, d: [1, 2] });
-    expect(opsToNested(ops)).toEqual({ a: { b: { c: 1 } }, d: [1, 2] });
-  });
-
-  it('drops delete-ops (they have no plain-object representation)', () => {
-    const ops = flattenPatch({ a: 1, b: deleteField() });
-    expect(opsToNested(ops)).toEqual({ a: 1 });
-  });
-
-  it('preserves null values', () => {
-    const ops = flattenPatch({ a: null, b: { c: null } });
-    expect(opsToNested(ops)).toEqual({ a: null, b: { c: null } });
-  });
-});
-
-describe('deleteOps', () => {
-  it('returns only delete-ops', () => {
-    const ops = flattenPatch({ a: 1, b: deleteField(), c: { d: deleteField() } });
-    const dels = deleteOps(ops);
-    expect(dels).toEqual([
-      { path: ['b'], value: undefined, delete: true },
-      { path: ['c', 'd'], value: undefined, delete: true },
-    ]);
-  });
-
-  it('returns empty list when there are no deletes', () => {
-    const ops = flattenPatch({ a: 1, b: 'two' });
-    expect(deleteOps(ops)).toEqual([]);
-  });
-});
