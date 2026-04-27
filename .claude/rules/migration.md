@@ -90,11 +90,11 @@ const client = createGraphClient(db, 'graph', {
 
 ## Version Stamping (Write Path)
 
-When writing via `putNode`/`putEdge` (client, transaction, or batch), if the registry entry has migrations, the record is stamped with `v = max(toVersion)` at the top level (alongside `aType`, `data`, etc.) before storage.
+When writing via `putNode`/`putEdge`/`replaceNode`/`replaceEdge` (client, transaction, or batch), if the registry entry has migrations, the record is stamped with `v = max(toVersion)` at the top level (alongside `aType`, `data`, etc.) before storage. Stamping is independent of merge-vs-replace mode — it applies to every full-record write that goes through `writeNode`/`writeEdge`.
 
-## `updateNode` and Version Stamping
+## `updateNode` / `updateEdge` and Version Stamping
 
-`updateNode` is a raw partial update that does not go through the registry or stamp `v`. This is intentional — `updateNode` operates on individual fields and should not require full schema context. If a record was migrated in-memory and the caller then uses `updateNode`, the `v` in Firestore stays at its previous value. The next read will re-trigger migration, which is idempotent. To avoid redundant re-migrations, use `putNode` (which stamps `v`) instead of `updateNode` when rewriting the full data payload.
+`updateNode` and `updateEdge` are raw partial updates that do not go through the registry or stamp `v`. This is intentional — partial updates operate on individual fields (now with deep-merge semantics in 0.12) and should not require full schema context. If a record was migrated in-memory and the caller then uses `updateNode`/`updateEdge`, the `v` in Firestore stays at its previous value. The next read will re-trigger migration, which is idempotent. To avoid redundant re-migrations when rewriting the full data payload, use `replaceNode` (or `replaceEdge`) — these are the explicit wipe-and-rewrite methods in 0.12 and they stamp `v`. Note: `putNode` is now a deep merge and is no longer the right tool for full-payload rewrites.
 
 ## Write-Back
 

@@ -49,7 +49,7 @@ All records in a graph live in one Firestore collection (subgraphs use nested su
 ## Interfaces
 
 - `GraphReader` -- read operations (`getNode`, `getEdge`, `edgeExists`, `findEdges`, `findNodes`)
-- `GraphWriter` -- write operations (`putNode`, `putEdge`, `updateNode`, `removeNode`, `removeEdge`)
+- `GraphWriter` -- write operations (`putNode`, `putEdge`, `replaceNode`, `replaceEdge`, `updateNode`, `updateEdge`, `removeNode`, `removeEdge`). `put*` / `update*` deep-merge; `replace*` wipe-and-rewrite.
 - `GraphClient` -- extends both + `runTransaction()` + `batch()` + `subgraph()`
 - `DynamicGraphClient` -- extends `GraphClient` + `defineNodeType()` + `defineEdgeType()` + `reloadRegistry()` (returned when `registryMode` is set, including merged mode where both `registry` and `registryMode` are provided)
 - `GraphTransaction` -- extends both (used inside `runTransaction`)

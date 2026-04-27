@@ -19,9 +19,13 @@ paths:
 Public entry point: `firegraph/backend`. The full surface is intentionally small:
 
 - `StorageBackend`, `TransactionBackend`, `BatchBackend`, `WritableRecord`, `UpdatePayload` (types, promoted from `internal/backend.ts`)
+- `WriteMode` (type: `'merge' | 'replace'`), `DataPathOp` (type: `{ path: string[]; value: unknown; delete: boolean }`)
+- `flattenPatch`, `DELETE_FIELD`, `deleteField`, `isDeleteSentinel` (deep-merge contract primitives, re-exported from `internal/write-plan.ts`)
 - `createRoutingBackend(base, options)`, `RoutingContext`, `RoutingBackendOptions`
 - `parseStorageScope`, `resolveAncestorScope`, `isAncestorScopeUid`, `appendStorageScope`, `StorageScopeSegment`
 - `CrossBackendTransactionError`
+
+Backend authors implementing `setDoc(docId, record, mode)` and `updateDoc(docId, payload)` must consume these primitives to participate in the 0.12 deep-merge contract: `setDoc` honours `mode` (`'merge'` deep-merges into existing data, `'replace'` wipes and rewrites); `updateDoc` consumes either `{ dataOps: DataPathOp[] }` (the canonical flat op list produced by `flattenPatch()`, with `DELETE_FIELD` sentinels surfacing as `delete: true` ops) or `{ replaceData; v? }` (used by the migration write-back path). All three in-tree backends (Firestore, shared-table SQLite, Cloudflare DO) consume the same op list, so divergence is structurally hard to introduce.
 
 ## Two scope vocabularies
 
