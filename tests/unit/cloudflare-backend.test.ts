@@ -27,6 +27,7 @@ import type {
   TransactionBackend,
 } from '../../src/internal/backend.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
+import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   BulkResult,
   CascadeResult,
@@ -164,16 +165,20 @@ describe('DORPCBackend — reads/writes forward to the stub', () => {
     const backend = new DORPCBackend(ns, { storageKey: 'main' });
     const stub = ns.get(ns.idFromName('main')) as FakeStub;
 
-    await backend.setDoc('k1', {
-      aType: 'a',
-      aUid: 'x',
-      axbType: NODE_RELATION,
-      bType: 'a',
-      bUid: 'x',
-      data: {},
-    });
+    await backend.setDoc(
+      'k1',
+      {
+        aType: 'a',
+        aUid: 'x',
+        axbType: NODE_RELATION,
+        bType: 'a',
+        bUid: 'x',
+        data: {},
+      },
+      'replace',
+    );
     await backend.getDoc('k1');
-    await backend.updateDoc('k1', { dataFields: { n: 1 } });
+    await backend.updateDoc('k1', { dataOps: flattenPatch({ n: 1 }) });
     await backend.query([{ field: 'aType', op: '==', value: 'a' }]);
     await backend.deleteDoc('k1');
 
@@ -205,22 +210,30 @@ describe('DORPCBackend — subgraph routing', () => {
     const root = new DORPCBackend(ns, { storageKey: 'main' });
     const child = root.subgraph('projA', 'memories');
 
-    await root.setDoc('k1', {
-      aType: 'a',
-      aUid: 'x',
-      axbType: NODE_RELATION,
-      bType: 'a',
-      bUid: 'x',
-      data: {},
-    });
-    await child.setDoc('k2', {
-      aType: 'a',
-      aUid: 'y',
-      axbType: NODE_RELATION,
-      bType: 'a',
-      bUid: 'y',
-      data: {},
-    });
+    await root.setDoc(
+      'k1',
+      {
+        aType: 'a',
+        aUid: 'x',
+        axbType: NODE_RELATION,
+        bType: 'a',
+        bUid: 'x',
+        data: {},
+      },
+      'replace',
+    );
+    await child.setDoc(
+      'k2',
+      {
+        aType: 'a',
+        aUid: 'y',
+        axbType: NODE_RELATION,
+        bType: 'a',
+        bUid: 'y',
+        data: {},
+      },
+      'replace',
+    );
 
     expect(stubs.size).toBe(2);
     expect(stubs.get('main')!.records.has('k1')).toBe(true);
@@ -275,15 +288,19 @@ describe('DORPCBackend — batches', () => {
     const backend = new DORPCBackend(ns, { storageKey: 'main' });
     const batch = backend.createBatch();
 
-    batch.setDoc('k1', {
-      aType: 'a',
-      aUid: 'x',
-      axbType: NODE_RELATION,
-      bType: 'a',
-      bUid: 'x',
-      data: {},
-    });
-    batch.updateDoc('k2', { dataFields: { n: 1 } });
+    batch.setDoc(
+      'k1',
+      {
+        aType: 'a',
+        aUid: 'x',
+        axbType: NODE_RELATION,
+        bType: 'a',
+        bUid: 'x',
+        data: {},
+      },
+      'replace',
+    );
+    batch.updateDoc('k2', { dataOps: flattenPatch({ n: 1 }) });
     batch.deleteDoc('k3');
     await batch.commit();
 

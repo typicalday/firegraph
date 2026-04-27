@@ -27,8 +27,10 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from '../../src/internal/backend.js';
 import { createRoutingBackend, type RoutingContext } from '../../src/internal/routing-backend.js';
+import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   BulkOptions,
   BulkResult,
@@ -115,8 +117,8 @@ function createMockBackend(
       calls.push({ method: 'query', args: [filters, options] });
       return [];
     },
-    async setDoc(docId: string, record: WritableRecord): Promise<void> {
-      calls.push({ method: 'setDoc', args: [docId, record] });
+    async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+      calls.push({ method: 'setDoc', args: [docId, record, mode] });
     },
     async updateDoc(docId: string, update: UpdatePayload): Promise<void> {
       calls.push({ method: 'updateDoc', args: [docId, update] });
@@ -373,8 +375,8 @@ describe('createRoutingBackend — pass-through delegation', () => {
       bUid: 'x',
       data: {},
     };
-    await router.setDoc('x', rec);
-    await router.updateDoc('x', { dataFields: { k: 1 } });
+    await router.setDoc('x', rec, 'replace');
+    await router.updateDoc('x', { dataOps: flattenPatch({ k: 1 }) });
     await router.deleteDoc('x');
 
     expect(base.calls.map((c) => c.method)).toEqual(['setDoc', 'updateDoc', 'deleteDoc']);

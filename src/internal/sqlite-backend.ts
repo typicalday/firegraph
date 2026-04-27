@@ -29,6 +29,7 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from './backend.js';
 import { NODE_RELATION } from './constants.js';
 import type { SqliteExecutor, SqliteTxExecutor } from './sqlite-executor.js';
@@ -148,8 +149,8 @@ class SqliteTransactionBackendImpl implements TransactionBackend {
     return rows.map(rowToRecord);
   }
 
-  async setDoc(docId: string, record: WritableRecord): Promise<void> {
-    const stmt = compileSet(this.tableName, this.storageScope, docId, record, Date.now());
+  async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    const stmt = compileSet(this.tableName, this.storageScope, docId, record, Date.now(), mode);
     await this.tx.run(stmt.sql, stmt.params);
   }
 
@@ -181,8 +182,10 @@ class SqliteBatchBackendImpl implements BatchBackend {
     private readonly storageScope: string,
   ) {}
 
-  setDoc(docId: string, record: WritableRecord): void {
-    this.statements.push(compileSet(this.tableName, this.storageScope, docId, record, Date.now()));
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): void {
+    this.statements.push(
+      compileSet(this.tableName, this.storageScope, docId, record, Date.now(), mode),
+    );
   }
 
   updateDoc(docId: string, update: UpdatePayload): void {
@@ -236,8 +239,15 @@ class SqliteBackendImpl implements StorageBackend {
 
   // --- Writes ---
 
-  async setDoc(docId: string, record: WritableRecord): Promise<void> {
-    const stmt = compileSet(this.collectionPath, this.storageScope, docId, record, Date.now());
+  async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    const stmt = compileSet(
+      this.collectionPath,
+      this.storageScope,
+      docId,
+      record,
+      Date.now(),
+      mode,
+    );
     await this.executor.run(stmt.sql, stmt.params);
   }
 

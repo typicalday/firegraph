@@ -48,6 +48,7 @@ export type {
 } from './indexes.js';
 export { generateIndexConfig } from './indexes.js';
 export { DEFAULT_QUERY_LIMIT } from './internal/constants.js';
+export { deleteField } from './internal/write-plan.js';
 export type { FieldMeta } from './json-schema.js';
 export { compileSchema, jsonSchemaToFieldMeta } from './json-schema.js';
 export type { MigrationResult } from './migration.js';

@@ -149,7 +149,8 @@ export interface IndexFieldSpec {
    * because SQLite expression indexes must match the query compiler's
    * output verbatim, and inlining quoted path components into DDL would
    * desynchronize the two compilers. If you need to filter by an exotic
-   * key, use `replaceData` writes rather than an indexed field.
+   * key, use `replaceNode` / `replaceEdge` writes rather than an indexed
+   * field.
    */
   path: string;
   /** Descending order; defaults to ascending. */
@@ -491,7 +492,21 @@ export interface GraphReader {
 }
 
 export interface GraphWriter {
+  /**
+   * Write a node, deep-merging into any existing record.
+   *
+   * Nested objects are merged recursively — sibling keys at any depth
+   * survive. Arrays are terminal (replaced as a unit, not element-merged).
+   * `undefined` values are omitted; `null` is preserved. To delete a field,
+   * pass the `deleteField()` sentinel as its value.
+   *
+   * Use {@link replaceNode} when you want full-document replacement.
+   */
   putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void>;
+  /**
+   * Write an edge, deep-merging into any existing record. See
+   * {@link putNode} for the merge contract.
+   */
   putEdge(
     aType: string,
     aUid: string,
@@ -500,7 +515,38 @@ export interface GraphWriter {
     bUid: string,
     data: Record<string, unknown>,
   ): Promise<void>;
+  /**
+   * Replace a node's `data` payload entirely. Any field absent from
+   * `data` is dropped. Use sparingly — prefer {@link putNode} unless you
+   * specifically need to drop unknown fields.
+   */
+  replaceNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void>;
+  /**
+   * Replace an edge's `data` payload entirely. See {@link replaceNode}.
+   */
+  replaceEdge(
+    aType: string,
+    aUid: string,
+    axbType: string,
+    bType: string,
+    bUid: string,
+    data: Record<string, unknown>,
+  ): Promise<void>;
+  /**
+   * Patch a node's `data` payload. Like {@link putNode} this is a deep
+   * merge — nested objects are walked, only leaves are written. Use the
+   * `deleteField()` sentinel to remove a field.
+   */
   updateNode(uid: string, data: Record<string, unknown>): Promise<void>;
+  /**
+   * Patch an edge's `data` payload. See {@link updateNode}.
+   */
+  updateEdge(
+    aUid: string,
+    axbType: string,
+    bUid: string,
+    data: Record<string, unknown>,
+  ): Promise<void>;
   removeNode(uid: string): Promise<void>;
   removeEdge(aUid: string, axbType: string, bUid: string): Promise<void>;
 }

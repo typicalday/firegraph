@@ -23,7 +23,7 @@ import type {
 import { FiregraphDO } from '../../src/cloudflare/do.js';
 import { computeEdgeDocId, computeNodeDocId } from '../../src/docid.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
-
+import { flattenPatch } from '../../src/internal/write-plan.js';
 // ---------------------------------------------------------------------------
 // Fake DO storage backed by better-sqlite3.
 //
@@ -114,14 +114,18 @@ describe('FiregraphDO — CRUD', () => {
   it('set + get round-trip', async () => {
     const uid = 'kX1nQ2mP9xR4wL1tY8s3a';
     const docId = computeNodeDocId(uid);
-    await doInstance._fgSetDoc(docId, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: uid,
-      data: { title: 'Everest' },
-    });
+    await doInstance._fgSetDoc(
+      docId,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: uid,
+        data: { title: 'Everest' },
+      },
+      'replace',
+    );
 
     const rec = await doInstance._fgGetDoc(docId);
     expect(rec).not.toBeNull();
@@ -136,23 +140,27 @@ describe('FiregraphDO — CRUD', () => {
 
   it('update surfaces NOT_FOUND when the row is absent', async () => {
     await expect(
-      doInstance._fgUpdateDoc('nonexistent', { dataFields: { x: 1 } }),
+      doInstance._fgUpdateDoc('nonexistent', { dataOps: flattenPatch({ x: 1 }) }),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
   it('update applies shallow merge via json_set', async () => {
     const uid = 'kX1nQ2mP9xR4wL1tY8s3a';
     const docId = computeNodeDocId(uid);
-    await doInstance._fgSetDoc(docId, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: uid,
-      data: { title: 'Everest', status: 'draft' },
-    });
+    await doInstance._fgSetDoc(
+      docId,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: uid,
+        data: { title: 'Everest', status: 'draft' },
+      },
+      'replace',
+    );
 
-    await doInstance._fgUpdateDoc(docId, { dataFields: { status: 'active' } });
+    await doInstance._fgUpdateDoc(docId, { dataOps: flattenPatch({ status: 'active' }) });
     const rec = await doInstance._fgGetDoc(docId);
     expect(rec!.data).toEqual({ title: 'Everest', status: 'active' });
   });
@@ -160,14 +168,18 @@ describe('FiregraphDO — CRUD', () => {
   it('delete removes the row', async () => {
     const uid = 'kX1nQ2mP9xR4wL1tY8s3a';
     const docId = computeNodeDocId(uid);
-    await doInstance._fgSetDoc(docId, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: uid,
-      data: {},
-    });
+    await doInstance._fgSetDoc(
+      docId,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: uid,
+        data: {},
+      },
+      'replace',
+    );
     await doInstance._fgDeleteDoc(docId);
     expect(await doInstance._fgGetDoc(docId)).toBeNull();
   });
@@ -179,14 +191,18 @@ describe('FiregraphDO — queries', () => {
   beforeEach(async () => {
     ({ doInstance } = setupDO());
     for (const uid of ['kX1nQ2mP9xR4wL1tY8s3a', 'kX1nQ2mP9xR4wL1tY8s3b', 'kX1nQ2mP9xR4wL1tY8s3c']) {
-      await doInstance._fgSetDoc(computeNodeDocId(uid), {
-        aType: 'tour',
-        aUid: uid,
-        axbType: NODE_RELATION,
-        bType: 'tour',
-        bUid: uid,
-        data: { status: uid.endsWith('a') ? 'active' : 'draft' },
-      });
+      await doInstance._fgSetDoc(
+        computeNodeDocId(uid),
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: NODE_RELATION,
+          bType: 'tour',
+          bUid: uid,
+          data: { status: uid.endsWith('a') ? 'active' : 'draft' },
+        },
+        'replace',
+      );
     }
   });
 
@@ -255,23 +271,24 @@ describe('FiregraphDO — batch', () => {
   it('rejects the whole batch when any op fails to compile', async () => {
     // Pre-populate one row so we can assert the failed batch didn't touch it.
     const a = 'kX1nQ2mP9xR4wL1tY8s3a';
-    await doInstance._fgSetDoc(computeNodeDocId(a), {
-      aType: 'tour',
-      aUid: a,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: a,
-      data: {},
-    });
+    await doInstance._fgSetDoc(
+      computeNodeDocId(a),
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: a,
+        data: {},
+      },
+      'replace',
+    );
 
-    // An unsafe `dataFields` key fails at compile time — before the batch
-    // even enters `transactionSync`. From the caller's point of view the
-    // effect is the same as a mid-transaction rollback: nothing persisted.
-    await expect(
-      doInstance._fgBatch([
-        { kind: 'update', docId: computeNodeDocId(a), update: { dataFields: { 'bad key': 1 } } },
-      ]),
-    ).rejects.toThrow(/not a safe JSON-path identifier/);
+    // An unsafe key in the patch trips `flattenPatch` validation up front —
+    // the call throws synchronously before any batch op is dispatched, so no
+    // row can be touched. From the caller's point of view the effect is the
+    // same as a mid-transaction rollback: nothing persisted.
+    expect(() => flattenPatch({ 'bad key': 1 })).toThrow(/unsafe object key/);
 
     const count = (db.prepare('SELECT COUNT(*) as n FROM firegraph').get() as { n: number }).n;
     expect(count).toBe(1);
@@ -374,31 +391,43 @@ describe('FiregraphDO — cascade + bulk + destroy', () => {
   let db: BetterSqliteDb;
 
   async function seedHub(uid: string, children: string[]): Promise<void> {
-    await doInstance._fgSetDoc(computeNodeDocId(uid), {
-      aType: 'tour',
-      aUid: uid,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: uid,
-      data: {},
-    });
-    for (const c of children) {
-      await doInstance._fgSetDoc(computeNodeDocId(c), {
-        aType: 'departure',
-        aUid: c,
-        axbType: NODE_RELATION,
-        bType: 'departure',
-        bUid: c,
-        data: {},
-      });
-      await doInstance._fgSetDoc(computeEdgeDocId(uid, 'hasDeparture', c), {
+    await doInstance._fgSetDoc(
+      computeNodeDocId(uid),
+      {
         aType: 'tour',
         aUid: uid,
-        axbType: 'hasDeparture',
-        bType: 'departure',
-        bUid: c,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: uid,
         data: {},
-      });
+      },
+      'replace',
+    );
+    for (const c of children) {
+      await doInstance._fgSetDoc(
+        computeNodeDocId(c),
+        {
+          aType: 'departure',
+          aUid: c,
+          axbType: NODE_RELATION,
+          bType: 'departure',
+          bUid: c,
+          data: {},
+        },
+        'replace',
+      );
+      await doInstance._fgSetDoc(
+        computeEdgeDocId(uid, 'hasDeparture', c),
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'hasDeparture',
+          bType: 'departure',
+          bUid: c,
+          data: {},
+        },
+        'replace',
+      );
     }
   }
 
@@ -438,22 +467,30 @@ describe('FiregraphDO — cascade + bulk + destroy', () => {
     const orphan = 'kOrphanmP9xR4wL1tY8s3';
     const target = 'kTargetmP9xR4wL1tY8s3';
     // Manually insert an edge with no corresponding self-loop for `orphan`.
-    await doInstance._fgSetDoc(computeNodeDocId(target), {
-      aType: 'tour',
-      aUid: target,
-      axbType: NODE_RELATION,
-      bType: 'tour',
-      bUid: target,
-      data: {},
-    });
-    await doInstance._fgSetDoc(computeEdgeDocId(orphan, 'hasDeparture', target), {
-      aType: 'tour',
-      aUid: orphan,
-      axbType: 'hasDeparture',
-      bType: 'tour',
-      bUid: target,
-      data: {},
-    });
+    await doInstance._fgSetDoc(
+      computeNodeDocId(target),
+      {
+        aType: 'tour',
+        aUid: target,
+        axbType: NODE_RELATION,
+        bType: 'tour',
+        bUid: target,
+        data: {},
+      },
+      'replace',
+    );
+    await doInstance._fgSetDoc(
+      computeEdgeDocId(orphan, 'hasDeparture', target),
+      {
+        aType: 'tour',
+        aUid: orphan,
+        axbType: 'hasDeparture',
+        bType: 'tour',
+        bUid: target,
+        data: {},
+      },
+      'replace',
+    );
 
     const res = await doInstance._fgRemoveNodeCascade(orphan);
     // The node never had a self-loop, so nodeDeleted stays false — but the

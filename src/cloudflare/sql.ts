@@ -13,11 +13,16 @@
  */
 
 import { FiregraphError } from '../errors.js';
-import type { UpdatePayload, WritableRecord } from '../internal/backend.js';
+import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
+import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
+import type { DataPathOp } from '../internal/write-plan.js';
+import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
 import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 import { DO_FIELD_TO_COLUMN, quoteDOIdent } from './schema.js';
+
+const DO_BACKEND_LABEL = 'DO SQLite';
 
 /**
  * Wire representation of a stored record across the DO RPC boundary.
@@ -148,14 +153,14 @@ function bindValue(value: unknown): unknown {
 }
 
 /**
- * Identifiers accepted in `data.<key>` paths and `dataFields` keys.
+ * Identifiers accepted in `data.<key>` paths and `dataOps` path segments.
  *
  * The allowed shape (`/^[A-Za-z_][A-Za-z0-9_-]*$/`) covers code-style
  * identifiers (camel, snake, kebab). Silently quoting exotic keys would
  * require symmetric quoting at every read/write call site; any drift
  * produces silent data corruption. Failing loudly at compile time is
- * safer — users with exotic keys can use `replaceData` instead of
- * `dataFields`.
+ * safer — users with exotic keys can use `replaceNode` / `replaceEdge`
+ * (full-data overwrite) instead.
  */
 const JSON_PATH_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
@@ -169,7 +174,7 @@ function validateJsonPathKey(key: string): void {
   if (!JSON_PATH_KEY_RE.test(key)) {
     throw new FiregraphError(
       `DO SQLite backend: data field path component "${key}" is not a safe JSON-path identifier. ` +
-        `Allowed pattern: /^[A-Za-z_][A-Za-z0-9_-]*$/. Use replaceData (full-data overwrite) ` +
+        `Allowed pattern: /^[A-Za-z_][A-Za-z0-9_-]*$/. Use replaceNode/replaceEdge (full-data overwrite) ` +
         `for keys with reserved characters (whitespace, dots, brackets, quotes, etc.).`,
       'INVALID_QUERY',
     );
@@ -289,19 +294,104 @@ export function compileDOSelectByDocId(table: string, docId: string): CompiledSt
 }
 
 /**
- * INSERT OR REPLACE — `setDoc` semantics. Full row replacement keyed by
- * `doc_id`.
+ * Build a `json_set(json_remove(<base>, …deletes), …pairs)` expression that
+ * applies a list of `DataPathOp`s onto an existing JSON column reference.
+ * Mirrors `compileDataOpsExpr` in `internal/sqlite-sql.ts` — keep them in
+ * sync. Returns `null` when there are no ops at all.
+ */
+function compileDODataOpsExpr(
+  ops: readonly DataPathOp[],
+  base: string,
+  params: unknown[],
+): string | null {
+  if (ops.length === 0) return null;
+
+  const deletes: DataPathOp[] = [];
+  const sets: DataPathOp[] = [];
+  for (const op of ops) (op.delete ? deletes : sets).push(op);
+
+  let expr = base;
+
+  if (deletes.length > 0) {
+    const placeholders = deletes.map(() => '?').join(', ');
+    expr = `json_remove(${expr}, ${placeholders})`;
+    for (const op of deletes) {
+      for (const seg of op.path) validateJsonPathKey(seg);
+      params.push(`$.${op.path.join('.')}`);
+    }
+  }
+
+  if (sets.length > 0) {
+    const pieces = sets.map(() => '?, json(?)').join(', ');
+    expr = `json_set(${expr}, ${pieces})`;
+    for (const op of sets) {
+      for (const seg of op.path) validateJsonPathKey(seg);
+      params.push(`$.${op.path.join('.')}`);
+      params.push(jsonBind(op.value));
+    }
+  }
+
+  return expr;
+}
+
+function jsonBind(value: unknown): string {
+  if (value === undefined) return 'null';
+  if (value !== null && typeof value === 'object') {
+    const firestoreType = isFirestoreSpecialType(value);
+    if (firestoreType) {
+      throw new FiregraphError(
+        `DO SQLite backend cannot persist a Firestore ${firestoreType} value. ` +
+          `Convert to a primitive before writing (e.g. \`ts.toMillis()\` for Timestamp).`,
+        'INVALID_ARGUMENT',
+      );
+    }
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Compile a `setDoc(record, mode)` call into a single statement.
+ *
+ * `mode === 'replace'` issues `INSERT OR REPLACE` (full row replacement).
+ * `mode === 'merge'` issues `INSERT … ON CONFLICT(doc_id) DO UPDATE SET …`,
+ * deep-merging the incoming `data` into the existing JSON via the chained
+ * `json_set` / `json_remove` expression produced by `compileDODataOpsExpr`.
+ * Sibling keys at every depth survive; arrays are terminal (replaced).
+ *
+ * `created_at` is re-stamped on every put for both modes (matches the
+ * cross-backend contract today).
  */
 export function compileDOSet(
   table: string,
   docId: string,
   record: WritableRecord,
   nowMillis: number,
+  mode: WriteMode,
 ): CompiledStatement {
-  const sql = `INSERT OR REPLACE INTO ${quoteDOIdent(table)} (
-    doc_id, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-  const params: unknown[] = [
+  // See compileSet (sqlite-sql.ts) for rationale — eager validation so the
+  // first-insert path can't silently corrupt Firestore special types or
+  // drop a DELETE_FIELD sentinel that JSON.stringify would erase.
+  assertJsonSafePayload(record.data, DO_BACKEND_LABEL);
+  if (mode === 'replace') {
+    const sql = `INSERT OR REPLACE INTO ${quoteDOIdent(table)} (
+      doc_id, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const params: unknown[] = [
+      docId,
+      record.aType,
+      record.aUid,
+      record.axbType,
+      record.bType,
+      record.bUid,
+      JSON.stringify(record.data ?? {}),
+      record.v ?? null,
+      nowMillis,
+      nowMillis,
+    ];
+    return { sql, params };
+  }
+
+  const insertParams: unknown[] = [
     docId,
     record.aType,
     record.aUid,
@@ -313,14 +403,38 @@ export function compileDOSet(
     nowMillis,
     nowMillis,
   ];
-  return { sql, params };
+
+  const ops = flattenPatch(record.data ?? {});
+  const updateParams: unknown[] = [];
+  const dataExpr =
+    compileDODataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams) ?? `COALESCE("data", '{}')`;
+
+  const sql = `INSERT INTO ${quoteDOIdent(table)} (
+      doc_id, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(doc_id) DO UPDATE SET
+      "a_type" = excluded."a_type",
+      "a_uid" = excluded."a_uid",
+      "axb_type" = excluded."axb_type",
+      "b_type" = excluded."b_type",
+      "b_uid" = excluded."b_uid",
+      "data" = ${dataExpr},
+      "v" = excluded."v",
+      "created_at" = excluded."created_at",
+      "updated_at" = excluded."updated_at"`;
+
+  return { sql, params: [...insertParams, ...updateParams] };
 }
 
 /**
- * Compile an `UpdatePayload` into a single UPDATE statement. Same rules as
- * the legacy backend: `replaceData` overwrites the whole blob; `dataFields`
- * shallow-merges via `json_set(data, '$.k', v, …)`; `v` is stamped when
- * provided; `updated_at` is always stamped.
+ * Compile an `UpdatePayload` into a single UPDATE statement.
+ *
+ *   - `replaceData` overwrites the whole `data` JSON.
+ *   - `dataOps` applies a deep-path patch via chained `json_remove` /
+ *     `json_set` — sibling keys at every depth survive; arrays are terminal;
+ *     delete-ops use `json_remove`.
+ *   - `v` is set when provided.
+ *   - `updated_at` is always stamped.
  */
 export function compileDOUpdate(
   table: string,
@@ -328,20 +442,18 @@ export function compileDOUpdate(
   update: UpdatePayload,
   nowMillis: number,
 ): CompiledStatement {
+  assertUpdatePayloadExclusive(update);
   const setClauses: string[] = [];
   const params: unknown[] = [];
 
   if (update.replaceData) {
+    assertJsonSafePayload(update.replaceData, DO_BACKEND_LABEL);
     setClauses.push(`"data" = ?`);
     params.push(JSON.stringify(update.replaceData));
-  } else if (update.dataFields && Object.keys(update.dataFields).length > 0) {
-    const entries = Object.entries(update.dataFields);
-    const pathArgs = entries.map(() => `?, ?`).join(', ');
-    setClauses.push(`"data" = json_set(COALESCE("data", '{}'), ${pathArgs})`);
-    for (const [k, v] of entries) {
-      validateJsonPathKey(k);
-      params.push(`$.${k}`);
-      params.push(bindValue(v));
+  } else if (update.dataOps && update.dataOps.length > 0) {
+    const expr = compileDODataOpsExpr(update.dataOps, `COALESCE("data", '{}')`, params);
+    if (expr !== null) {
+      setClauses.push(`"data" = ${expr}`);
     }
   }
 

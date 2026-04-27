@@ -67,4 +67,5 @@ export { buildDOSchemaStatements } from './schema.js';
 // load on workerd's `--disallow-code-generation-from-strings` runtime).
 export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
 export { generateId } from '../id.js';
+export { deleteField } from '../internal/write-plan.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';

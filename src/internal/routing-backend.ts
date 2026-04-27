@@ -76,6 +76,7 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from './backend.js';
 
 /**
@@ -186,8 +187,8 @@ class RoutingStorageBackend implements StorageBackend {
 
   // --- Pass-through writes ---
 
-  setDoc(docId: string, record: WritableRecord): Promise<void> {
-    return this.base.setDoc(docId, record);
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    return this.base.setDoc(docId, record, mode);
   }
 
   updateDoc(docId: string, update: UpdatePayload): Promise<void> {

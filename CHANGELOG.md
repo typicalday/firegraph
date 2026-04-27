@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.12.0](https://github.com/typicalday/firegraph/compare/v0.11.2...v0.12.0) (2026-04-27)
+
+### ⚠ BREAKING CHANGES
+
+- **writes:** `putNode`/`putEdge` and `updateNode` now **deep-merge** by default. Sibling keys at every nesting depth survive — the old "silent wipe" behaviour is gone. If you relied on `putNode` replacing the whole document, switch to the new `replaceNode`/`replaceEdge` methods. See [`MIGRATION.md`](./MIGRATION.md) for the full rewrite guide.
+
+### Features
+
+- **writes:** add `replaceNode` / `replaceEdge` for explicit full-document replace.
+- **writes:** add `updateEdge` (parity with `updateNode`).
+- **writes:** add `deleteField()` sentinel — backend-portable equivalent of Firestore's `FieldValue.delete()`. Works on Firestore, in-process SQLite, and Cloudflare Durable Objects.
+- **backend:** export `flattenPatch`, `DELETE_FIELD`, `WriteMode`, `DataPathOp`, and `UpdatePayload` from `firegraph/backend` for backend authors.
+- **tests:** add `tests/integration/write-semantics.test.ts` — backend-parameterized contract suite covering deep merge, replace, deleteField, array terminals, and round-trips.
+
+### Bug Fixes
+
+- **writes:** unify SQLite (shared-table) + Cloudflare DO write semantics with Firestore. All three backends now produce identical observable behaviour for `put*`, `update*`, `replace*`, and `deleteField()`.
+- **cloudflare bundle:** split `SERIALIZATION_TAG` / `isTaggedValue` into `src/internal/serialization-tag.ts` so `firegraph/cloudflare` no longer pulls `@google-cloud/firestore` into its static-import closure.
+
 ## [0.11.2](https://github.com/typicalday/firegraph/compare/v0.11.1...v0.11.2) (2026-04-25)
 
 
