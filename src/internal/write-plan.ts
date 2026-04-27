@@ -184,33 +184,43 @@ export function assertUpdatePayloadExclusive(update: {
  * recurse into the `__firegraph_ser__` envelope.
  */
 export function assertNoDeleteSentinels(data: unknown, callerLabel: string): void {
-  scanForDeleteSentinels(data, [], callerLabel);
-}
-
-function scanForDeleteSentinels(node: unknown, path: readonly string[], label: string): void {
-  if (node === null || node === undefined) return;
-  if (isDeleteSentinel(node)) {
+  walkForDeleteSentinels(data, [], { kind: 'root' }, ({ path }) => {
     const where = path.length === 0 ? '<root>' : path.map((p) => JSON.stringify(p)).join(' > ');
     throw new Error(
-      `firegraph: ${label} payload contains a deleteField() sentinel at ${where}. ` +
+      `firegraph: ${callerLabel} payload contains a deleteField() sentinel at ${where}. ` +
         `deleteField() is only valid inside updateNode/updateEdge — full-data ` +
         `writes (put*, replace*) cannot delete individual fields. Use updateNode ` +
         `with a deleteField() value, or omit the field from the replace payload.`,
     );
+  });
+}
+
+type SentinelParent = { kind: 'root' } | { kind: 'object' } | { kind: 'array'; index: number };
+
+function walkForDeleteSentinels(
+  node: unknown,
+  path: readonly string[],
+  parent: SentinelParent,
+  visit: (ctx: { path: readonly string[]; parent: SentinelParent }) => void,
+): void {
+  if (node === null || node === undefined) return;
+  if (isDeleteSentinel(node)) {
+    visit({ path, parent });
+    return;
   }
   if (typeof node !== 'object') return;
+  if (isTaggedValue(node)) return;
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
-      scanForDeleteSentinels(node[i], [...path, String(i)], label);
+      walkForDeleteSentinels(node[i], [...path, String(i)], { kind: 'array', index: i }, visit);
     }
     return;
   }
-  if (isTaggedValue(node)) return;
   const proto = Object.getPrototypeOf(node);
   if (proto !== null && proto !== Object.prototype) return;
   const obj = node as Record<string, unknown>;
   for (const key of Object.keys(obj)) {
-    scanForDeleteSentinels(obj[key], [...path, key], label);
+    walkForDeleteSentinels(obj[key], [...path, key], { kind: 'object' }, visit);
   }
 }
 
@@ -260,52 +270,29 @@ export function flattenPatch(data: Record<string, unknown>): DataPathOp[] {
   return ops;
 }
 
-function assertNoDeleteSentinelsInArray(arr: readonly unknown[], path: readonly string[]): void {
-  for (let i = 0; i < arr.length; i++) {
-    const v = arr[i];
-    if (isDeleteSentinel(v)) {
+function assertNoDeleteSentinelsInArrayValue(
+  arr: readonly unknown[],
+  arrayPath: readonly string[],
+): void {
+  walkForDeleteSentinels(arr, arrayPath, { kind: 'root' }, ({ parent }) => {
+    const arrayPathStr =
+      arrayPath.length === 0 ? '<root>' : arrayPath.map((p) => JSON.stringify(p)).join(' > ');
+    if (parent.kind === 'array') {
       throw new Error(
-        `firegraph: deleteField() sentinel at index ${i} inside an array at ` +
-          `path ${path.map((p) => JSON.stringify(p)).join(' > ')}. Arrays are ` +
+        `firegraph: deleteField() sentinel at index ${parent.index} inside an array at ` +
+          `path ${arrayPathStr}. Arrays are ` +
           `terminal in update payloads (replaced as a unit), so the sentinel ` +
           `would be silently dropped by JSON serialization. To remove the ` +
           `field entirely, pass deleteField() in place of the whole array.`,
       );
     }
-    if (Array.isArray(v)) {
-      assertNoDeleteSentinelsInArray(v, path);
-    } else if (v !== null && typeof v === 'object' && !isTaggedValue(v)) {
-      const proto = Object.getPrototypeOf(v);
-      if (proto === null || proto === Object.prototype) {
-        assertNoDeleteSentinelsInObjectInArray(v as Record<string, unknown>, path);
-      }
-    }
-  }
-}
-
-function assertNoDeleteSentinelsInObjectInArray(
-  obj: Record<string, unknown>,
-  path: readonly string[],
-): void {
-  for (const key of Object.keys(obj)) {
-    const inner = obj[key];
-    if (isDeleteSentinel(inner)) {
-      throw new Error(
-        `firegraph: deleteField() sentinel inside an array element at ` +
-          `path ${path.map((p) => JSON.stringify(p)).join(' > ')}. ` +
-          `Arrays are terminal in update payloads — the sentinel would ` +
-          `be silently dropped by JSON serialization.`,
-      );
-    }
-    if (Array.isArray(inner)) {
-      assertNoDeleteSentinelsInArray(inner, path);
-    } else if (inner !== null && typeof inner === 'object' && !isTaggedValue(inner)) {
-      const proto = Object.getPrototypeOf(inner);
-      if (proto === null || proto === Object.prototype) {
-        assertNoDeleteSentinelsInObjectInArray(inner as Record<string, unknown>, path);
-      }
-    }
-  }
+    throw new Error(
+      `firegraph: deleteField() sentinel inside an array element at ` +
+        `path ${arrayPathStr}. ` +
+        `Arrays are terminal in update payloads — the sentinel would ` +
+        `be silently dropped by JSON serialization.`,
+    );
+  });
 }
 
 function walk(node: unknown, path: string[], out: DataPathOp[]): void {
@@ -336,7 +323,7 @@ function walk(node: unknown, path: string[], out: DataPathOp[]): void {
     // the divergence between "user wrote a delete" and "field stayed put"
     // can't happen.
     if (Array.isArray(node)) {
-      assertNoDeleteSentinelsInArray(node, path);
+      assertNoDeleteSentinelsInArrayValue(node, path);
     }
     assertSafePath(path);
     out.push({ path: [...path], value: node, delete: false });
