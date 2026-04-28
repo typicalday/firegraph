@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.12.0](https://github.com/typicalday/firegraph/compare/v0.11.2...v0.12.0) (2026-04-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* `putNode` / `putEdge` now deep-merge instead of full replace. Callers relying on the old behaviour should switch to `replaceNode` / `replaceEdge`. `updateNode` now deep-merges all the way down (was one-level shallow). `StorageBackend.setDoc` gains a third `mode: 'merge' | 'replace'` argument; `updateDoc` now takes an `UpdatePayload` shape.
+
+### Features
+
+* **cloudflare:** re-export createRegistry + createMergedRegistry ([4ef8cac](https://github.com/typicalday/firegraph/commit/4ef8cac22b4d601d8fe32aec4fa5c9b8399afd2a))
+* **cloudflare:** re-export generateId + META_*_TYPE from /cloudflare entry ([4ff072b](https://github.com/typicalday/firegraph/commit/4ff072be1b1e4c3735ee48e22b358edbf3e59df3))
+* deep-merge write semantics + cross-backend parity (0.12) ([d575ac1](https://github.com/typicalday/firegraph/commit/d575ac10c8b31fa0d50be8fc046e2549e8ca07c9))
+
+
+### Bug Fixes
+
+* **sqlite,cloudflare:** preserve stored v on merge-put when incoming v is undefined ([41160ce](https://github.com/typicalday/firegraph/commit/41160cea454c991d232eaadd552b10731f1a870a))
+
 ## [0.12.0](https://github.com/typicalday/firegraph/compare/v0.11.2...v0.12.0) (2026-04-27)
 
 ### ⚠ BREAKING CHANGES
