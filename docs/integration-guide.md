@@ -423,16 +423,26 @@ const id = generateId(); // 21-char URL-safe nanoid
 
 ### Node CRUD
 
+`putNode` and `updateNode` deep-merge into the stored payload (0.12+). `replaceNode` is the explicit wipe-and-rewrite. Use the `deleteField()` sentinel inside any of them to prune a path. See `MIGRATION.md` for the full write contract.
+
 ```typescript
-// Create
+import { deleteField, generateId } from 'firegraph';
+
+// Create (or deep-merge into existing data)
 const taskId = generateId();
 await g.putNode('task', taskId, { title: 'Build feature', status: 'created' });
 
 // Read
 const task = await g.getNode(taskId); // StoredGraphRecord | null
 
-// Update (partial merge into data)
+// Update (deep merge into data)
 await g.updateNode(taskId, { status: 'active' });
+
+// Replace (wipe-and-rewrite the data payload, re-stamps schema version `v`)
+await g.replaceNode('task', taskId, { title: 'Build feature', status: 'shipped' });
+
+// Prune a nested path
+await g.updateNode(taskId, { metadata: { draftNote: deleteField() } });
 
 // Delete
 await g.removeNode(taskId);
@@ -443,8 +453,10 @@ const tasks = await g.findNodes({ aType: 'task' });
 
 ### Edge CRUD
 
+Edges follow the same write contract as nodes: `putEdge` / `updateEdge` deep-merge, `replaceEdge` wipes-and-rewrites, and `deleteField()` prunes paths.
+
 ```typescript
-// Create
+// Create (or deep-merge into existing edge data)
 await g.putEdge('task', taskId, 'hasStep', 'step', stepId, { order: 0 });
 
 // Read
@@ -452,6 +464,12 @@ const edge = await g.getEdge(taskId, 'hasStep', stepId);
 
 // Check existence
 const exists = await g.edgeExists(taskId, 'hasStep', stepId);
+
+// Update (deep merge into edge data)
+await g.updateEdge(taskId, 'hasStep', stepId, { order: 1 });
+
+// Replace (wipe-and-rewrite the edge data payload, re-stamps `v`)
+await g.replaceEdge('task', taskId, 'hasStep', 'step', stepId, { order: 1 });
 
 // Delete
 await g.removeEdge(taskId, 'hasStep', stepId);

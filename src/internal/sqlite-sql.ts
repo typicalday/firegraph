@@ -11,8 +11,18 @@ import { FiregraphError } from '../errors.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
 import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
-import type { UpdatePayload, WritableRecord } from './backend.js';
+import type { UpdatePayload, WritableRecord, WriteMode } from './backend.js';
+import {
+  compileDataOpsExpr,
+  isFirestoreSpecialType,
+  validateJsonPathKey,
+} from './sqlite-data-ops.js';
+import { assertJsonSafePayload } from './sqlite-payload-guard.js';
 import { FIELD_TO_COLUMN, quoteIdent } from './sqlite-schema.js';
+import { assertUpdatePayloadExclusive, flattenPatch } from './write-plan.js';
+
+const SQLITE_BACKEND_LABEL = 'shared-table SQLite';
+const SQLITE_BACKEND_ERR_LABEL = 'SQLite backend';
 
 export interface CompiledStatement {
   sql: string;
@@ -45,7 +55,7 @@ function compileFieldRef(field: string): { expr: string } {
   if (field.startsWith('data.')) {
     const suffix = field.slice(5);
     for (const part of suffix.split('.')) {
-      validateJsonPathKey(part);
+      validateJsonPathKey(part, SQLITE_BACKEND_ERR_LABEL);
     }
     return { expr: `json_extract("data", '$.${suffix}')` };
   }
@@ -53,30 +63,6 @@ function compileFieldRef(field: string): { expr: string } {
     return { expr: `json_extract("data", '$')` };
   }
   throw new FiregraphError(`SQLite backend cannot resolve filter field: ${field}`, 'INVALID_QUERY');
-}
-
-/**
- * Constructor names of Firestore special types that don't survive a plain
- * JSON.stringify round-trip — they have non-enumerable accessors (e.g.
- * `Timestamp.seconds`) or class identity that JSON loses. Filtering by one
- * of these against SQLite would silently miss every row, so we fail loudly.
- *
- * Detection is by `constructor.name` + duck-type so this module stays
- * dependency-free (importing `@google-cloud/firestore` here would pollute
- * the Cloudflare Workers bundle — see tests/unit/bundle-pollution.test.ts).
- */
-const FIRESTORE_TYPE_NAMES = new Set([
-  'Timestamp',
-  'GeoPoint',
-  'VectorValue',
-  'DocumentReference',
-  'FieldValue',
-]);
-
-function isFirestoreSpecialType(value: object): string | null {
-  const ctorName = (value as { constructor?: { name?: string } }).constructor?.name;
-  if (ctorName && FIRESTORE_TYPE_NAMES.has(ctorName)) return ctorName;
-  return null;
 }
 
 /**
@@ -115,40 +101,6 @@ function bindValue(value: unknown): unknown {
     return JSON.stringify(value);
   }
   return String(value);
-}
-
-/**
- * Validate `data.<key>` paths and `dataFields` keys against the subset of
- * JSON keys that round-trip cleanly through SQLite's unquoted JSON-path
- * syntax (`$.<name>` style). The accepted shape — `[A-Za-z_][\w-]*` —
- * covers the overwhelmingly common case of code-style identifiers (camel,
- * snake, kebab) without forcing the SQL emitter to quote/escape paths.
- *
- * Why not silently quote? Several characters (`.`, `[`, `]`, `"`) are
- * structural in SQLite's JSON path even inside the string after `$.` —
- * silently quoting would mean the reads (`json_extract` for filters) and
- * writes (`json_set` for `dataFields`) need symmetric quoting at every
- * call site, and any drift produces silent data corruption. Failing loudly
- * at compile time is the safer trade-off; users with exotic keys can use
- * `replaceData` (full-blob overwrite) instead.
- */
-const JSON_PATH_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-
-function validateJsonPathKey(key: string): void {
-  if (key.length === 0) {
-    throw new FiregraphError(
-      'SQLite backend: empty JSON path component is not allowed',
-      'INVALID_QUERY',
-    );
-  }
-  if (!JSON_PATH_KEY_RE.test(key)) {
-    throw new FiregraphError(
-      `SQLite backend: data field path component "${key}" is not a safe JSON-path identifier. ` +
-        `Allowed pattern: /^[A-Za-z_][A-Za-z0-9_-]*$/. Use replaceData (full-data overwrite) ` +
-        `for keys with reserved characters (whitespace, dots, brackets, quotes, etc.).`,
-      'INVALID_QUERY',
-    );
-  }
 }
 
 function compileFilter(filter: QueryFilter, params: unknown[]): string {
@@ -309,8 +261,22 @@ export function compileSelectByDocId(
 }
 
 /**
- * INSERT OR REPLACE — `setDoc` semantics: full replacement of the row
- * keyed by `(scope, doc_id)`.
+ * Compile a `setDoc(record, mode)` call into a single statement.
+ *
+ *   - `mode === 'replace'` — `INSERT OR REPLACE`. Every row column is
+ *     overwritten; any pre-existing JSON keys not present in `record.data`
+ *     are dropped.
+ *   - `mode === 'merge'`   — `INSERT … ON CONFLICT(scope, doc_id) DO UPDATE
+ *     SET …`. New rows insert the full record; existing rows have their
+ *     `data` JSON deep-merged via the chained `json_set`/`json_remove`
+ *     expression produced by `compileDataOpsExpr`. Sibling keys at every
+ *     depth survive. Arrays and primitives are terminal (replaced as a
+ *     unit), matching Firestore's `.set(..., { merge: true })` behaviour.
+ *
+ * `created_at` is re-stamped on every put — both modes use
+ * `excluded.created_at` so the cross-backend contract matches today's
+ * Firestore behaviour. (Future work: switch to insert-only createdAt; out
+ * of scope for the merge-semantics fix.)
  */
 export function compileSet(
   table: string,
@@ -318,11 +284,37 @@ export function compileSet(
   docId: string,
   record: WritableRecord,
   nowMillis: number,
+  mode: WriteMode,
 ): CompiledStatement {
-  const sql = `INSERT OR REPLACE INTO ${quoteIdent(table)} (
-    doc_id, scope, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-  const params: unknown[] = [
+  // Eager validation. Both branches below feed `record.data` to a raw
+  // `JSON.stringify` for the INSERT path; flattenPatch only catches issues
+  // on the merge UPDATE branch and only fires when there's a conflicting
+  // row. Validating up front keeps first-insert and ON CONFLICT errors
+  // identical, and rejects the DELETE_FIELD sentinel that JSON.stringify
+  // would silently drop.
+  assertJsonSafePayload(record.data, SQLITE_BACKEND_LABEL);
+  if (mode === 'replace') {
+    const sql = `INSERT OR REPLACE INTO ${quoteIdent(table)} (
+      doc_id, scope, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    const params: unknown[] = [
+      docId,
+      scope,
+      record.aType,
+      record.aUid,
+      record.axbType,
+      record.bType,
+      record.bUid,
+      JSON.stringify(record.data ?? {}),
+      record.v ?? null,
+      nowMillis,
+      nowMillis,
+    ];
+    return { sql, params };
+  }
+
+  // Merge mode.
+  const insertParams: unknown[] = [
     docId,
     scope,
     record.aType,
@@ -335,16 +327,48 @@ export function compileSet(
     nowMillis,
     nowMillis,
   ];
-  return { sql, params };
+
+  // Translate record.data into deep-path ops, then build the merge expr.
+  const ops = flattenPatch(record.data ?? {});
+  const updateParams: unknown[] = [];
+  const dataExpr =
+    compileDataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams, SQLITE_BACKEND_ERR_LABEL) ??
+    `COALESCE("data", '{}')`;
+
+  // `v` uses COALESCE(excluded.v, v) so an incoming record with `v=undefined`
+  // (registry has no migrations, or stampWritableRecord didn't stamp) leaves
+  // any previously-stamped `v` intact. Firestore's `set(record, {merge: true})`
+  // omits the key when undefined and behaves the same way; SQLite must too.
+  // Without COALESCE, `excluded.v` would be NULL and clobber a pre-existing
+  // `v` — which silently breaks migration replay if migrations are removed
+  // and later re-added to a type.
+  const sql = `INSERT INTO ${quoteIdent(table)} (
+      doc_id, scope, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(scope, doc_id) DO UPDATE SET
+      "a_type" = excluded."a_type",
+      "a_uid" = excluded."a_uid",
+      "axb_type" = excluded."axb_type",
+      "b_type" = excluded."b_type",
+      "b_uid" = excluded."b_uid",
+      "data" = ${dataExpr},
+      "v" = COALESCE(excluded."v", "v"),
+      "created_at" = excluded."created_at",
+      "updated_at" = excluded."updated_at"`;
+
+  return { sql, params: [...insertParams, ...updateParams] };
 }
 
 /**
  * Compile an `UpdatePayload` into a single UPDATE statement.
  *
- * - `replaceData` overwrites the whole `data` JSON.
- * - `dataFields` shallow-merges fields via `json_set(data, '$.k', v, …)`.
- * - `v` is set when provided.
- * - `updated_at` is always stamped.
+ *   - `replaceData` overwrites the whole `data` JSON. (Used by migration
+ *     write-back.)
+ *   - `dataOps` deep-merges via chained `json_remove` / `json_set` —
+ *     siblings at every nesting depth survive; arrays / primitives /
+ *     Firestore special types are terminal; delete-ops use `json_remove`.
+ *   - `v` is set when provided.
+ *   - `updated_at` is always stamped.
  */
 export function compileUpdate(
   table: string,
@@ -353,21 +377,26 @@ export function compileUpdate(
   update: UpdatePayload,
   nowMillis: number,
 ): CompiledStatement {
+  assertUpdatePayloadExclusive(update);
   const setClauses: string[] = [];
   const params: unknown[] = [];
 
   if (update.replaceData) {
+    assertJsonSafePayload(update.replaceData, SQLITE_BACKEND_LABEL);
     setClauses.push(`"data" = ?`);
     params.push(JSON.stringify(update.replaceData));
-  } else if (update.dataFields && Object.keys(update.dataFields).length > 0) {
-    // json_set(data, '$.k1', ?, '$.k2', ?, …)
-    const entries = Object.entries(update.dataFields);
-    const pathArgs = entries.map(() => `?, ?`).join(', ');
-    setClauses.push(`"data" = json_set(COALESCE("data", '{}'), ${pathArgs})`);
-    for (const [k, v] of entries) {
-      validateJsonPathKey(k);
-      params.push(`$.${k}`);
-      params.push(bindValue(v));
+  } else if (update.dataOps && update.dataOps.length > 0) {
+    for (const op of update.dataOps) {
+      if (!op.delete) assertJsonSafePayload(op.value, SQLITE_BACKEND_LABEL);
+    }
+    const expr = compileDataOpsExpr(
+      update.dataOps,
+      `COALESCE("data", '{}')`,
+      params,
+      SQLITE_BACKEND_ERR_LABEL,
+    );
+    if (expr !== null) {
+      setClauses.push(`"data" = ${expr}`);
     }
   }
 

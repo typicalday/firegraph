@@ -59,3 +59,13 @@ export type {
 export { FiregraphDO } from './do.js';
 export type { BuildDOSchemaOptions } from './schema.js';
 export { buildDOSchemaStatements } from './schema.js';
+
+// Re-exports of Workers-safe utilities from the main entry. Importing them
+// from `firegraph/cloudflare` instead of `firegraph` lets workerd-bundled
+// callers stay clear of the Firestore module graph (which transitively
+// pulls `gcp-metadata` → `google-logging-utils` and crashes at module
+// load on workerd's `--disallow-code-generation-from-strings` runtime).
+export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
+export { generateId } from '../id.js';
+export { deleteField } from '../internal/write-plan.js';
+export { createMergedRegistry, createRegistry } from '../registry.js';

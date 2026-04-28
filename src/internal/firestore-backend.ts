@@ -33,6 +33,7 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from './backend.js';
 import type { BatchAdapter, FirestoreAdapter, TransactionAdapter } from './firestore-adapter.js';
 import {
@@ -42,31 +43,44 @@ import {
 } from './firestore-adapter.js';
 import type { PipelineQueryAdapter } from './pipeline-adapter.js';
 import { createPipelineQueryAdapter } from './pipeline-adapter.js';
+import type { DataPathOp } from './write-plan.js';
+import { assertSafePath, assertUpdatePayloadExclusive } from './write-plan.js';
 
 export interface FirestoreBackendOptions {
   queryMode?: QueryMode;
   scopePath?: string;
 }
 
+/** Build a `data.a.b.c` dotted path for Firestore's `update()` API. */
+function dottedDataPath(op: DataPathOp): string {
+  assertSafePath(op.path);
+  return `data.${op.path.join('.')}`;
+}
+
 /**
  * Build the patch payload Firestore expects from an `UpdatePayload`.
  *
- * - `replaceData` sets the whole `data` field at once. Tagged Firestore
- *   types from the migration sandbox are reconstructed here.
- * - `dataFields` uses Firestore's `data.<key>` dotted-path syntax.
+ * - `replaceData` sets the whole `data` field at once (full replacement).
+ *   Tagged Firestore types from the migration sandbox are reconstructed
+ *   here. Cannot be combined with `dataOps`.
+ * - `dataOps` becomes one Firestore field-update entry per terminal op,
+ *   keyed by `data.<dotted.path>`. Delete ops use `FieldValue.delete()`.
+ *   Sibling keys at every depth are preserved by Firestore's update
+ *   semantics for nested maps.
  * - `updatedAt` is always stamped with `FieldValue.serverTimestamp()`.
  * - `v` is stamped at the root when provided.
  */
 function buildFirestoreUpdate(update: UpdatePayload, db: Firestore): Record<string, unknown> {
+  assertUpdatePayloadExclusive(update);
   const out: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
   };
   if (update.replaceData) {
     out.data = deserializeFirestoreTypes(update.replaceData, db);
-  }
-  if (update.dataFields) {
-    for (const [k, v] of Object.entries(update.dataFields)) {
-      out[`data.${k}`] = v;
+  } else if (update.dataOps) {
+    for (const op of update.dataOps) {
+      const key = dottedDataPath(op);
+      out[key] = op.delete ? FieldValue.delete() : op.value;
     }
   }
   if (update.v !== undefined) {
@@ -109,8 +123,12 @@ class FirestoreTransactionBackend implements TransactionBackend {
     return this.adapter.query(filters, options);
   }
 
-  async setDoc(docId: string, record: WritableRecord): Promise<void> {
-    this.adapter.setDoc(docId, stampWritableRecord(record));
+  async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    this.adapter.setDoc(
+      docId,
+      stampWritableRecord(record),
+      mode === 'merge' ? { merge: true } : undefined,
+    );
   }
 
   async updateDoc(docId: string, update: UpdatePayload): Promise<void> {
@@ -128,8 +146,12 @@ class FirestoreBatchBackend implements BatchBackend {
     private readonly db: Firestore,
   ) {}
 
-  setDoc(docId: string, record: WritableRecord): void {
-    this.adapter.setDoc(docId, stampWritableRecord(record));
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): void {
+    this.adapter.setDoc(
+      docId,
+      stampWritableRecord(record),
+      mode === 'merge' ? { merge: true } : undefined,
+    );
   }
 
   updateDoc(docId: string, update: UpdatePayload): void {
@@ -180,8 +202,12 @@ class FirestoreBackendImpl implements StorageBackend {
 
   // --- Writes ---
 
-  setDoc(docId: string, record: WritableRecord): Promise<void> {
-    return this.adapter.setDoc(docId, stampWritableRecord(record));
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    return this.adapter.setDoc(
+      docId,
+      stampWritableRecord(record),
+      mode === 'merge' ? { merge: true } : undefined,
+    );
   }
 
   updateDoc(docId: string, update: UpdatePayload): Promise<void> {

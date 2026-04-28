@@ -38,6 +38,7 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
 import type {
@@ -82,7 +83,7 @@ export interface DurableObjectIdLike {
 export interface FiregraphStub {
   _fgGetDoc(docId: string): Promise<DORecordWire | null>;
   _fgQuery(filters: QueryFilter[], options?: QueryOptions): Promise<DORecordWire[]>;
-  _fgSetDoc(docId: string, record: WritableRecord): Promise<void>;
+  _fgSetDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void>;
   _fgUpdateDoc(docId: string, update: UpdatePayload): Promise<void>;
   _fgDeleteDoc(docId: string): Promise<void>;
   _fgBatch(ops: BatchOp[]): Promise<void>;
@@ -147,8 +148,8 @@ class DORPCBatchBackend implements BatchBackend {
 
   constructor(private readonly getStub: () => FiregraphStub) {}
 
-  setDoc(docId: string, record: WritableRecord): void {
-    this.ops.push({ kind: 'set', docId, record });
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): void {
+    this.ops.push({ kind: 'set', docId, record, mode });
   }
 
   updateDoc(docId: string, update: UpdatePayload): void {
@@ -254,8 +255,8 @@ export class DORPCBackend implements StorageBackend {
 
   // --- Writes ---
 
-  async setDoc(docId: string, record: WritableRecord): Promise<void> {
-    return this.stub._fgSetDoc(docId, record);
+  async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    return this.stub._fgSetDoc(docId, record, mode);
   }
 
   async updateDoc(docId: string, update: UpdatePayload): Promise<void> {

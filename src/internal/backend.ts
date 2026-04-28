@@ -19,6 +19,7 @@ import type {
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
+import type { DataPathOp } from './write-plan.js';
 
 /**
  * Per-record write payload — backend-agnostic. Timestamps are not present;
@@ -37,15 +38,35 @@ export interface WritableRecord {
 }
 
 /**
- * Patch shape for `updateDoc`. Captures the two patterns that exist today:
- *   - `dataFields`: shallow merge under `data` (used by `updateNode`)
- *   - `replaceData`: full data replacement (used by migration write-back)
- *   - `v`: optional schema-version stamp
+ * Write semantics for `setDoc`.
+ *
+ *   - `'merge'` — the new contract (0.12+). Existing fields not mentioned
+ *     in the new data survive; nested objects are recursively merged;
+ *     arrays are replaced as a unit. This is the default for
+ *     `putNode` / `putEdge`.
+ *   - `'replace'` — the document is replaced wholesale, dropping any
+ *     fields not present in the payload. This is the explicit escape
+ *     hatch surfaced as `replaceNode` / `replaceEdge` and used by
+ *     migration write-back.
+ */
+export type WriteMode = 'merge' | 'replace';
+
+/**
+ * Patch shape for `updateDoc`.
+ *
+ *   - `dataOps`: list of deep-path terminal ops produced by
+ *     `flattenPatch()` (one op per leaf — arrays / primitives / Firestore
+ *     special types are terminal). Used by `updateNode` / `updateEdge`.
+ *     Sibling keys at every depth are preserved.
+ *   - `replaceData`: full `data` replacement. Used only by the migration
+ *     write-back path, which has already produced a complete migrated
+ *     document.
+ *   - `v`: optional schema-version stamp.
  *
  * `updatedAt` is always set by the backend.
  */
 export interface UpdatePayload {
-  dataFields?: Record<string, unknown>;
+  dataOps?: DataPathOp[];
   replaceData?: Record<string, unknown>;
   v?: number;
 }
@@ -63,7 +84,7 @@ export interface UpdatePayload {
 export interface TransactionBackend {
   getDoc(docId: string): Promise<StoredGraphRecord | null>;
   query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]>;
-  setDoc(docId: string, record: WritableRecord): Promise<void>;
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void>;
   updateDoc(docId: string, update: UpdatePayload): Promise<void>;
   deleteDoc(docId: string): Promise<void>;
 }
@@ -72,7 +93,7 @@ export interface TransactionBackend {
  * Atomic multi-write batch.
  */
 export interface BatchBackend {
-  setDoc(docId: string, record: WritableRecord): void;
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): void;
   updateDoc(docId: string, update: UpdatePayload): void;
   deleteDoc(docId: string): void;
   commit(): Promise<void>;
@@ -96,7 +117,7 @@ export interface StorageBackend {
   query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]>;
 
   // --- Writes ---
-  setDoc(docId: string, record: WritableRecord): Promise<void>;
+  setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void>;
   updateDoc(docId: string, update: UpdatePayload): Promise<void>;
   deleteDoc(docId: string): Promise<void>;
 

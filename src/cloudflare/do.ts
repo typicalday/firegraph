@@ -71,7 +71,7 @@ import { DurableObject } from 'cloudflare:workers';
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
 import { FiregraphError } from '../errors.js';
-import type { UpdatePayload, WritableRecord } from '../internal/backend.js';
+import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
@@ -130,7 +130,7 @@ export interface DurableObjectStateLike {
  * dispatch to the correct compiler.
  */
 export type BatchOp =
-  | { kind: 'set'; docId: string; record: WritableRecord }
+  | { kind: 'set'; docId: string; record: WritableRecord; mode: WriteMode }
   | { kind: 'update'; docId: string; update: UpdatePayload }
   | { kind: 'delete'; docId: string };
 
@@ -261,8 +261,8 @@ export class FiregraphDO extends DurableObject<unknown> {
   // RPC: writes
   // ---------------------------------------------------------------------------
 
-  async _fgSetDoc(docId: string, record: WritableRecord): Promise<void> {
-    const stmt = compileDOSet(this.table, docId, record, Date.now());
+  async _fgSetDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
+    const stmt = compileDOSet(this.table, docId, record, Date.now(), mode);
     this.execRun(stmt);
   }
 
@@ -301,7 +301,7 @@ export class FiregraphDO extends DurableObject<unknown> {
     const statements: CompiledStatement[] = ops.map((op) => {
       switch (op.kind) {
         case 'set':
-          return compileDOSet(this.table, op.docId, op.record, now);
+          return compileDOSet(this.table, op.docId, op.record, now, op.mode);
         case 'update':
           return compileDOUpdate(this.table, op.docId, op.update, now);
         case 'delete':

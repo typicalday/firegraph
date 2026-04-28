@@ -31,8 +31,10 @@ import type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from '../../src/backend.js';
 import * as backend from '../../src/backend.js';
+import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   BulkOptions,
   BulkResult,
@@ -59,7 +61,7 @@ const _storageBackendShape = {
     _filters: QueryFilter[],
     _options?: QueryOptions,
   ): Promise<StoredGraphRecord[]> => [],
-  setDoc: async (_docId: string, _record: WritableRecord): Promise<void> => {
+  setDoc: async (_docId: string, _record: WritableRecord, _mode: WriteMode): Promise<void> => {
     /* noop */
   },
   updateDoc: async (_docId: string, _update: UpdatePayload): Promise<void> => {
@@ -101,7 +103,7 @@ const _transactionBackendShape = {
     _filters: QueryFilter[],
     _options?: QueryOptions,
   ): Promise<StoredGraphRecord[]> => [],
-  setDoc: async (_docId: string, _record: WritableRecord): Promise<void> => {
+  setDoc: async (_docId: string, _record: WritableRecord, _mode: WriteMode): Promise<void> => {
     /* noop */
   },
   updateDoc: async (_docId: string, _update: UpdatePayload): Promise<void> => {
@@ -113,7 +115,7 @@ const _transactionBackendShape = {
 } satisfies TransactionBackend;
 
 const _batchBackendShape = {
-  setDoc: (_docId: string, _record: WritableRecord): void => {
+  setDoc: (_docId: string, _record: WritableRecord, _mode: WriteMode): void => {
     /* noop */
   },
   updateDoc: (_docId: string, _update: UpdatePayload): void => {
@@ -139,7 +141,7 @@ const _writableRecordShape = {
 
 const _updatePayloadEmpty = {} satisfies UpdatePayload;
 const _updatePayloadFields = {
-  dataFields: { foo: 1 },
+  dataOps: flattenPatch({ foo: 1 }),
 } satisfies UpdatePayload;
 const _updatePayloadReplace = {
   replaceData: { foo: 1 },
@@ -206,9 +208,13 @@ describe('firegraph/backend — public export surface', () => {
     expect(keys).toEqual(
       [
         'CrossBackendTransactionError',
+        'DELETE_FIELD',
         'appendStorageScope',
         'createRoutingBackend',
+        'deleteField',
+        'flattenPatch',
         'isAncestorScopeUid',
+        'isDeleteSentinel',
         'parseStorageScope',
         'resolveAncestorScope',
       ].sort(),

@@ -18,9 +18,17 @@ export type {
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
+  WriteMode,
 } from './internal/backend.js';
 export type { RoutingBackendOptions, RoutingContext } from './internal/routing-backend.js';
 export { createRoutingBackend } from './internal/routing-backend.js';
+export type { DataPathOp } from './internal/write-plan.js';
+export {
+  DELETE_FIELD,
+  deleteField,
+  flattenPatch,
+  isDeleteSentinel,
+} from './internal/write-plan.js';
 export type { StorageScopeSegment } from './scope-path.js';
 export {
   appendStorageScope,

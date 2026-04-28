@@ -18,25 +18,16 @@ import { FieldValue, GeoPoint, Timestamp } from '@google-cloud/firestore';
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Sentinel key used to tag serialized Firestore types. */
-export const SERIALIZATION_TAG = '__firegraph_ser__' as const;
-
-/** Known discriminator values for tagged types. */
-const KNOWN_TYPES = new Set(['Timestamp', 'GeoPoint', 'VectorValue', 'DocumentReference']);
+// SERIALIZATION_TAG and isTaggedValue live in `internal/serialization-tag.ts`
+// so Workers-facing code (e.g. `src/internal/write-plan.ts` and the
+// `firegraph/cloudflare` bundle) can recognise tagged values without
+// pulling in `@google-cloud/firestore`. Re-exported here so callers that
+// already import from `src/serialization.ts` keep working.
+export { isTaggedValue, SERIALIZATION_TAG } from './internal/serialization-tag.js';
+import { isTaggedValue, SERIALIZATION_TAG } from './internal/serialization-tag.js';
 
 // One-time warning for DocumentReference deserialization without db
 let _docRefWarned = false;
-
-// ---------------------------------------------------------------------------
-// Type guard
-// ---------------------------------------------------------------------------
-
-/** Check if a value is a tagged serialized Firestore type. */
-export function isTaggedValue(value: unknown): boolean {
-  if (value === null || typeof value !== 'object') return false;
-  const tag = (value as Record<string, unknown>)[SERIALIZATION_TAG];
-  return typeof tag === 'string' && KNOWN_TYPES.has(tag);
-}
 
 // ---------------------------------------------------------------------------
 // Detection helpers

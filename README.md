@@ -101,15 +101,18 @@ const g = createGraphClient(db, 'graph', { registry });
 ```typescript
 const tourId = generateId();
 
-// Create or overwrite a node
+// Create or deep-merge a node (sibling keys at any depth survive)
 await g.putNode('tour', tourId, { name: 'Dolomites Classic' });
 
 // Read a node
 const node = await g.getNode(tourId);
 // → StoredGraphRecord | null
 
-// Update fields (partial merge into data)
+// Partial update (deep merge into data)
 await g.updateNode(tourId, { difficulty: 'extreme' });
+
+// Full replace — discards every prior key not in the new payload
+await g.replaceNode('tour', tourId, { name: 'Dolomites — 2026 Edition' });
 
 // Delete a node
 await g.removeNode(tourId);
@@ -118,12 +121,19 @@ await g.removeNode(tourId);
 const tours = await g.findNodes({ aType: 'tour' });
 ```
 
+**Write semantics (0.12+):** `putNode`/`putEdge` and `updateNode`/`updateEdge`
+**deep-merge** by default — sibling keys at every nesting depth survive. Use
+`replaceNode`/`replaceEdge` when you want the old "wipe and rewrite" behaviour.
+Arrays are terminal (replaced wholesale, not element-merged); `undefined`
+values are skipped; `null` is preserved verbatim; and the
+[`deleteField()`](#field-deletion) sentinel removes a field at any depth.
+
 ### Edges
 
 ```typescript
 const depId = generateId();
 
-// Create or overwrite an edge
+// Create or deep-merge an edge
 await g.putEdge('tour', tourId, 'hasDeparture', 'departure', depId, { order: 0 });
 
 // Read a specific edge
@@ -133,9 +143,32 @@ const edge = await g.getEdge(tourId, 'hasDeparture', depId);
 // Check existence
 const exists = await g.edgeExists(tourId, 'hasDeparture', depId);
 
+// Partial update (deep merge)
+await g.updateEdge(tourId, 'hasDeparture', depId, { order: 5 });
+
+// Full replace — discards every prior key not in the new payload
+await g.replaceEdge('tour', tourId, 'hasDeparture', 'departure', depId, { order: 5 });
+
 // Delete an edge
 await g.removeEdge(tourId, 'hasDeparture', depId);
 ```
+
+### Field Deletion
+
+The `deleteField()` sentinel removes a field from a stored document. It works
+across every backend (Firestore, SQLite, Cloudflare Durable Objects), so
+calling code stays portable:
+
+```typescript
+import { deleteField } from 'firegraph';
+
+await g.updateNode(tourId, {
+  meta: { deprecatedTag: deleteField() }, // removes meta.deprecatedTag
+});
+```
+
+Equivalent to Firestore's `FieldValue.delete()`, but Workers-safe and
+SQLite-aware.
 
 ### Querying Edges
 
@@ -377,8 +410,8 @@ const tour = await g.getNode(tourId);
 
 - **Version storage**: The `v` field lives on the record envelope (top-level, alongside `aType`, `data`, etc.), not inside `data`. Records without `v` are treated as version 0 (legacy data).
 - **Read path**: When a record is read and its `v` is behind the derived version (`max(toVersion)` from migrations), migrations run sequentially to bring data up to the current version.
-- **Write path**: When writing via `putNode`/`putEdge`, the record is stamped with `v` equal to the derived version automatically.
-- **`updateNode`**: Does not stamp `v` — it is a raw partial update without schema context. The next read re-triggers migration (which is idempotent).
+- **Write path**: When writing via `putNode`/`putEdge` (deep-merge) or `replaceNode`/`replaceEdge` (full overwrite), the record is stamped with `v` equal to the derived version automatically.
+- **`updateNode` / `updateEdge`**: Do not stamp `v` — they are raw partial patches without schema context. The next read re-triggers migration (which is idempotent).
 
 #### Write-Back
 

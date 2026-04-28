@@ -1,0 +1,10 @@
+ignore_patterns:
+  - '**/node_modules/**'
+  - '**/dist/**'
+  - 'coverage/**'
+  - '**/*.tsbuildinfo'
+  - 'pnpm-lock.yaml'
+  - 'editor/package-lock.json'
+  - '.firebase/**'
+  - '*.log'
+  - '*.tgz'

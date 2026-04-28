@@ -56,7 +56,7 @@ Empty/undefined `allowedIn` means allowed everywhere (backwards compatible).
 
 ## Validation Flow
 
-1. `putNode`/`putEdge` in client, transaction, or batch calls `registry.validate(aType, axbType, bType, data, scopePath)`
+1. `putNode`/`putEdge`/`replaceNode`/`replaceEdge` in client, transaction, or batch calls `registry.validate(aType, axbType, bType, data, scopePath)` (all four share the private `writeNode`/`writeEdge` paths in `src/client.ts`, so `allowedIn` and `RegistryScopeError` apply identically)
 2. If `scopePath !== undefined` and `entry.allowedIn` is non-empty, `matchScopeAny(scopePath, allowedIn)` is called
 3. Mismatch throws `RegistryScopeError`
 

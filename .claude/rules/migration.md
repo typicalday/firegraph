@@ -90,23 +90,29 @@ const client = createGraphClient(db, 'graph', {
 
 ## Version Stamping (Write Path)
 
-When writing via `putNode`/`putEdge` (client, transaction, or batch), if the registry entry has migrations, the record is stamped with `v = max(toVersion)` at the top level (alongside `aType`, `data`, etc.) before storage.
+When writing via `putNode`/`putEdge`/`replaceNode`/`replaceEdge` (client, transaction, or batch), if the registry entry has migrations, the record is stamped with `v = max(toVersion)` at the top level (alongside `aType`, `data`, etc.) before storage. Stamping is independent of merge-vs-replace mode — it applies to every full-record write that goes through `writeNode`/`writeEdge`.
 
-## `updateNode` and Version Stamping
+## `updateNode` / `updateEdge` and Version Stamping
 
-`updateNode` is a raw partial update that does not go through the registry or stamp `v`. This is intentional — `updateNode` operates on individual fields and should not require full schema context. If a record was migrated in-memory and the caller then uses `updateNode`, the `v` in Firestore stays at its previous value. The next read will re-trigger migration, which is idempotent. To avoid redundant re-migrations, use `putNode` (which stamps `v`) instead of `updateNode` when rewriting the full data payload.
+`updateNode` and `updateEdge` are raw partial updates that do not go through the registry or stamp `v`. This is intentional — partial updates operate on individual fields (now with deep-merge semantics in 0.12) and should not require full schema context. If a record was migrated in-memory and the caller then uses `updateNode`/`updateEdge`, the `v` in Firestore stays at its previous value. The next read will re-trigger migration, which is idempotent. To avoid redundant re-migrations when rewriting the full data payload, use `replaceNode` (or `replaceEdge`) — these are the explicit wipe-and-rewrite methods in 0.12 and they stamp `v`. Note: `putNode` is now a deep merge and is no longer the right tool for full-payload rewrites.
 
 ## Write-Back
 
-Write-back controls whether migrated data is persisted back to Firestore after a read-triggered migration.
+Write-back controls whether migrated data is persisted back to the underlying backend (Firestore, shared SQLite, or Cloudflare DO) after a read-triggered migration.
 
 **Two-tier resolution:** `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
 
 | Mode           | Behavior                                                               |
 | -------------- | ---------------------------------------------------------------------- |
-| `'off'`        | In-memory only; Firestore document unchanged                           |
+| `'off'`        | In-memory only; backing store unchanged                                |
 | `'eager'`      | Fire-and-forget write after read (client); inline update (transaction) |
 | `'background'` | Same as eager but errors are swallowed with a `console.warn`           |
+
+### Cross-backend caveat: SQLite-style backends enforce a JSON-safe payload guard
+
+Write-back ships the migrated record as `replaceData` through `updateDoc`. On the SQLite-style backends (`compileSet` / `compileUpdate` replaceData in `src/internal/sqlite-sql.ts`, and `compileDOSet` / `compileDOUpdate` replaceData in `src/cloudflare/sql.ts`), that payload is run through `assertJsonSafePayload` (`src/internal/sqlite-payload-guard.ts`), which rejects Firestore special types (`Timestamp`, `GeoPoint`, `VectorValue`, `DocumentReference`, `FieldValue`) and non-Date class instances with `INVALID_ARGUMENT`.
+
+If your migration body returns any of those values and the runtime backend is SQLite or DO, the write-back will throw at storage time. Project to primitives inside the migration (`ts.toMillis()`, `{lat, lng}`, plain objects, etc.) — the same constraint MIGRATION.md documents under "Cross-backend caveats". On Firestore, write-back accepts these types unchanged.
 
 ```typescript
 // Global default

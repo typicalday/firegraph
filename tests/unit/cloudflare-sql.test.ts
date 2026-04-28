@@ -25,10 +25,10 @@ import {
   rowToDORecord,
 } from '../../src/cloudflare/sql.js';
 import { DEFAULT_CORE_INDEXES } from '../../src/default-indexes.js';
+import { flattenPatch } from '../../src/internal/write-plan.js';
 import { createRegistry } from '../../src/registry.js';
 import type { GraphTimestamp } from '../../src/timestamp.js';
 import { GraphTimestampImpl } from '../../src/timestamp.js';
-
 describe('cloudflare/schema', () => {
   it('validates identifiers with the same pattern as SQL identifiers', () => {
     expect(() => validateDOTableName('firegraph')).not.toThrow();
@@ -269,7 +269,7 @@ describe('cloudflare/sql compileDOSelectByDocId', () => {
 });
 
 describe('cloudflare/sql compileDOSet', () => {
-  it('produces INSERT OR REPLACE with serialized data', () => {
+  it('produces INSERT OR REPLACE with serialized data when mode = replace', () => {
     const { sql, params } = compileDOSet(
       'firegraph',
       'abc',
@@ -283,6 +283,7 @@ describe('cloudflare/sql compileDOSet', () => {
         v: 1,
       },
       1_700_000_000_000,
+      'replace',
     );
     expect(sql).toContain('INSERT OR REPLACE INTO "firegraph"');
     expect(params).toEqual([
@@ -305,9 +306,54 @@ describe('cloudflare/sql compileDOSet', () => {
       'abc',
       { aType: 't', aUid: 'a', axbType: 'is', bType: 't', bUid: 'a', data: {} },
       0,
+      'replace',
     );
     expect(params[6]).toBe('{}');
     expect(params[7]).toBeNull();
+  });
+
+  it('emits INSERT … ON CONFLICT DO UPDATE when mode = merge', () => {
+    const { sql } = compileDOSet(
+      'firegraph',
+      'abc',
+      {
+        aType: 'tour',
+        aUid: 'abc',
+        axbType: 'is',
+        bType: 'tour',
+        bUid: 'abc',
+        data: { title: 'Everest' },
+      },
+      1_700_000_000_000,
+      'merge',
+    );
+    expect(sql).toContain('ON CONFLICT(doc_id) DO UPDATE SET');
+    expect(sql).toContain('"data" = json_set(');
+  });
+
+  it('uses COALESCE on `v` so a merge-put without `v` preserves the stored version', () => {
+    // Cross-backend parity with Firestore: stampWritableRecord omits `v`
+    // when undefined, and Firestore's `set(record, {merge: true})` then
+    // leaves the stored `v` intact. SQLite/DO must match — the COALESCE
+    // is what guarantees this. A plain `excluded.v` assignment would
+    // clobber the stored `v` to NULL on every put-without-migrations and
+    // silently break migration replay if migrations are removed and
+    // later re-added.
+    const { sql } = compileDOSet(
+      'firegraph',
+      'abc',
+      {
+        aType: 'tour',
+        aUid: 'abc',
+        axbType: 'is',
+        bType: 'tour',
+        bUid: 'abc',
+        data: { title: 'Everest' },
+      },
+      1_700_000_000_000,
+      'merge',
+    );
+    expect(sql).toContain(`"v" = COALESCE(excluded."v", "v")`);
   });
 });
 
@@ -316,13 +362,13 @@ describe('cloudflare/sql compileDOUpdate', () => {
     const { sql, params } = compileDOUpdate(
       'firegraph',
       'abc',
-      { dataFields: { status: 'active' } },
+      { dataOps: flattenPatch({ status: 'active' }) },
       1,
     );
     expect(sql).toMatch(
-      /UPDATE "firegraph" SET "data" = json_set\(COALESCE\("data", '\{\}'\), \?, \?\), "updated_at" = \? WHERE "doc_id" = \?/,
+      /UPDATE "firegraph" SET "data" = json_set\(COALESCE\("data", '\{\}'\), \?, json\(\?\)\), "updated_at" = \? WHERE "doc_id" = \?/,
     );
-    expect(params).toEqual(['$.status', 'active', 1, 'abc']);
+    expect(params).toEqual(['$.status', JSON.stringify('active'), 1, 'abc']);
   });
 
   it('emits a straight data = ? for replaceData', () => {
@@ -344,10 +390,10 @@ describe('cloudflare/sql compileDOUpdate', () => {
     expect(params).toEqual([3, 1, 'abc']);
   });
 
-  it('rejects dataFields with unsafe keys', () => {
-    expect(() => compileDOUpdate('firegraph', 'abc', { dataFields: { 'bad key': 1 } }, 0)).toThrow(
-      /not a safe JSON-path identifier/,
-    );
+  it('rejects unsafe keys in deep dataOps paths', () => {
+    expect(() =>
+      compileDOUpdate('firegraph', 'abc', { dataOps: flattenPatch({ 'bad key': 1 }) }, 0),
+    ).toThrow(/safe JSON-path identifier|safe object key/);
   });
 });
 

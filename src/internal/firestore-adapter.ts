@@ -5,7 +5,11 @@ import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 export interface FirestoreAdapter {
   collectionPath: string;
   getDoc(docId: string): Promise<StoredGraphRecord | null>;
-  setDoc(docId: string, data: Record<string, unknown>): Promise<void>;
+  setDoc(
+    docId: string,
+    data: Record<string, unknown>,
+    options?: { merge?: boolean },
+  ): Promise<void>;
   updateDoc(docId: string, data: Record<string, unknown>): Promise<void>;
   deleteDoc(docId: string): Promise<void>;
   query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]>;
@@ -23,8 +27,16 @@ export function createFirestoreAdapter(db: Firestore, collectionPath: string): F
       return snap.data() as StoredGraphRecord;
     },
 
-    async setDoc(docId: string, data: Record<string, unknown>): Promise<void> {
-      await collectionRef.doc(docId).set(data);
+    async setDoc(
+      docId: string,
+      data: Record<string, unknown>,
+      options?: { merge?: boolean },
+    ): Promise<void> {
+      if (options?.merge) {
+        await collectionRef.doc(docId).set(data, { merge: true });
+      } else {
+        await collectionRef.doc(docId).set(data);
+      }
     },
 
     async updateDoc(docId: string, data: Record<string, unknown>): Promise<void> {
@@ -54,7 +66,7 @@ export function createFirestoreAdapter(db: Firestore, collectionPath: string): F
 
 export interface TransactionAdapter {
   getDoc(docId: string): Promise<StoredGraphRecord | null>;
-  setDoc(docId: string, data: Record<string, unknown>): void;
+  setDoc(docId: string, data: Record<string, unknown>, options?: { merge?: boolean }): void;
   updateDoc(docId: string, data: Record<string, unknown>): void;
   deleteDoc(docId: string): void;
   query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]>;
@@ -74,8 +86,12 @@ export function createTransactionAdapter(
       return snap.data() as StoredGraphRecord;
     },
 
-    setDoc(docId: string, data: Record<string, unknown>): void {
-      tx.set(collectionRef.doc(docId), data);
+    setDoc(docId: string, data: Record<string, unknown>, options?: { merge?: boolean }): void {
+      if (options?.merge) {
+        tx.set(collectionRef.doc(docId), data, { merge: true });
+      } else {
+        tx.set(collectionRef.doc(docId), data);
+      }
     },
 
     updateDoc(docId: string, data: Record<string, unknown>): void {
@@ -104,7 +120,7 @@ export function createTransactionAdapter(
 }
 
 export interface BatchAdapter {
-  setDoc(docId: string, data: Record<string, unknown>): void;
+  setDoc(docId: string, data: Record<string, unknown>, options?: { merge?: boolean }): void;
   updateDoc(docId: string, data: Record<string, unknown>): void;
   deleteDoc(docId: string): void;
   commit(): Promise<void>;
@@ -115,8 +131,12 @@ export function createBatchAdapter(db: Firestore, collectionPath: string): Batch
   const batch = db.batch();
 
   return {
-    setDoc(docId: string, data: Record<string, unknown>): void {
-      batch.set(collectionRef.doc(docId), data);
+    setDoc(docId: string, data: Record<string, unknown>, options?: { merge?: boolean }): void {
+      if (options?.merge) {
+        batch.set(collectionRef.doc(docId), data, { merge: true });
+      } else {
+        batch.set(collectionRef.doc(docId), data);
+      }
     },
 
     updateDoc(docId: string, data: Record<string, unknown>): void {

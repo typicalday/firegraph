@@ -438,10 +438,10 @@ This is a **lazy migration** strategy. Records are migrated when accessed, not a
 
 - **No downtime**: Deploy a new schema version and migrations immediately. Old records upgrade transparently on next read.
 - **Gradual rollout**: Only actively-accessed records incur migration cost. Cold data stays untouched until needed.
-- **Write-back**: Optionally persist migrated data back to Firestore (`migrationWriteBack: 'eager'` or `'background'`). Without write-back, migration runs on every read until the record is rewritten via `putNode`/`putEdge`.
+- **Write-back**: Optionally persist migrated data back to Firestore (`migrationWriteBack: 'eager'` or `'background'`). Without write-back, migration runs on every read until the record is rewritten via `replaceNode`/`replaceEdge` (the wipe-and-rewrite path that re-stamps `v`).
 - **Idempotent by design**: Migration functions should be idempotent. If a record is read multiple times before write-back completes, each read produces the same result.
 
-For large-scale one-time migrations (restructuring millions of records), lazy migration avoids the need for batch scripts. But if you need every record upgraded immediately (for example, before a query that depends on the new field), run a batch script that reads and rewrites each record via `putNode` — this stamps the current version and persists the migrated data.
+For large-scale one-time migrations (restructuring millions of records), lazy migration avoids the need for batch scripts. But if you need every record upgraded immediately (for example, before a query that depends on the new field), run a batch script that reads and rewrites each record via `replaceNode` / `replaceEdge` — these are the wipe-and-rewrite methods (0.12+) that stamp the current version and persist the migrated data. `putNode` / `putEdge` now deep-merge, so they will not overwrite removed fields.
 
 ### Index Management
 

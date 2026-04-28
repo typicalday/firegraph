@@ -1,6 +1,7 @@
 import { computeEdgeDocId, computeNodeDocId } from './docid.js';
 import type { BatchBackend, WritableRecord } from './internal/backend.js';
 import { NODE_RELATION } from './internal/constants.js';
+import { assertNoDeleteSentinels, flattenPatch } from './internal/write-plan.js';
 import type { GraphBatch, GraphRegistry } from './types.js';
 
 function buildWritableNodeRecord(
@@ -30,6 +31,42 @@ export class GraphBatchImpl implements GraphBatch {
   ) {}
 
   async putNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
+    this.writeNode(aType, uid, data, 'merge');
+  }
+
+  async putEdge(
+    aType: string,
+    aUid: string,
+    axbType: string,
+    bType: string,
+    bUid: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    this.writeEdge(aType, aUid, axbType, bType, bUid, data, 'merge');
+  }
+
+  async replaceNode(aType: string, uid: string, data: Record<string, unknown>): Promise<void> {
+    this.writeNode(aType, uid, data, 'replace');
+  }
+
+  async replaceEdge(
+    aType: string,
+    aUid: string,
+    axbType: string,
+    bType: string,
+    bUid: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    this.writeEdge(aType, aUid, axbType, bType, bUid, data, 'replace');
+  }
+
+  private writeNode(
+    aType: string,
+    uid: string,
+    data: Record<string, unknown>,
+    mode: 'merge' | 'replace',
+  ): void {
+    assertNoDeleteSentinels(data, mode === 'replace' ? 'replaceNode' : 'putNode');
     if (this.registry) {
       this.registry.validate(aType, NODE_RELATION, aType, data, this.scopePath);
     }
@@ -41,17 +78,19 @@ export class GraphBatchImpl implements GraphBatch {
         record.v = entry.schemaVersion;
       }
     }
-    this.backend.setDoc(docId, record);
+    this.backend.setDoc(docId, record, mode);
   }
 
-  async putEdge(
+  private writeEdge(
     aType: string,
     aUid: string,
     axbType: string,
     bType: string,
     bUid: string,
     data: Record<string, unknown>,
-  ): Promise<void> {
+    mode: 'merge' | 'replace',
+  ): void {
+    assertNoDeleteSentinels(data, mode === 'replace' ? 'replaceEdge' : 'putEdge');
     if (this.registry) {
       this.registry.validate(aType, axbType, bType, data, this.scopePath);
     }
@@ -63,12 +102,22 @@ export class GraphBatchImpl implements GraphBatch {
         record.v = entry.schemaVersion;
       }
     }
-    this.backend.setDoc(docId, record);
+    this.backend.setDoc(docId, record, mode);
   }
 
   async updateNode(uid: string, data: Record<string, unknown>): Promise<void> {
     const docId = computeNodeDocId(uid);
-    this.backend.updateDoc(docId, { dataFields: data });
+    this.backend.updateDoc(docId, { dataOps: flattenPatch(data) });
+  }
+
+  async updateEdge(
+    aUid: string,
+    axbType: string,
+    bUid: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const docId = computeEdgeDocId(aUid, axbType, bUid);
+    this.backend.updateDoc(docId, { dataOps: flattenPatch(data) });
   }
 
   async removeNode(uid: string): Promise<void> {

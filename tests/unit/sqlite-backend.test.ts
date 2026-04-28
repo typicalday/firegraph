@@ -17,8 +17,8 @@ import type { StorageBackend } from '../../src/internal/backend.js';
 import { createSqliteBackend } from '../../src/internal/sqlite-backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
 import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
+import { flattenPatch } from '../../src/internal/write-plan.js';
 import type { GraphClient } from '../../src/types.js';
-
 const TABLE = 'firegraph_test';
 
 function makeExecutor(db: BetterSqliteDb): SqliteExecutor {
@@ -84,14 +84,18 @@ describe('SqliteBackend (raw)', () => {
 
   it('creates and reads back a node', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'Tahoe', stops: 5 },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'Tahoe', stops: 5 },
+      },
+      'replace',
+    );
 
     const record = await backend.getDoc(uid);
     expect(record).not.toBeNull();
@@ -104,16 +108,20 @@ describe('SqliteBackend (raw)', () => {
 
   it('updates a node via shallow data field merge', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'Tahoe', stops: 5 },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'Tahoe', stops: 5 },
+      },
+      'replace',
+    );
 
-    await backend.updateDoc(uid, { dataFields: { stops: 7, status: 'active' } });
+    await backend.updateDoc(uid, { dataOps: flattenPatch({ stops: 7, status: 'active' }) });
 
     const record = await backend.getDoc(uid);
     expect(record!.data).toEqual({ name: 'Tahoe', stops: 7, status: 'active' });
@@ -124,21 +132,25 @@ describe('SqliteBackend (raw)', () => {
     // No row written — updateDoc must throw instead of silently no-op'ing
     // (the SQLite default). Implementation uses UPDATE … RETURNING to detect
     // zero-row updates in a single round-trip.
-    await expect(backend.updateDoc(uid, { dataFields: { name: 'X' } })).rejects.toThrow(
+    await expect(backend.updateDoc(uid, { dataOps: flattenPatch({ name: 'X' }) })).rejects.toThrow(
       /NOT_FOUND|no document found/,
     );
   });
 
   it('replaces data wholesale with replaceData', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'Tahoe', stops: 5, oldField: 'gone' },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'Tahoe', stops: 5, oldField: 'gone' },
+      },
+      'replace',
+    );
 
     await backend.updateDoc(uid, {
       replaceData: { name: 'Yosemite', stops: 3 },
@@ -152,14 +164,18 @@ describe('SqliteBackend (raw)', () => {
 
   it('deletes a doc', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: {},
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: {},
+      },
+      'replace',
+    );
 
     await backend.deleteDoc(uid);
     expect(await backend.getDoc(uid)).toBeNull();
@@ -168,22 +184,30 @@ describe('SqliteBackend (raw)', () => {
   it('queries by built-in field equality', async () => {
     const a = generateId();
     const b = generateId();
-    await backend.setDoc(a, {
-      aType: 'tour',
-      aUid: a,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: a,
-      data: {},
-    });
-    await backend.setDoc(b, {
-      aType: 'departure',
-      aUid: b,
-      axbType: 'is',
-      bType: 'departure',
-      bUid: b,
-      data: {},
-    });
+    await backend.setDoc(
+      a,
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: a,
+        data: {},
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      b,
+      {
+        aType: 'departure',
+        aUid: b,
+        axbType: 'is',
+        bType: 'departure',
+        bUid: b,
+        data: {},
+      },
+      'replace',
+    );
 
     const tours = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -196,22 +220,30 @@ describe('SqliteBackend (raw)', () => {
   it('queries by data.* JSON field', async () => {
     const a = generateId();
     const b = generateId();
-    await backend.setDoc(a, {
-      aType: 'tour',
-      aUid: a,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: a,
-      data: { status: 'active' },
-    });
-    await backend.setDoc(b, {
-      aType: 'tour',
-      aUid: b,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: b,
-      data: { status: 'archived' },
-    });
+    await backend.setDoc(
+      a,
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: a,
+        data: { status: 'active' },
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      b,
+      {
+        aType: 'tour',
+        aUid: b,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: b,
+        data: { status: 'archived' },
+      },
+      'replace',
+    );
 
     const active = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -224,14 +256,18 @@ describe('SqliteBackend (raw)', () => {
   it('supports comparison operators on data fields', async () => {
     for (let i = 0; i < 5; i++) {
       const uid = generateId();
-      await backend.setDoc(uid, {
-        aType: 'tour',
-        aUid: uid,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: uid,
-        data: { stops: i + 1 },
-      });
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { stops: i + 1 },
+        },
+        'replace',
+      );
     }
     const ge3 = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -243,14 +279,18 @@ describe('SqliteBackend (raw)', () => {
   it('supports IN and NOT-IN on built-in fields', async () => {
     const ids = [generateId(), generateId(), generateId()];
     for (const uid of ids) {
-      await backend.setDoc(uid, {
-        aType: 'tour',
-        aUid: uid,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: uid,
-        data: {},
-      });
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: {},
+        },
+        'replace',
+      );
     }
     const some = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -268,22 +308,30 @@ describe('SqliteBackend (raw)', () => {
   it('supports array-contains on data fields', async () => {
     const a = generateId();
     const b = generateId();
-    await backend.setDoc(a, {
-      aType: 'tour',
-      aUid: a,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: a,
-      data: { tags: ['scenic', 'dog-friendly'] },
-    });
-    await backend.setDoc(b, {
-      aType: 'tour',
-      aUid: b,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: b,
-      data: { tags: ['urban'] },
-    });
+    await backend.setDoc(
+      a,
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: a,
+        data: { tags: ['scenic', 'dog-friendly'] },
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      b,
+      {
+        aType: 'tour',
+        aUid: b,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: b,
+        data: { tags: ['urban'] },
+      },
+      'replace',
+    );
 
     const dog = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -296,14 +344,18 @@ describe('SqliteBackend (raw)', () => {
   it('supports orderBy and limit', async () => {
     for (let i = 0; i < 5; i++) {
       const uid = generateId();
-      await backend.setDoc(uid, {
-        aType: 'tour',
-        aUid: uid,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: uid,
-        data: { rank: 4 - i },
-      });
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { rank: 4 - i },
+        },
+        'replace',
+      );
     }
     const ordered = await backend.query([{ field: 'aType', op: '==', value: 'tour' }], {
       orderBy: { field: 'data.rank', direction: 'asc' },
@@ -321,14 +373,18 @@ describe('SqliteBackend (raw)', () => {
     // need the original creation time preserved should use `updateDoc` (which
     // only touches `updated_at`).
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'first' },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'first' },
+      },
+      'replace',
+    );
     const before = await backend.getDoc(uid);
 
     // Sleep a hair so Date.now() advances past the previous stamp. better-sqlite3
@@ -336,14 +392,18 @@ describe('SqliteBackend (raw)', () => {
     // single ms is enough on every platform.
     await new Promise((r) => setTimeout(r, 5));
 
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'second' },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'second' },
+      },
+      'replace',
+    );
     const after = await backend.getDoc(uid);
 
     expect(after!.data.name).toBe('second');
@@ -357,17 +417,21 @@ describe('SqliteBackend (raw)', () => {
     // ("updatedAt changes on update but createdAt does not"): the SQLite
     // `compileUpdate` path must not touch the `created_at` column.
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { name: 'first' },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'first' },
+      },
+      'replace',
+    );
     const before = await backend.getDoc(uid);
     await new Promise((r) => setTimeout(r, 5));
-    await backend.updateDoc(uid, { dataFields: { name: 'second' } });
+    await backend.updateDoc(uid, { dataOps: flattenPatch({ name: 'second' }) });
     const after = await backend.getDoc(uid);
 
     expect(after!.createdAt.toMillis()).toBe(before!.createdAt.toMillis());
@@ -380,15 +444,19 @@ describe('SqliteBackend (raw)', () => {
     // default. Some callers configure better-sqlite3 with `safeIntegers(true)`
     // to surface bigint always — we must round-trip those without crashing.
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: {},
-      v: 7,
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: {},
+        v: 7,
+      },
+      'replace',
+    );
 
     // Read row via raw SQL with safeIntegers turned ON for this statement so
     // the timestamps and `v` come back as bigint.
@@ -415,14 +483,18 @@ describe('SqliteBackend (raw)', () => {
   it('!= operator excludes matching rows', async () => {
     const ids = [generateId(), generateId(), generateId()];
     for (const uid of ids) {
-      await backend.setDoc(uid, {
-        aType: 'tour',
-        aUid: uid,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: uid,
-        data: { status: uid === ids[0] ? 'archived' : 'active' },
-      });
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { status: uid === ids[0] ? 'archived' : 'active' },
+        },
+        'replace',
+      );
     }
     const notArchived = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -436,30 +508,42 @@ describe('SqliteBackend (raw)', () => {
     const a = generateId();
     const b = generateId();
     const c = generateId();
-    await backend.setDoc(a, {
-      aType: 'tour',
-      aUid: a,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: a,
-      data: { tags: ['scenic', 'dog-friendly'] },
-    });
-    await backend.setDoc(b, {
-      aType: 'tour',
-      aUid: b,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: b,
-      data: { tags: ['urban'] },
-    });
-    await backend.setDoc(c, {
-      aType: 'tour',
-      aUid: c,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: c,
-      data: { tags: ['gravel', 'scenic'] },
-    });
+    await backend.setDoc(
+      a,
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: a,
+        data: { tags: ['scenic', 'dog-friendly'] },
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      b,
+      {
+        aType: 'tour',
+        aUid: b,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: b,
+        data: { tags: ['urban'] },
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      c,
+      {
+        aType: 'tour',
+        aUid: c,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: c,
+        data: { tags: ['gravel', 'scenic'] },
+      },
+      'replace',
+    );
 
     const hits = await backend.query([
       { field: 'aType', op: '==', value: 'tour' },
@@ -521,22 +605,30 @@ describe('SqliteBackend subgraphs', () => {
     const rootUid = generateId();
     const subUid = generateId();
 
-    await backend.setDoc(rootUid, {
-      aType: 'tour',
-      aUid: rootUid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: rootUid,
-      data: { where: 'root' },
-    });
-    await sub.setDoc(subUid, {
-      aType: 'tour',
-      aUid: subUid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: subUid,
-      data: { where: 'sub' },
-    });
+    await backend.setDoc(
+      rootUid,
+      {
+        aType: 'tour',
+        aUid: rootUid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: rootUid,
+        data: { where: 'root' },
+      },
+      'replace',
+    );
+    await sub.setDoc(
+      subUid,
+      {
+        aType: 'tour',
+        aUid: subUid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: subUid,
+        data: { where: 'sub' },
+      },
+      'replace',
+    );
 
     const rootHits = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
     const subHits = await sub.query([{ field: 'aType', op: '==', value: 'tour' }]);
@@ -591,14 +683,18 @@ describe('SqliteBackend subgraphs', () => {
     expect(annotations.scopePath).toBe('memories/context/annotations');
 
     const leafUid = generateId();
-    await annotations.setDoc(leafUid, {
-      aType: 'annotation',
-      aUid: leafUid,
-      axbType: 'is',
-      bType: 'annotation',
-      bUid: leafUid,
-      data: { body: 'deep!' },
-    });
+    await annotations.setDoc(
+      leafUid,
+      {
+        aType: 'annotation',
+        aUid: leafUid,
+        axbType: 'is',
+        bType: 'annotation',
+        bUid: leafUid,
+        data: { body: 'deep!' },
+      },
+      'replace',
+    );
 
     // Reachable through the full 3-level chain.
     const fromDeep = await annotations.getDoc(leafUid);
@@ -682,22 +778,30 @@ describe('SqliteBackend subgraphs', () => {
     const edgeBfrom = generateId();
     const edgeBto = generateId();
 
-    await memA.setDoc('edge-a', {
-      aType: 'note',
-      aUid: edgeAfrom,
-      axbType: 'mentions',
-      bType: 'tag',
-      bUid: edgeAto,
-      data: { from: 'a' },
-    });
-    await memB.setDoc('edge-b', {
-      aType: 'note',
-      aUid: edgeBfrom,
-      axbType: 'mentions',
-      bType: 'tag',
-      bUid: edgeBto,
-      data: { from: 'b' },
-    });
+    await memA.setDoc(
+      'edge-a',
+      {
+        aType: 'note',
+        aUid: edgeAfrom,
+        axbType: 'mentions',
+        bType: 'tag',
+        bUid: edgeAto,
+        data: { from: 'a' },
+      },
+      'replace',
+    );
+    await memB.setDoc(
+      'edge-b',
+      {
+        aType: 'note',
+        aUid: edgeBfrom,
+        axbType: 'mentions',
+        bType: 'tag',
+        bUid: edgeBto,
+        data: { from: 'b' },
+      },
+      'replace',
+    );
 
     const acrossParents = await backend.findEdgesGlobal!({ axbType: 'mentions' }, 'memories');
     expect(acrossParents).toHaveLength(2);
@@ -866,22 +970,30 @@ describe('SqliteBackend transactions & batches', () => {
     const a = generateId();
     const b = generateId();
     await backend.runTransaction(async (tx) => {
-      await tx.setDoc(a, {
-        aType: 'tour',
-        aUid: a,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: a,
-        data: {},
-      });
-      await tx.setDoc(b, {
-        aType: 'tour',
-        aUid: b,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: b,
-        data: {},
-      });
+      await tx.setDoc(
+        a,
+        {
+          aType: 'tour',
+          aUid: a,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: a,
+          data: {},
+        },
+        'replace',
+      );
+      await tx.setDoc(
+        b,
+        {
+          aType: 'tour',
+          aUid: b,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: b,
+          data: {},
+        },
+        'replace',
+      );
     });
     expect(await backend.getDoc(a)).not.toBeNull();
     expect(await backend.getDoc(b)).not.toBeNull();
@@ -891,14 +1003,18 @@ describe('SqliteBackend transactions & batches', () => {
     const a = generateId();
     await expect(
       backend.runTransaction(async (tx) => {
-        await tx.setDoc(a, {
-          aType: 'tour',
-          aUid: a,
-          axbType: 'is',
-          bType: 'tour',
-          bUid: a,
-          data: {},
-        });
+        await tx.setDoc(
+          a,
+          {
+            aType: 'tour',
+            aUid: a,
+            axbType: 'is',
+            bType: 'tour',
+            bUid: a,
+            data: {},
+          },
+          'replace',
+        );
         throw new Error('rollback');
       }),
     ).rejects.toThrow('rollback');
@@ -912,28 +1028,36 @@ describe('SqliteBackend transactions & batches', () => {
     // compile time. Without C5's fix the rejection would be swallowed and
     // the transaction would silently commit any prior writes.
     const a = generateId();
-    await backend.setDoc(a, {
-      aType: 'tour',
-      aUid: a,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: a,
-      data: { name: 'before' },
-    });
+    await backend.setDoc(
+      a,
+      {
+        aType: 'tour',
+        aUid: a,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: a,
+        data: { name: 'before' },
+      },
+      'replace',
+    );
 
     await expect(
       backend.runTransaction(async (tx) => {
-        await tx.setDoc(generateId(), {
-          aType: 'tour',
-          aUid: generateId(),
-          axbType: 'is',
-          bType: 'tour',
-          bUid: generateId(),
-          data: {},
-        });
-        await tx.updateDoc(a, { dataFields: { 'a.b': 1 } });
+        await tx.setDoc(
+          generateId(),
+          {
+            aType: 'tour',
+            aUid: generateId(),
+            axbType: 'is',
+            bType: 'tour',
+            bUid: generateId(),
+            data: {},
+          },
+          'replace',
+        );
+        await tx.updateDoc(a, { dataOps: flattenPatch({ 'a.b': 1 }) });
       }),
-    ).rejects.toThrow(/reserved character/);
+    ).rejects.toThrow(/unsafe object key/);
 
     // The first write should have been rolled back too.
     const recovered = await backend.getDoc(a);
@@ -944,14 +1068,18 @@ describe('SqliteBackend transactions & batches', () => {
     const ids = [generateId(), generateId(), generateId()];
     const batch = backend.createBatch();
     for (const uid of ids) {
-      batch.setDoc(uid, {
-        aType: 'tour',
-        aUid: uid,
-        axbType: 'is',
-        bType: 'tour',
-        bUid: uid,
-        data: {},
-      });
+      batch.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: {},
+        },
+        'replace',
+      );
     }
     await batch.commit();
 
@@ -982,22 +1110,30 @@ describe('SqliteBackend findEdgesGlobal', () => {
     const subA = generateId();
     const subB = generateId();
 
-    await backend.setDoc('root-edge', {
-      aType: 'tour',
-      aUid: rootA,
-      axbType: 'hasDeparture',
-      bType: 'departure',
-      bUid: rootB,
-      data: {},
-    });
-    await sub.setDoc('sub-edge', {
-      aType: 'tour',
-      aUid: subA,
-      axbType: 'hasDeparture',
-      bType: 'departure',
-      bUid: subB,
-      data: {},
-    });
+    await backend.setDoc(
+      'root-edge',
+      {
+        aType: 'tour',
+        aUid: rootA,
+        axbType: 'hasDeparture',
+        bType: 'departure',
+        bUid: rootB,
+        data: {},
+      },
+      'replace',
+    );
+    await sub.setDoc(
+      'sub-edge',
+      {
+        aType: 'tour',
+        aUid: subA,
+        axbType: 'hasDeparture',
+        bType: 'departure',
+        bUid: subB,
+        data: {},
+      },
+      'replace',
+    );
 
     // No collectionName → match root rows only (parity with Firestore's
     // implicit `collectionGroup(parentCollectionName)` default).
@@ -1016,22 +1152,30 @@ describe('SqliteBackend findEdgesGlobal', () => {
     const otherA = generateId();
     const otherB = generateId();
 
-    await sub.setDoc('mem-edge', {
-      aType: 'tour',
-      aUid: subA,
-      axbType: 'hasDeparture',
-      bType: 'departure',
-      bUid: subB,
-      data: {},
-    });
-    await otherSub.setDoc('ctx-edge', {
-      aType: 'tour',
-      aUid: otherA,
-      axbType: 'hasDeparture',
-      bType: 'departure',
-      bUid: otherB,
-      data: {},
-    });
+    await sub.setDoc(
+      'mem-edge',
+      {
+        aType: 'tour',
+        aUid: subA,
+        axbType: 'hasDeparture',
+        bType: 'departure',
+        bUid: subB,
+        data: {},
+      },
+      'replace',
+    );
+    await otherSub.setDoc(
+      'ctx-edge',
+      {
+        aType: 'tour',
+        aUid: otherA,
+        axbType: 'hasDeparture',
+        bType: 'departure',
+        bUid: otherB,
+        data: {},
+      },
+      'replace',
+    );
 
     const memories = await backend.findEdgesGlobal!({ axbType: 'hasDeparture' }, 'memories');
     expect(memories).toHaveLength(1);
@@ -1058,18 +1202,24 @@ describe('SqliteBackend updateDoc field-name validation', () => {
     ['empty key', ''],
   ])('rejects %s in dataFields at compile time', async (_label, key) => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { keep: 'me' },
-    });
-
-    await expect(backend.updateDoc(uid, { dataFields: { [key]: 1 } })).rejects.toThrow(
-      /reserved character|empty/,
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { keep: 'me' },
+      },
+      'replace',
     );
+
+    // `flattenPatch` validates path segments synchronously, so the throw
+    // happens at call time — before any storage method is reached. The
+    // resulting `updateDoc` is therefore never dispatched and the row is
+    // untouched.
+    expect(() => flattenPatch({ [key]: 1 })).toThrow(/unsafe object key/);
 
     // Original data must be untouched.
     const record = await backend.getDoc(uid);
@@ -1471,36 +1621,193 @@ describe('SqliteBackend bindValue rejects Firestore special types', () => {
     });
   });
 
-  it('throws INVALID_QUERY when an updateDoc dataField holds a Firestore type', async () => {
+  it('throws INVALID_ARGUMENT when an updateDoc dataField holds a Firestore type', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { keep: 'me' },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { keep: 'me' },
+      },
+      'replace',
+    );
 
+    // The reject code moved from `INVALID_QUERY` (old SQL compiler) to
+    // `INVALID_ARGUMENT` (new write-plan path) when the deep-merge refactor
+    // routed JSON binding through `jsonBind`.
     await expect(
-      backend.updateDoc(uid, { dataFields: { startedAt: new Timestamp(1700000000, 0) } }),
-    ).rejects.toMatchObject({ code: 'INVALID_QUERY' });
+      backend.updateDoc(uid, {
+        dataOps: flattenPatch({ startedAt: new Timestamp(1700000000, 0) }),
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
 
     // Original data must be untouched.
     const record = await backend.getDoc(uid);
     expect(record!.data).toEqual({ keep: 'me' });
   });
 
+  it('throws INVALID_ARGUMENT on a first-insert (compileSet) carrying a Firestore type', async () => {
+    // Eager validation in compileSet — the value would be silently corrupted
+    // by raw JSON.stringify on the INSERT path of merge mode, so we reject
+    // up front rather than at ON CONFLICT.
+    const uid = generateId();
+    await expect(
+      backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { startedAt: new Timestamp(1700000000, 0) },
+        },
+        'merge',
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    // Replace mode also runs the eager guard.
+    await expect(
+      backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { startedAt: new Timestamp(1700000000, 0) },
+        },
+        'replace',
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    expect(await backend.getDoc(uid)).toBeNull();
+  });
+
+  it('throws INVALID_ARGUMENT when migration write-back replaceData carries a Firestore type', async () => {
+    // Mirrors the migration write-back path: read a record, run a migration
+    // that promotes a millis number to a Timestamp, send the result back via
+    // replaceData. SQLite has no Timestamp class, so the guard fires loudly
+    // instead of corrupting the value.
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'Tahoe' },
+      },
+      'replace',
+    );
+
+    await expect(
+      backend.updateDoc(uid, {
+        replaceData: { name: 'Tahoe', startedAt: new Timestamp(1700000000, 0) },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+
+    // Original record untouched.
+    const record = await backend.getDoc(uid);
+    expect(record!.data).toEqual({ name: 'Tahoe' });
+  });
+
+  it('merge-mode setDoc with v=undefined preserves a previously-stamped v', async () => {
+    // Cross-backend parity: Firestore's `set(record, {merge: true})` omits
+    // `v` from the payload when undefined (via stampWritableRecord) and
+    // leaves the stored `v` intact. SQLite must match — the COALESCE on
+    // the ON CONFLICT clause is what guarantees this. Without it,
+    // `excluded.v` would be NULL and clobber the prior `v`, breaking
+    // migration replay if a registry temporarily drops migrations and
+    // re-adds them later.
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'A' },
+        v: 3,
+      },
+      'replace',
+    );
+    // Second put with no `v` (registry currently has no migrations for this
+    // type). v must NOT be wiped to null.
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { kept: 'yes' },
+      },
+      'merge',
+    );
+    const record = await backend.getDoc(uid);
+    expect(record!.v).toBe(3);
+    expect(record!.data).toEqual({ name: 'A', kept: 'yes' });
+  });
+
+  it('merge-mode setDoc with v=N updates the stored v', async () => {
+    // Companion to the COALESCE preservation test: when the incoming record
+    // DOES carry a v, that's the new stamped version and must be applied.
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'A' },
+        v: 1,
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { kept: 'yes' },
+        v: 2,
+      },
+      'merge',
+    );
+    const record = await backend.getDoc(uid);
+    expect(record!.v).toBe(2);
+  });
+
   it('still accepts plain JSON-shaped objects (precaution against over-rejection)', async () => {
     const uid = generateId();
-    await backend.setDoc(uid, {
-      aType: 'tour',
-      aUid: uid,
-      axbType: 'is',
-      bType: 'tour',
-      bUid: uid,
-      data: { tags: ['a', 'b'] },
-    });
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { tags: ['a', 'b'] },
+      },
+      'replace',
+    );
     // Filter value is a plain object — must NOT throw.
     await expect(
       backend.query([{ field: 'data.tags', op: 'array-contains', value: 'a' }]),
