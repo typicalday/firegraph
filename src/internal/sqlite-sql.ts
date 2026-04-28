@@ -510,6 +510,9 @@ export function compileUpdate(
     setClauses.push(`"data" = ?`);
     params.push(JSON.stringify(update.replaceData));
   } else if (update.dataOps && update.dataOps.length > 0) {
+    for (const op of update.dataOps) {
+      if (!op.delete) assertJsonSafePayload(op.value, SQLITE_BACKEND_LABEL);
+    }
     const expr = compileDataOpsExpr(update.dataOps, `COALESCE("data", '{}')`, params);
     if (expr !== null) {
       setClauses.push(`"data" = ${expr}`);
