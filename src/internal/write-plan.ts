@@ -344,8 +344,7 @@ function walk(node: unknown, path: string[], out: DataPathOp[]): void {
   }
   for (const key of keys) {
     if (key === SERIALIZATION_TAG) {
-      const where =
-        path.length === 0 ? '<root>' : path.map((p) => JSON.stringify(p)).join(' > ');
+      const where = path.length === 0 ? '<root>' : path.map((p) => JSON.stringify(p)).join(' > ');
       throw new Error(
         `firegraph: update payload contains a literal \`${SERIALIZATION_TAG}\` key at ` +
           `${where}. That key is reserved for firegraph's serialization envelope and ` +
@@ -356,4 +355,3 @@ function walk(node: unknown, path: string[], out: DataPathOp[]): void {
     walk(obj[key], [...path, key], out);
   }
 }
-

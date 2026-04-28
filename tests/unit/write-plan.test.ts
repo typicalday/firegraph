@@ -284,4 +284,3 @@ describe('assertNoDeleteSentinels', () => {
     expect(() => assertNoDeleteSentinels({ when: new Date() }, 'replaceNode')).not.toThrow();
   });
 });
-
