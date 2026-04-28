@@ -98,15 +98,21 @@ When writing via `putNode`/`putEdge`/`replaceNode`/`replaceEdge` (client, transa
 
 ## Write-Back
 
-Write-back controls whether migrated data is persisted back to Firestore after a read-triggered migration.
+Write-back controls whether migrated data is persisted back to the underlying backend (Firestore, shared SQLite, or Cloudflare DO) after a read-triggered migration.
 
 **Two-tier resolution:** `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
 
 | Mode           | Behavior                                                               |
 | -------------- | ---------------------------------------------------------------------- |
-| `'off'`        | In-memory only; Firestore document unchanged                           |
+| `'off'`        | In-memory only; backing store unchanged                                |
 | `'eager'`      | Fire-and-forget write after read (client); inline update (transaction) |
 | `'background'` | Same as eager but errors are swallowed with a `console.warn`           |
+
+### Cross-backend caveat: SQLite-style backends enforce a JSON-safe payload guard
+
+Write-back ships the migrated record as `replaceData` through `updateDoc`. On the SQLite-style backends (`compileSet` / `compileUpdate` replaceData in `src/internal/sqlite-sql.ts`, and `compileDOSet` / `compileDOUpdate` replaceData in `src/cloudflare/sql.ts`), that payload is run through `assertJsonSafePayload` (`src/internal/sqlite-payload-guard.ts`), which rejects Firestore special types (`Timestamp`, `GeoPoint`, `VectorValue`, `DocumentReference`, `FieldValue`) and non-Date class instances with `INVALID_ARGUMENT`.
+
+If your migration body returns any of those values and the runtime backend is SQLite or DO, the write-back will throw at storage time. Project to primitives inside the migration (`ts.toMillis()`, `{lat, lng}`, plain objects, etc.) — the same constraint MIGRATION.md documents under "Cross-backend caveats". On Firestore, write-back accepts these types unchanged.
 
 ```typescript
 // Global default
