@@ -68,10 +68,18 @@ function walk(node: unknown, path: readonly string[], label: string): void {
     );
   }
   const t = typeof node;
-  if (t === 'symbol' || t === 'function' || t === 'bigint') {
+  if (t === 'symbol' || t === 'function') {
     throw new FiregraphError(
       `${label} backend cannot persist a value of type ${t}. ` +
         `JSON.stringify drops it silently. Path: ${formatPath(path)}.`,
+      'INVALID_ARGUMENT',
+    );
+  }
+  if (t === 'bigint') {
+    throw new FiregraphError(
+      `${label} backend cannot persist a value of type bigint. ` +
+        `JSON.stringify cannot serialize this type (throws TypeError). ` +
+        `Path: ${formatPath(path)}.`,
       'INVALID_ARGUMENT',
     );
   }
