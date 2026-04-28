@@ -25,7 +25,7 @@ The `--registry` flag is **required**. The editor will exit with an error if no 
 
 - **Schema discovery** — knows every node type, edge type, and their relationships without sampling documents (zero Firestore reads on startup)
 - **Form generation** — builds input forms from Zod schemas (text fields, number inputs, enum dropdowns, checkboxes, nested objects, arrays)
-- **Write validation** — all creates and updates go through `GraphClient.putNode()` / `GraphClient.putEdge()`, which validates against the registry before writing to Firestore
+- **Write validation** — all creates and updates go through the registry-validating write methods (`putNode` / `putEdge` deep-merge, `replaceNode` / `replaceEdge` wipe-and-rewrite, `updateNode` / `updateEdge` for partial deep-merges, plus the `deleteField()` sentinel for pruning paths) before anything is written to Firestore
 - **Constraint display** — shows min/max, required/optional, enum options, regex patterns directly in the form UI
 
 ```bash
@@ -212,7 +212,7 @@ If validation fails (Zod rejects the data or the triple isn't registered), the e
 1. Navigate to a node's detail page
 2. Click "Edit"
 3. Modify fields in the form
-4. Submit — calls `graphClient.putNode(aType, uid, updatedData)`
+4. Submit — calls `graphClient.putNode(aType, uid, updatedData)`, which deep-merges the form payload into the stored data (0.12+). To wipe the document and replace it wholesale, use `graphClient.replaceNode` from your application code instead.
 
 ### Deleting Nodes
 
