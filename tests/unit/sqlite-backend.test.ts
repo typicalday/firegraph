@@ -1719,6 +1719,81 @@ describe('SqliteBackend bindValue rejects Firestore special types', () => {
     expect(record!.data).toEqual({ name: 'Tahoe' });
   });
 
+  it('merge-mode setDoc with v=undefined preserves a previously-stamped v', async () => {
+    // Cross-backend parity: Firestore's `set(record, {merge: true})` omits
+    // `v` from the payload when undefined (via stampWritableRecord) and
+    // leaves the stored `v` intact. SQLite must match — the COALESCE on
+    // the ON CONFLICT clause is what guarantees this. Without it,
+    // `excluded.v` would be NULL and clobber the prior `v`, breaking
+    // migration replay if a registry temporarily drops migrations and
+    // re-adds them later.
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'A' },
+        v: 3,
+      },
+      'replace',
+    );
+    // Second put with no `v` (registry currently has no migrations for this
+    // type). v must NOT be wiped to null.
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { kept: 'yes' },
+      },
+      'merge',
+    );
+    const record = await backend.getDoc(uid);
+    expect(record!.v).toBe(3);
+    expect(record!.data).toEqual({ name: 'A', kept: 'yes' });
+  });
+
+  it('merge-mode setDoc with v=N updates the stored v', async () => {
+    // Companion to the COALESCE preservation test: when the incoming record
+    // DOES carry a v, that's the new stamped version and must be applied.
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { name: 'A' },
+        v: 1,
+      },
+      'replace',
+    );
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { kept: 'yes' },
+        v: 2,
+      },
+      'merge',
+    );
+    const record = await backend.getDoc(uid);
+    expect(record!.v).toBe(2);
+  });
+
   it('still accepts plain JSON-shaped objects (precaution against over-rejection)', async () => {
     const uid = generateId();
     await backend.setDoc(

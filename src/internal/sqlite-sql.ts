@@ -459,6 +459,13 @@ export function compileSet(
   const dataExpr =
     compileDataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams) ?? `COALESCE("data", '{}')`;
 
+  // `v` uses COALESCE(excluded.v, v) so an incoming record with `v=undefined`
+  // (registry has no migrations, or stampWritableRecord didn't stamp) leaves
+  // any previously-stamped `v` intact. Firestore's `set(record, {merge: true})`
+  // omits the key when undefined and behaves the same way; SQLite must too.
+  // Without COALESCE, `excluded.v` would be NULL and clobber a pre-existing
+  // `v` — which silently breaks migration replay if migrations are removed
+  // and later re-added to a type.
   const sql = `INSERT INTO ${quoteIdent(table)} (
       doc_id, scope, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -469,7 +476,7 @@ export function compileSet(
       "b_type" = excluded."b_type",
       "b_uid" = excluded."b_uid",
       "data" = ${dataExpr},
-      "v" = excluded."v",
+      "v" = COALESCE(excluded."v", "v"),
       "created_at" = excluded."created_at",
       "updated_at" = excluded."updated_at"`;
 

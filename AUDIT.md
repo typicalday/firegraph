@@ -84,6 +84,20 @@ The shared `flattenPatch()` helper is the single source of truth for
 "which ops does this payload produce." All three backends consume the
 exact same op list, so divergence is structurally hard to introduce.
 
+### Schema-version (`v`) preservation on merge-put
+
+Both SQLite-style backends use `"v" = COALESCE(excluded."v", "v")` on
+the merge-put `ON CONFLICT` clause so an incoming record with `v =
+undefined` (e.g. a registry that currently has no migrations for the
+type) leaves any previously-stamped `v` intact. This matches Firestore's
+`set(record, { merge: true })` path, where `stampWritableRecord` omits
+`v` from the payload when undefined. Without the COALESCE, `excluded.v`
+would be NULL and clobber the prior `v` — silently breaking migration
+replay on re-add. Pinned by `tests/unit/sqlite-backend.test.ts` ("merge-
+mode setDoc with v=undefined preserves a previously-stamped v") and
+`tests/unit/cloudflare-sql.test.ts` ("uses COALESCE on `v` so a merge-
+put without `v` preserves the stored version").
+
 ## Verification
 
 | Check                                                                                 | Status |

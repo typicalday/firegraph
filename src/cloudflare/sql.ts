@@ -409,6 +409,8 @@ export function compileDOSet(
   const dataExpr =
     compileDODataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams) ?? `COALESCE("data", '{}')`;
 
+  // See compileSet (sqlite-sql.ts) — COALESCE preserves pre-existing `v`
+  // when the incoming record has none, matching Firestore's merge semantics.
   const sql = `INSERT INTO ${quoteDOIdent(table)} (
       doc_id, a_type, a_uid, axb_type, b_type, b_uid, data, v, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -419,7 +421,7 @@ export function compileDOSet(
       "b_type" = excluded."b_type",
       "b_uid" = excluded."b_uid",
       "data" = ${dataExpr},
-      "v" = excluded."v",
+      "v" = COALESCE(excluded."v", "v"),
       "created_at" = excluded."created_at",
       "updated_at" = excluded."updated_at"`;
 

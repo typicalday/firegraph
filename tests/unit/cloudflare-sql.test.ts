@@ -330,6 +330,31 @@ describe('cloudflare/sql compileDOSet', () => {
     expect(sql).toContain('ON CONFLICT(doc_id) DO UPDATE SET');
     expect(sql).toContain('"data" = json_set(');
   });
+
+  it('uses COALESCE on `v` so a merge-put without `v` preserves the stored version', () => {
+    // Cross-backend parity with Firestore: stampWritableRecord omits `v`
+    // when undefined, and Firestore's `set(record, {merge: true})` then
+    // leaves the stored `v` intact. SQLite/DO must match — the COALESCE
+    // is what guarantees this. A plain `excluded.v` assignment would
+    // clobber the stored `v` to NULL on every put-without-migrations and
+    // silently break migration replay if migrations are removed and
+    // later re-added.
+    const { sql } = compileDOSet(
+      'firegraph',
+      'abc',
+      {
+        aType: 'tour',
+        aUid: 'abc',
+        axbType: 'is',
+        bType: 'tour',
+        bUid: 'abc',
+        data: { title: 'Everest' },
+      },
+      1_700_000_000_000,
+      'merge',
+    );
+    expect(sql).toContain(`"v" = COALESCE(excluded."v", "v")`);
+  });
 });
 
 describe('cloudflare/sql compileDOUpdate', () => {
