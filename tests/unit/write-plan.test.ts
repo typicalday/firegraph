@@ -195,15 +195,19 @@ describe('flattenPatch — unsafe key rejection', () => {
     expect(() => flattenPatch({ a: { 'b.c': 1 } })).toThrow(/unsafe object key "b\.c"/);
   });
 
-  it('skips the SERIALIZATION_TAG key when it appears at object root level', () => {
-    // Defensive case — shouldn't normally happen because tagged objects
-    // hit the isTerminalValue branch first. This covers accidentally-
-    // malformed input where the tag value is the wrong shape.
-    const ops = flattenPatch({ [SERIALIZATION_TAG]: 'not-a-known-type', other: 1 } as Record<
-      string,
-      unknown
-    >);
-    expect(ops).toEqual([{ path: ['other'], value: 1, delete: false }]);
+  it('rejects a literal SERIALIZATION_TAG key on a plain object', () => {
+    expect(() =>
+      flattenPatch({ [SERIALIZATION_TAG]: 'not-a-known-type', other: 1 } as Record<
+        string,
+        unknown
+      >),
+    ).toThrow(/literal `__firegraph_ser__` key/);
+  });
+
+  it('rejects a literal SERIALIZATION_TAG key nested inside a plain object', () => {
+    expect(() =>
+      flattenPatch({ wrapper: { [SERIALIZATION_TAG]: 42 } } as Record<string, unknown>),
+    ).toThrow(/literal `__firegraph_ser__` key/);
   });
 });
 

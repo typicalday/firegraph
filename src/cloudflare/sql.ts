@@ -14,8 +14,12 @@
 
 import { FiregraphError } from '../errors.js';
 import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
+import {
+  compileDataOpsExpr,
+  isFirestoreSpecialType,
+  validateJsonPathKey,
+} from '../internal/sqlite-data-ops.js';
 import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
-import type { DataPathOp } from '../internal/write-plan.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
@@ -23,6 +27,7 @@ import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 import { DO_FIELD_TO_COLUMN, quoteDOIdent } from './schema.js';
 
 const DO_BACKEND_LABEL = 'DO SQLite';
+const DO_BACKEND_ERR_LABEL = 'DO SQLite backend';
 
 /**
  * Wire representation of a stored record across the DO RPC boundary.
@@ -86,7 +91,7 @@ function compileFieldRef(field: string): { expr: string } {
   if (field.startsWith('data.')) {
     const suffix = field.slice(5);
     for (const part of suffix.split('.')) {
-      validateJsonPathKey(part);
+      validateJsonPathKey(part, DO_BACKEND_ERR_LABEL);
     }
     return { expr: `json_extract("data", '$.${suffix}')` };
   }
@@ -97,27 +102,6 @@ function compileFieldRef(field: string): { expr: string } {
     `DO SQLite backend cannot resolve filter field: ${field}`,
     'INVALID_QUERY',
   );
-}
-
-/**
- * Firestore special types that don't survive `JSON.stringify`: they either
- * have non-enumerable accessors (`Timestamp.seconds`) or rely on class
- * identity the JSON representation drops. Detection is by `constructor.name`
- * to keep this module free of `@google-cloud/firestore` imports (bundle
- * pollution matters on Workers — see tests/unit/bundle-pollution.test.ts).
- */
-const FIRESTORE_TYPE_NAMES = new Set([
-  'Timestamp',
-  'GeoPoint',
-  'VectorValue',
-  'DocumentReference',
-  'FieldValue',
-]);
-
-function isFirestoreSpecialType(value: object): string | null {
-  const ctorName = (value as { constructor?: { name?: string } }).constructor?.name;
-  if (ctorName && FIRESTORE_TYPE_NAMES.has(ctorName)) return ctorName;
-  return null;
 }
 
 /**
@@ -150,35 +134,6 @@ function bindValue(value: unknown): unknown {
     return JSON.stringify(value);
   }
   return String(value);
-}
-
-/**
- * Identifiers accepted in `data.<key>` paths and `dataOps` path segments.
- *
- * The allowed shape (`/^[A-Za-z_][A-Za-z0-9_-]*$/`) covers code-style
- * identifiers (camel, snake, kebab). Silently quoting exotic keys would
- * require symmetric quoting at every read/write call site; any drift
- * produces silent data corruption. Failing loudly at compile time is
- * safer — users with exotic keys can use `replaceNode` / `replaceEdge`
- * (full-data overwrite) instead.
- */
-const JSON_PATH_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-
-function validateJsonPathKey(key: string): void {
-  if (key.length === 0) {
-    throw new FiregraphError(
-      'DO SQLite backend: empty JSON path component is not allowed',
-      'INVALID_QUERY',
-    );
-  }
-  if (!JSON_PATH_KEY_RE.test(key)) {
-    throw new FiregraphError(
-      `DO SQLite backend: data field path component "${key}" is not a safe JSON-path identifier. ` +
-        `Allowed pattern: /^[A-Za-z_][A-Za-z0-9_-]*$/. Use replaceNode/replaceEdge (full-data overwrite) ` +
-        `for keys with reserved characters (whitespace, dots, brackets, quotes, etc.).`,
-      'INVALID_QUERY',
-    );
-  }
 }
 
 function compileFilter(filter: QueryFilter, params: unknown[]): string {
@@ -294,62 +249,6 @@ export function compileDOSelectByDocId(table: string, docId: string): CompiledSt
 }
 
 /**
- * Build a `json_set(json_remove(<base>, …deletes), …pairs)` expression that
- * applies a list of `DataPathOp`s onto an existing JSON column reference.
- * Mirrors `compileDataOpsExpr` in `internal/sqlite-sql.ts` — keep them in
- * sync. Returns `null` when there are no ops at all.
- */
-function compileDODataOpsExpr(
-  ops: readonly DataPathOp[],
-  base: string,
-  params: unknown[],
-): string | null {
-  if (ops.length === 0) return null;
-
-  const deletes: DataPathOp[] = [];
-  const sets: DataPathOp[] = [];
-  for (const op of ops) (op.delete ? deletes : sets).push(op);
-
-  let expr = base;
-
-  if (deletes.length > 0) {
-    const placeholders = deletes.map(() => '?').join(', ');
-    expr = `json_remove(${expr}, ${placeholders})`;
-    for (const op of deletes) {
-      for (const seg of op.path) validateJsonPathKey(seg);
-      params.push(`$.${op.path.join('.')}`);
-    }
-  }
-
-  if (sets.length > 0) {
-    const pieces = sets.map(() => '?, json(?)').join(', ');
-    expr = `json_set(${expr}, ${pieces})`;
-    for (const op of sets) {
-      for (const seg of op.path) validateJsonPathKey(seg);
-      params.push(`$.${op.path.join('.')}`);
-      params.push(jsonBind(op.value));
-    }
-  }
-
-  return expr;
-}
-
-function jsonBind(value: unknown): string {
-  if (value === undefined) return 'null';
-  if (value !== null && typeof value === 'object') {
-    const firestoreType = isFirestoreSpecialType(value);
-    if (firestoreType) {
-      throw new FiregraphError(
-        `DO SQLite backend cannot persist a Firestore ${firestoreType} value. ` +
-          `Convert to a primitive before writing (e.g. \`ts.toMillis()\` for Timestamp).`,
-        'INVALID_ARGUMENT',
-      );
-    }
-  }
-  return JSON.stringify(value);
-}
-
-/**
  * Compile a `setDoc(record, mode)` call into a single statement.
  *
  * `mode === 'replace'` issues `INSERT OR REPLACE` (full row replacement).
@@ -407,7 +306,8 @@ export function compileDOSet(
   const ops = flattenPatch(record.data ?? {});
   const updateParams: unknown[] = [];
   const dataExpr =
-    compileDODataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams) ?? `COALESCE("data", '{}')`;
+    compileDataOpsExpr(ops, `COALESCE("data", '{}')`, updateParams, DO_BACKEND_ERR_LABEL) ??
+    `COALESCE("data", '{}')`;
 
   // See compileSet (sqlite-sql.ts) — COALESCE preserves pre-existing `v`
   // when the incoming record has none, matching Firestore's merge semantics.
@@ -456,7 +356,12 @@ export function compileDOUpdate(
     for (const op of update.dataOps) {
       if (!op.delete) assertJsonSafePayload(op.value, DO_BACKEND_LABEL);
     }
-    const expr = compileDODataOpsExpr(update.dataOps, `COALESCE("data", '{}')`, params);
+    const expr = compileDataOpsExpr(
+      update.dataOps,
+      `COALESCE("data", '{}')`,
+      params,
+      DO_BACKEND_ERR_LABEL,
+    );
     if (expr !== null) {
       setClauses.push(`"data" = ${expr}`);
     }

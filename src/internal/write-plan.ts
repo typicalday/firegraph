@@ -343,10 +343,16 @@ function walk(node: unknown, path: string[], out: DataPathOp[]): void {
     return;
   }
   for (const key of keys) {
-    // Defensive: skip the firegraph serialization tag if it shows up at
-    // the recursion root. `isTerminalValue` already short-circuits on
-    // tagged objects, so this only fires on accidentally-malformed input.
-    if (key === SERIALIZATION_TAG) continue;
+    if (key === SERIALIZATION_TAG) {
+      const where =
+        path.length === 0 ? '<root>' : path.map((p) => JSON.stringify(p)).join(' > ');
+      throw new Error(
+        `firegraph: update payload contains a literal \`${SERIALIZATION_TAG}\` key at ` +
+          `${where}. That key is reserved for firegraph's serialization envelope and ` +
+          `cannot appear on a plain object in user data. Use a different field name, ` +
+          `or pass a recognized tagged value through replaceNode/replaceEdge instead.`,
+      );
+    }
     walk(obj[key], [...path, key], out);
   }
 }

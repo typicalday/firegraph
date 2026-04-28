@@ -68,6 +68,13 @@ function walk(node: unknown, path: readonly string[], label: string): void {
     );
   }
   const t = typeof node;
+  if (t === 'symbol' || t === 'function' || t === 'bigint') {
+    throw new FiregraphError(
+      `${label} backend cannot persist a value of type ${t}. ` +
+        `JSON.stringify drops it silently. Path: ${formatPath(path)}.`,
+      'INVALID_ARGUMENT',
+    );
+  }
   if (t !== 'object') return;
   if (Array.isArray(node)) {
     for (let i = 0; i < node.length; i++) {
@@ -75,16 +82,20 @@ function walk(node: unknown, path: readonly string[], label: string): void {
     }
     return;
   }
-  // Tagged serialization payload — reject loudly. SQLite has no Timestamp
-  // class to rebuild it into, so persisting the tag would make the value
-  // unreadable.
+  // Reject any object carrying the firegraph serialization tag — both legit
+  // tagged Firestore-type payloads (the migration-sandbox output that round-
+  // trips through Firestore) and bogus user data that happens to put a
+  // literal `__firegraph_ser__` key on a plain object. SQLite has no
+  // Timestamp class to rebuild the tag into, and silently writing the
+  // envelope would produce an unreadable column.
   const obj = node as Record<string, unknown>;
-  if (typeof obj[SERIALIZATION_TAG] === 'string') {
+  if (Object.prototype.hasOwnProperty.call(obj, SERIALIZATION_TAG)) {
+    const tagValue = obj[SERIALIZATION_TAG];
     throw new FiregraphError(
-      `${label} backend cannot persist a tagged Firestore-type payload ` +
-        `(\`${SERIALIZATION_TAG}: ${String(obj[SERIALIZATION_TAG])}\`). These ` +
-        `appear in migration sandbox output and are valid only on the ` +
-        `Firestore backend. Convert to a primitive before writing. ` +
+      `${label} backend cannot persist an object with a \`${SERIALIZATION_TAG}\` ` +
+        `key (value: ${formatTagValue(tagValue)}). Recognised tags are valid only on ` +
+        `the Firestore backend (migration-sandbox output); a literal ` +
+        `\`${SERIALIZATION_TAG}\` field in user data is reserved and not allowed. ` +
         `Path: ${formatPath(path)}.`,
       'INVALID_ARGUMENT',
     );
@@ -125,4 +136,14 @@ function walk(node: unknown, path: readonly string[], label: string): void {
 
 function formatPath(path: readonly string[]): string {
   return path.length === 0 ? '<root>' : path.map((p) => JSON.stringify(p)).join(' > ');
+}
+
+function formatTagValue(value: unknown): string {
+  if (value === null) return 'null';
+  if (value === undefined) return 'undefined';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return typeof value;
 }
