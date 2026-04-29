@@ -650,10 +650,41 @@ export interface CoreGraphClient extends GraphReader, GraphWriter {
 // preserves the contract: a declared capability is always backed by a real
 // method.
 
+/** Supported aggregation operations.
+ *
+ * Firestore Standard supports `count`, `sum`, `avg` only. SQLite/DO additionally
+ * support `min` and `max` via SQL. Backends that cannot satisfy a requested op
+ * throw `FiregraphError` with code `UNSUPPORTED_AGGREGATE`.
+ */
+export type AggregateOp = 'count' | 'sum' | 'avg' | 'min' | 'max';
+
+/** A single aggregation request.
+ *
+ * `field` is required for `sum`/`avg`/`min`/`max` and follows the same dotted
+ * path convention as `QueryFilter.field` (e.g. `'data.price'`). For `count`
+ * the field is forbidden — every backend rejects `count` with a stray field
+ * via `INVALID_QUERY`. We reject (rather than silently ignore) so a typo like
+ * `{ n: { op: 'count', field: 'data.price' } }` — easy to introduce when
+ * cribbing a sum spec and changing only the op — surfaces as a clear error
+ * instead of producing misleading row counts. */
+export interface AggregateField {
+  op: AggregateOp;
+  field?: string;
+}
+
+/** Map of result alias -> aggregation request. */
+export type AggregateSpec = Record<string, AggregateField>;
+
+/** Result shape derived from an `AggregateSpec` — one number per alias. */
+export type AggregateResult<A extends AggregateSpec> = {
+  [K in keyof A]: number;
+};
+
 /** Aggregate query surface — count/sum/avg/min/max over a filter set. */
 export interface AggregateExtension {
-  // Methods land in Phase 4. The interface stays empty for now so it can
-  // grow without breaking consumers that only typecheck against the type.
+  aggregate<A extends AggregateSpec>(
+    params: FindEdgesParams & { aggregates: A },
+  ): Promise<AggregateResult<A>>;
 }
 
 /** Server-side projection — return only the requested data fields. */

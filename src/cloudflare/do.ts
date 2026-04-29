@@ -75,6 +75,7 @@ import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backe
 import { NODE_RELATION } from '../internal/constants.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -87,6 +88,7 @@ import type {
 import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
 import type { CompiledStatement, DORecordWire } from './sql.js';
 import {
+  compileDOAggregate,
   compileDODelete,
   compileDODeleteAll,
   compileDOSelect,
@@ -255,6 +257,31 @@ export class FiregraphDO extends DurableObject<unknown> {
     const stmt = compileDOSelect(this.table, filters, options);
     const rows = this.execAll(stmt);
     return rows.map(rowToDORecord);
+  }
+
+  /**
+   * Aggregate query (capability `query.aggregate`). Compiles a single
+   * `SELECT` projecting one column per alias; SQLite handles count, sum,
+   * avg, min, max natively. Empty-set fix-ups (NULL → 0 for sum/min/max,
+   * NaN for avg) happen on the client side in `DORPCBackend.aggregate` so
+   * the wire payload stays a plain row of (alias → number | null).
+   */
+  async _fgAggregate(
+    spec: AggregateSpec,
+    filters: QueryFilter[],
+  ): Promise<Record<string, number | null>> {
+    const { stmt, aliases } = compileDOAggregate(this.table, spec, filters);
+    const rows = this.execAll(stmt);
+    const row = rows[0] ?? {};
+    const out: Record<string, number | null> = {};
+    for (const alias of aliases) {
+      const v = (row as Record<string, unknown>)[alias];
+      if (v === null || v === undefined) out[alias] = null;
+      else if (typeof v === 'bigint') out[alias] = Number(v);
+      else if (typeof v === 'number') out[alias] = v;
+      else out[alias] = Number(v);
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------------------

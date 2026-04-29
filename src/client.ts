@@ -19,6 +19,8 @@ import { createMergedRegistry } from './registry.js';
 import { precompileSource } from './sandbox.js';
 import { GraphTransactionImpl } from './transaction.js';
 import type {
+  AggregateResult,
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   Capability,
@@ -479,6 +481,51 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
     this.checkQuerySafety(plan.filters, params.allowCollectionScan);
     const records = await this.backend.findEdgesGlobal(params, collectionName);
     return this.applyMigrations(records);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregate query (capability: query.aggregate)
+  // ---------------------------------------------------------------------------
+
+  async aggregate<A extends AggregateSpec>(
+    params: FindEdgesParams & { aggregates: A },
+  ): Promise<AggregateResult<A>> {
+    if (!this.backend.aggregate) {
+      throw new FiregraphError(
+        'aggregate() is not supported by the current storage backend.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+
+    // Allow zero-filter aggregates (e.g. count(*) over the whole collection).
+    // findEdges-style buildEdgeQueryPlan rejects empty filter sets because a
+    // bare findEdges with no identifying fields would be a full collection
+    // scan; aggregate() is the legitimate use case for that shape.
+    const hasAnyFilter =
+      params.aType ||
+      params.aUid ||
+      params.axbType ||
+      params.bType ||
+      params.bUid ||
+      (params.where && params.where.length > 0);
+
+    if (!hasAnyFilter) {
+      this.checkQuerySafety([], params.allowCollectionScan);
+      const result = await this.backend.aggregate(params.aggregates, []);
+      return result as AggregateResult<A>;
+    }
+
+    const plan = buildEdgeQueryPlan(params);
+    if (plan.strategy === 'get') {
+      throw new FiregraphError(
+        'aggregate() requires a query, not a direct document lookup. ' +
+          'Omit one of aUid/axbType/bUid to force a query strategy.',
+        'INVALID_QUERY',
+      );
+    }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+    const result = await this.backend.aggregate(params.aggregates, plan.filters);
+    return result as AggregateResult<A>;
   }
 
   // ---------------------------------------------------------------------------

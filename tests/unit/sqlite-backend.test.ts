@@ -1950,3 +1950,245 @@ describe('SqliteBackend retry backoff cap (MAX_RETRY_DELAY_MS)', () => {
     db.close();
   }, 20_000);
 });
+
+describe('SqliteBackend.aggregate (compileAggregate)', () => {
+  // The shared-table SQLite compiler ALWAYS leads with a `"scope" = ?`
+  // predicate so the `(scope, …)` indexes apply (see compileSelect). Aggregates
+  // must follow the same rule — otherwise a subgraph-scoped aggregate would
+  // accidentally count rows from sibling subgraphs.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- SQL string assertions (compileAggregate output) ---
+
+  it('emits a leading "scope" = ? predicate and inlined JSON paths', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { stmt, aliases } = compileAggregate(
+      TABLE,
+      '', // root scope
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+
+    // Scope predicate is the leading WHERE term and bound (not inlined).
+    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    // The numeric cast applies to all four non-count ops.
+    expect(stmt.sql).toContain(`SUM(CAST(json_extract("data", '$.price') AS REAL)) AS "s"`);
+    expect(stmt.sql).toContain(`MIN(CAST(json_extract("data", '$.price') AS REAL)) AS "lo"`);
+    expect(stmt.sql).toContain(`MAX(CAST(json_extract("data", '$.price') AS REAL)) AS "hi"`);
+    // JSON path is inlined so SQLite's planner can match an expression
+    // index emitted by sqlite-index-ddl.ts. Parametrising the path would
+    // silently fall back to a full scan.
+    expect(stmt.sql).not.toContain(`json_extract("data", ?)`);
+    // Param order is fixed: scope value first (leading "scope" = ?
+    // predicate), followed by column-filter values in the order the caller
+    // supplied them. A regression that re-orders the predicate or starts
+    // parametrising the JSON path would change this exact tuple.
+    expect(stmt.params).toEqual(['', 'tour']);
+    expect(aliases).toEqual(['n', 's', 'a', 'lo', 'hi']);
+  });
+
+  it('preserves alias order in the returned aliases list', async () => {
+    // Spec keys are in iteration order; the alias array must mirror that so
+    // SqliteBackendImpl.aggregate can rehydrate result columns deterministically.
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { aliases } = compileAggregate(
+      TABLE,
+      '',
+      {
+        zCount: { op: 'count' },
+        aSum: { op: 'sum', field: 'data.x' },
+        mAvg: { op: 'avg', field: 'data.x' },
+      },
+      [],
+    );
+    expect(aliases).toEqual(['zCount', 'aSum', 'mAvg']);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', async () => {
+    // Mirror the cloudflare-sql parity test — shared SQLite must apply both
+    // a column-filter and a JSON-path filter side-by-side, with the leading
+    // scope predicate intact.
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { stmt } = compileAggregate(TABLE, '', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'active' },
+    ]);
+    // Scope predicate leads, column-filter next, JSON path last; values in
+    // the same order as conditions: ['', 'tour', 'active']. Built-in
+    // `aType` resolves to column `a_type` via FIELD_TO_COLUMN.
+    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.sql).toContain(`json_extract("data", '$.status') = ?`);
+    expect(stmt.params).toEqual(['', 'tour', 'active']);
+  });
+
+  it('rejects unsafe alias identifiers at compile time', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileAggregate(TABLE, '', { 'bad alias': { op: 'count' } }, [])).toThrow(
+      /not a safe JSON-path identifier/,
+    );
+    expect(() =>
+      compileAggregate(TABLE, '', { 'a"; DROP TABLE foo;--': { op: 'count' } }, []),
+    ).toThrow(/not a safe JSON-path identifier/);
+  });
+
+  it('rejects empty spec and non-count ops missing a field', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileAggregate(TABLE, '', {}, [])).toThrow(/at least one aggregation/);
+    expect(() => compileAggregate(TABLE, '', { s: { op: 'sum' } }, [])).toThrow(
+      /'sum' requires a field/,
+    );
+  });
+
+  it('rejects count with a stray field (catches typo from cribbing a sum spec)', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() =>
+      compileAggregate(TABLE, '', { n: { op: 'count', field: 'data.price' } }, []),
+    ).toThrow(/'count' must not specify a field/);
+  });
+
+  // --- Functional integration (in-memory SQLite, full backend.aggregate) ---
+
+  async function seedTours(prices: number[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const price of prices) {
+      const uid = generateId();
+      ids.push(uid);
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { price, status: 'active' },
+        },
+        'replace',
+      );
+    }
+    return ids;
+  }
+
+  it('returns count/sum/avg/min/max over a real row set', async () => {
+    await seedTours([10, 20, 30, 40]);
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.n).toBe(4);
+    expect(out.s).toBe(100);
+    expect(out.a).toBe(25);
+    expect(out.lo).toBe(10);
+    expect(out.hi).toBe(40);
+  });
+
+  it('respects filters when computing aggregates', async () => {
+    await seedTours([10, 20, 30, 40]);
+    const out = await backend.aggregate!(
+      { n: { op: 'count' }, s: { op: 'sum', field: 'data.price' } },
+      [
+        { field: 'aType', op: '==', value: 'tour' },
+        { field: 'data.price', op: '>=', value: 25 },
+      ],
+    );
+    expect(out.n).toBe(2);
+    expect(out.s).toBe(70);
+  });
+
+  it('treats SUM/MIN/MAX of empty set as 0 and AVG as NaN', async () => {
+    // No rows seeded — every aggregate sees the empty set.
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.n).toBe(0);
+    expect(out.s).toBe(0);
+    expect(Number.isNaN(out.a)).toBe(true);
+    expect(out.lo).toBe(0);
+    expect(out.hi).toBe(0);
+  });
+
+  it('uses numeric (not lexicographic) comparison for MIN/MAX', async () => {
+    // Without CAST(... AS REAL), SQLite would compare json_extract output
+    // lexicographically and return "100" as min (since "100" < "20").
+    await seedTours([20, 100, 30]);
+    const out = await backend.aggregate!(
+      {
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.lo).toBe(20);
+    expect(out.hi).toBe(100);
+  });
+
+  it('coerces bigint result columns to numbers (D1 SELECT shape)', async () => {
+    // D1 / better-sqlite3 with safeIntegers may return COUNT and SUM as
+    // bigint. The backend coerces those at the JS boundary so the contract
+    // stays `Record<string, number>`. Wrap the executor so the SELECT
+    // emitted by compileAggregate routes through `safeIntegers(true)`
+    // — that flips better-sqlite3's INTEGER columns from `number` to
+    // `bigint`, exercising the bigint branch in `SqliteBackendImpl.aggregate`.
+    // Without this stub the `typeof` check would pass even if the bigint
+    // branch were deleted (better-sqlite3's default is `number`).
+    const realExecutor = makeExecutor(db);
+    const bigintExecutor: SqliteExecutor = {
+      ...realExecutor,
+      async all(sql: string, params: unknown[]) {
+        // Route only the SELECT (aggregates use SELECT, not run/batch); other
+        // calls go through the real executor unchanged.
+        if (sql.startsWith('SELECT ')) {
+          const stmt = db.prepare(sql).safeIntegers(true);
+          return stmt.all(...(params as unknown[])) as Record<string, unknown>[];
+        }
+        return realExecutor.all(sql, params);
+      },
+    };
+    const bigintBackend = createSqliteBackend(bigintExecutor, TABLE);
+
+    await seedTours([1, 2, 3]);
+    const out = await bigintBackend.aggregate!(
+      { n: { op: 'count' }, s: { op: 'sum', field: 'data.price' } },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    // The backend MUST coerce bigint → number at the boundary. Without the
+    // bigint branch, COUNT(*) would surface as a bigint and fail this check.
+    expect(typeof out.n).toBe('number');
+    expect(out.n).toBe(3);
+    // SUM over JSON-extracted REAL stays a JS number even with safeIntegers
+    // (the CAST AS REAL produces a floating-point column). We still assert
+    // it's a number to pin the contract.
+    expect(typeof out.s).toBe('number');
+    expect(out.s).toBe(6);
+  });
+});

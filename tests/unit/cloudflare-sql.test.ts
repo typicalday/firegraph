@@ -15,6 +15,7 @@ import {
   validateDOTableName,
 } from '../../src/cloudflare/schema.js';
 import {
+  compileDOAggregate,
   compileDODelete,
   compileDODeleteAll,
   compileDOSelect,
@@ -265,6 +266,125 @@ describe('cloudflare/sql compileDOSelectByDocId', () => {
     const { sql, params } = compileDOSelectByDocId('firegraph', '0:abc:is:abc');
     expect(sql).toBe('SELECT * FROM "firegraph" WHERE "doc_id" = ? LIMIT 1');
     expect(params).toEqual(['0:abc:is:abc']);
+  });
+});
+
+describe('cloudflare/sql compileDOAggregate', () => {
+  // The DO compiler does NOT emit a `scope` predicate — every row in a
+  // FiregraphDO's SQLite belongs to the same subgraph. That contrast with
+  // the shared-table compiler (which always leads with `"scope" = ?`) is
+  // the core invariant to defend.
+
+  it('emits COUNT(*) with no WHERE clause when no filters are supplied', () => {
+    const { stmt, aliases } = compileDOAggregate('firegraph', { total: { op: 'count' } }, []);
+    expect(stmt.sql).toBe('SELECT COUNT(*) AS "total" FROM "firegraph"');
+    expect(stmt.params).toEqual([]);
+    expect(aliases).toEqual(['total']);
+  });
+
+  it('appends WHERE for filters but never a scope predicate', () => {
+    const { stmt, aliases } = compileDOAggregate('firegraph', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+    ]);
+    expect(stmt.sql).toBe('SELECT COUNT(*) AS "n" FROM "firegraph" WHERE "a_type" = ?');
+    expect(stmt.params).toEqual(['tour']);
+    // Critical invariant — leading "scope" predicate is shared-table-only.
+    expect(stmt.sql).not.toContain('"scope"');
+    expect(aliases).toEqual(['n']);
+  });
+
+  it('compiles SUM/AVG/MIN/MAX with CAST(... AS REAL) for numeric semantics', () => {
+    // Without the cast, MIN/MAX would compare lexicographically on the
+    // underlying JSON text storage ("100" < "20"). The cast forces numeric
+    // semantics on all four ops; COUNT is unaffected.
+    const { stmt } = compileDOAggregate(
+      'firegraph',
+      {
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [],
+    );
+    expect(stmt.sql).toContain(`SUM(CAST(json_extract("data", '$.price') AS REAL)) AS "s"`);
+    expect(stmt.sql).toContain(`AVG(CAST(json_extract("data", '$.price') AS REAL)) AS "a"`);
+    expect(stmt.sql).toContain(`MIN(CAST(json_extract("data", '$.price') AS REAL)) AS "lo"`);
+    expect(stmt.sql).toContain(`MAX(CAST(json_extract("data", '$.price') AS REAL)) AS "hi"`);
+  });
+
+  it('inlines JSON paths in field references (matches expression-index form)', () => {
+    // The aggregate path must reuse the same `compileFieldRef` rules as the
+    // SELECT path so that `CREATE INDEX … ON tbl(json_extract("data", '$.x'))`
+    // can match the aggregate expression. Parametrising the path would
+    // silently fall back to a full scan.
+    const { stmt } = compileDOAggregate('firegraph', { s: { op: 'sum', field: 'data.price' } }, []);
+    expect(stmt.sql).toContain(`json_extract("data", '$.price')`);
+    expect(stmt.sql).not.toContain(`json_extract("data", ?)`);
+  });
+
+  it('rejects aliases that fail the JSON-path identifier rule', () => {
+    // Aliases are inlined into SQL (SQL aliases can't be bound parameters),
+    // so they must pass the same charset rule used everywhere else. This is
+    // the SQL-injection defense.
+    expect(() => compileDOAggregate('firegraph', { 'bad alias': { op: 'count' } }, [])).toThrow(
+      /not a safe JSON-path identifier/,
+    );
+    expect(() =>
+      compileDOAggregate('firegraph', { 'a"; DROP TABLE x;--': { op: 'count' } }, []),
+    ).toThrow(/not a safe JSON-path identifier/);
+  });
+
+  it('rejects non-count ops without a field', () => {
+    expect(() => compileDOAggregate('firegraph', { s: { op: 'sum' } }, [])).toThrow(
+      /'sum' requires a field/,
+    );
+    expect(() => compileDOAggregate('firegraph', { a: { op: 'avg' } }, [])).toThrow(
+      /'avg' requires a field/,
+    );
+    expect(() => compileDOAggregate('firegraph', { lo: { op: 'min' } }, [])).toThrow(
+      /'min' requires a field/,
+    );
+  });
+
+  it('rejects an empty spec', () => {
+    expect(() => compileDOAggregate('firegraph', {}, [])).toThrow(/at least one aggregation/);
+  });
+
+  it('rejects count with a stray field (catches typo from cribbing a sum spec)', () => {
+    // The count op operates on rows, not a column expression. Silently
+    // ignoring a stray field would mask user typos like
+    // `{ n: { op: 'count', field: 'data.price' } }` (cribbed from a sum
+    // spec) and produce a misleading row count.
+    expect(() =>
+      compileDOAggregate('firegraph', { n: { op: 'count', field: 'data.price' } }, []),
+    ).toThrow(/'count' must not specify a field/);
+  });
+
+  it('preserves alias order in the returned aliases list', () => {
+    // Spec keys are in iteration order; the alias array must mirror that so
+    // the JS-side caller can rehydrate result columns deterministically.
+    const { aliases } = compileDOAggregate(
+      'firegraph',
+      {
+        zCount: { op: 'count' },
+        aSum: { op: 'sum', field: 'data.x' },
+        mAvg: { op: 'avg', field: 'data.x' },
+      },
+      [],
+    );
+    expect(aliases).toEqual(['zCount', 'aSum', 'mAvg']);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', () => {
+    const { stmt } = compileDOAggregate('firegraph', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'active' },
+    ]);
+    expect(stmt.sql).toBe(
+      `SELECT COUNT(*) AS "n" FROM "firegraph" WHERE "a_type" = ? AND json_extract("data", '$.status') = ?`,
+    );
+    expect(stmt.params).toEqual(['tour', 'active']);
   });
 });
 

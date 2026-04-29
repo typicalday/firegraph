@@ -33,6 +33,7 @@ import { createCapabilities } from '../../src/internal/backend.js';
 import { createRoutingBackend, type RoutingContext } from '../../src/internal/routing-backend.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   Capability,
@@ -105,7 +106,13 @@ function createMockBackend(
 
   const backend: MockBackend = {
     capabilities: createCapabilities(
-      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+      new Set<Capability>([
+        'core.read',
+        'core.write',
+        'core.batch',
+        'core.subgraph',
+        'query.aggregate',
+      ]),
     ),
     collectionPath,
     scopePath,
@@ -168,6 +175,14 @@ function createMockBackend(
     ): Promise<StoredGraphRecord[]> {
       calls.push({ method: 'findEdgesGlobal', args: [params, collectionName] });
       return [];
+    },
+    async aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+      calls.push({ method: 'aggregate', args: [spec, filters] });
+      // Return one zero per alias — the empty-set canonical shape that
+      // every backend produces for an unfiltered aggregate over no rows.
+      const out: Record<string, number> = {};
+      for (const alias of Object.keys(spec)) out[alias] = 0;
+      return out;
     },
   };
   return backend;
@@ -443,6 +458,77 @@ describe('createRoutingBackend — pass-through delegation', () => {
 
     expect(router.findEdgesGlobal).toBeUndefined();
     expect(typeof router.findEdgesGlobal).toBe('undefined');
+  });
+
+  it('delegates aggregate to the base backend when the base declares query.aggregate', async () => {
+    // Mirror of the findEdgesGlobal install/omit pair: when the base backend
+    // ships an `aggregate(...)` method (and declares `query.aggregate` in its
+    // capability set), the router must surface a callable `aggregate` and
+    // forward to the base. Same rationale as findEdgesGlobal — feature
+    // detection via `typeof router.aggregate` is the documented contract.
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.aggregate).toBe('function');
+    const out = await router.aggregate!({ n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+    ]);
+    expect(out).toEqual({ n: 0 });
+    const aggCall = base.calls.find((c) => c.method === 'aggregate');
+    expect(aggCall).toBeDefined();
+    expect(aggCall!.args[0]).toEqual({ n: { op: 'count' } });
+    expect(aggCall!.args[1]).toEqual([{ field: 'aType', op: '==', value: 'tour' }]);
+  });
+
+  it('omits aggregate on the router when the base backend omits it', () => {
+    // Mirror of the findEdgesGlobal omit test. Drivers without aggregate
+    // support (e.g. an in-memory or experimental backend) should propagate
+    // through the router as an undefined method, not a TypeError-throwing
+    // bound function. The router's "declared capability ⇒ method exists"
+    // invariant is what makes the GraphClient feature-detection guard sound.
+    const base = createMockBackend('base');
+    (base as { aggregate?: unknown }).aggregate = undefined;
+    // Also clear the cap so the routing wrapper's gated install path sees
+    // the same "no aggregate" view as the runtime feature check.
+    (base as { capabilities: typeof base.capabilities }).capabilities = createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(router.aggregate).toBeUndefined();
+    expect(typeof router.aggregate).toBe('undefined');
+  });
+
+  it('omits aggregate on the router when routedCapabilities intersects query.aggregate away', () => {
+    // M-C cap-gate isolation test: keep `base.aggregate` defined and the
+    // base's capability set including `query.aggregate`, but pass a
+    // `routedCapabilities` entry that DOES NOT include `query.aggregate`.
+    // The intersection at the routing wrapper drops the cap, and the
+    // gating in `RoutingStorageBackend` must therefore omit `aggregate`
+    // even though the underlying base method is callable.
+    //
+    // Without this gate, the routing wrapper would advertise "no aggregate"
+    // via its capability descriptor while still exposing a working
+    // `aggregate(...)` method — violating the inverse direction of the
+    // "declared capability ⇒ method exists" invariant (declared-absent
+    // must imply runtime-absent for sound type-narrowing).
+    const base = createMockBackend('base');
+    expect(base.aggregate).toBeDefined();
+    expect(base.capabilities.has('query.aggregate')).toBe(true);
+
+    const routedNoAggregate = createCapabilities(
+      // Mixed-backend scenario: a routed peer that lacks aggregate support.
+      // `routedCapabilities` is the caller's hand-declared cap set for the
+      // routed peer; we intentionally omit `query.aggregate`.
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, {
+      route: () => null,
+      routedCapabilities: [routedNoAggregate],
+    });
+
+    expect(router.capabilities.has('query.aggregate')).toBe(false);
+    expect(router.aggregate).toBeUndefined();
   });
 
   it('exposes the base backend collectionPath and scopePath', () => {

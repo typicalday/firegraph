@@ -61,6 +61,7 @@
 
 import { FiregraphError } from '../errors.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -198,6 +199,16 @@ class RoutingStorageBackend implements StorageBackend {
    * shape in the `StorageBackend` interface.
    */
   findEdgesGlobal?: StorageBackend['findEdgesGlobal'];
+  /**
+   * Same conditional-install pattern as `findEdgesGlobal`. The router's
+   * declared capability set is mirrored from the base (or intersected with
+   * the user's `routedCapabilities`) — if `query.aggregate` is in that
+   * set, the underlying method must be present, otherwise `client.aggregate()`
+   * would resolve `UNSUPPORTED_OPERATION` despite the cap claim. This
+   * ensures the "declared capability ⇒ method exists" invariant holds
+   * through routing wrappers (Phase 4 audit C1).
+   */
+  aggregate?: StorageBackend['aggregate'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -228,6 +239,21 @@ class RoutingStorageBackend implements StorageBackend {
       // cross-shard collection-group queries must maintain their own index.
       this.findEdgesGlobal = (params, collectionName) =>
         base.findEdgesGlobal!(params, collectionName);
+    }
+    if (base.aggregate && this.capabilities.has('query.aggregate')) {
+      // Aggregates are scoped to the base backend — same rationale as
+      // `findEdgesGlobal`. A routed child has its own backend with its own
+      // `aggregate` method that the user reaches via `.subgraph().aggregate()`;
+      // this router-level pass-through covers the base scope only.
+      //
+      // The cap check matters when `routedCapabilities` intersected
+      // `query.aggregate` away: even if `base.aggregate` exists, the router's
+      // declared cap set says "no aggregate", and installing the method
+      // would violate the "declared capability ⇒ method exists" invariant
+      // in the inverse direction (declared-absent yet runtime-present).
+      // The post-Phase-4 audit (M-C) calls this out explicitly.
+      this.aggregate = (spec: AggregateSpec, filters: QueryFilter[]) =>
+        base.aggregate!(spec, filters);
     }
   }
 

@@ -23,7 +23,7 @@ import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
-import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
+import type { AggregateSpec, QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 import { DO_FIELD_TO_COLUMN, quoteDOIdent } from './schema.js';
 
 const DO_BACKEND_LABEL = 'DO SQLite';
@@ -246,6 +246,80 @@ export function compileDOSelectByDocId(table: string, docId: string): CompiledSt
     sql: `SELECT * FROM ${quoteDOIdent(table)} WHERE "doc_id" = ? LIMIT 1`,
     params: [docId],
   };
+}
+
+/**
+ * Compile an aggregate query for the per-DO single-subgraph table.
+ *
+ * Mirrors `compileAggregate` from the shared SQLite module but without a
+ * scope predicate — every row in a `FiregraphDO`'s SQLite belongs to the
+ * same subgraph. SUM/AVG/MIN/MAX cast the JSON-extracted value through
+ * `CAST(... AS REAL)` for numeric semantics; without the cast,
+ * comparisons would be lexicographic on the underlying string storage.
+ *
+ * The returned tuple includes the alias list so the JS-side caller can
+ * rehydrate the result columns in spec order without reflecting on the
+ * raw row keys (which the SQL layer doesn't guarantee a stable order for).
+ */
+export function compileDOAggregate(
+  table: string,
+  spec: AggregateSpec,
+  filters: QueryFilter[],
+): { stmt: CompiledStatement; aliases: string[] } {
+  const aliases = Object.keys(spec);
+  if (aliases.length === 0) {
+    throw new FiregraphError(
+      'aggregate() requires at least one aggregation in the `aggregates` map.',
+      'INVALID_QUERY',
+    );
+  }
+
+  const projections: string[] = [];
+  for (const alias of aliases) {
+    const { op, field } = spec[alias];
+    // Aliases are inlined into the SQL (SQL aliases can't be bound
+    // parameters). Validate against the same JSON-path-key charset rule
+    // used everywhere else so caller-supplied aliases can't inject SQL.
+    validateJsonPathKey(alias, DO_BACKEND_ERR_LABEL);
+    if (op === 'count') {
+      // Reject a stray field — see `AggregateField` JSDoc for rationale.
+      if (field !== undefined) {
+        throw new FiregraphError(
+          `Aggregate '${alias}' op 'count' must not specify a field — ` +
+            `count operates on rows, not a column expression.`,
+          'INVALID_QUERY',
+        );
+      }
+      projections.push(`COUNT(*) AS ${quoteDOIdent(alias)}`);
+      continue;
+    }
+    if (!field) {
+      throw new FiregraphError(
+        `Aggregate '${alias}' op '${op}' requires a field.`,
+        'INVALID_QUERY',
+      );
+    }
+    const { expr } = compileFieldRef(field);
+    const numeric = `CAST(${expr} AS REAL)`;
+    if (op === 'sum') projections.push(`SUM(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'avg') projections.push(`AVG(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'min') projections.push(`MIN(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'max') projections.push(`MAX(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else
+      throw new FiregraphError(
+        `DO SQLite backend does not support aggregate op: ${String(op)}`,
+        'INVALID_QUERY',
+      );
+  }
+
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const sql = `SELECT ${projections.join(', ')} FROM ${quoteDOIdent(table)}${where}`;
+  return { stmt: { sql, params }, aliases };
 }
 
 /**

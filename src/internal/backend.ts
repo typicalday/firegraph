@@ -10,6 +10,7 @@
  */
 
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   Capability,
@@ -201,4 +202,15 @@ export interface StorageBackend<C extends Capability = Capability> {
    * Optional — backends that can't support this should throw a clear error.
    */
   findEdgesGlobal?(params: FindEdgesParams, collectionName?: string): Promise<StoredGraphRecord[]>;
+
+  // --- Aggregations ---
+  /**
+   * Run an aggregate query (count/sum/avg/min/max). Present only on backends
+   * that declare `query.aggregate`. The map's keys are caller-defined aliases
+   * matching `AggregateSpec`; values are the resolved numeric results.
+   *
+   * Backends that can't satisfy a particular op throw `FiregraphError` with
+   * code `UNSUPPORTED_AGGREGATE` (e.g. Firestore Standard rejects min/max).
+   */
+  aggregate?(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>>;
 }

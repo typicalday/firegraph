@@ -19,7 +19,7 @@ import { FIELD_TO_COLUMN, quoteIdent } from '../internal/sqlite-schema.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
-import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
+import type { AggregateSpec, QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 
 const SQLITE_BACKEND_LABEL = 'shared-table SQLite';
 const SQLITE_BACKEND_ERR_LABEL = 'SQLite backend';
@@ -201,6 +201,93 @@ export function compileSelect(
   sql += compileLimit(options, params);
 
   return { sql, params };
+}
+
+/**
+ * Compile an aggregate query into a single `SELECT` statement.
+ *
+ * Each entry in `spec` becomes one aggregate function in the projection
+ * list, aliased with the caller-supplied key. Field references reuse
+ * `compileFieldRef` so dotted `data.*` paths are translated to
+ * `json_extract` exactly the same way as in regular filters — including
+ * the index-friendly inlined-path form.
+ *
+ * Numeric coercion: SUM/AVG/MIN/MAX cast `json_extract` results through
+ * `CAST(... AS REAL)`. SQLite stores JSON as text, so without the cast a
+ * numeric value extracted from the JSON column comes back as a string and
+ * `MIN`/`MAX` would compare lexicographically (`"100" < "20"`). The cast
+ * forces numeric semantics on those three; `COUNT(*)` is unaffected.
+ *
+ * Empty result handling matches the Firestore semantics surfaced by the
+ * `runFirestoreAggregate` helper: SUM/MIN/MAX of an empty set returns 0
+ * (resolving SQLite's `SUM(NULL) = NULL` to a clean number); AVG returns
+ * `NaN` (mathematically undefined for empty input). The translation
+ * happens at the JS layer in the SQLite backend so the SQL stays simple.
+ */
+export function compileAggregate(
+  table: string,
+  scope: string,
+  spec: AggregateSpec,
+  filters: QueryFilter[],
+): { stmt: CompiledStatement; aliases: string[] } {
+  const aliases = Object.keys(spec);
+  if (aliases.length === 0) {
+    throw new FiregraphError(
+      'aggregate() requires at least one aggregation in the `aggregates` map.',
+      'INVALID_QUERY',
+    );
+  }
+
+  const projections: string[] = [];
+  for (const alias of aliases) {
+    const { op, field } = spec[alias];
+    // Validate the alias as a JSON path key — same charset rule used for
+    // dotted field references. This guards against accidental SQL
+    // injection through caller-supplied alias names; aliases are inlined
+    // (not parametrised) because SQL aliases can't be bound parameters.
+    validateJsonPathKey(alias, SQLITE_BACKEND_ERR_LABEL);
+    if (op === 'count') {
+      // Reject a stray field — see `AggregateField` JSDoc for rationale.
+      if (field !== undefined) {
+        throw new FiregraphError(
+          `Aggregate '${alias}' op 'count' must not specify a field — ` +
+            `count operates on rows, not a column expression.`,
+          'INVALID_QUERY',
+        );
+      }
+      projections.push(`COUNT(*) AS ${quoteIdent(alias)}`);
+      continue;
+    }
+    if (!field) {
+      throw new FiregraphError(
+        `Aggregate '${alias}' op '${op}' requires a field.`,
+        'INVALID_QUERY',
+      );
+    }
+    const { expr } = compileFieldRef(field);
+    const numeric = `CAST(${expr} AS REAL)`;
+    if (op === 'sum') projections.push(`SUM(${numeric}) AS ${quoteIdent(alias)}`);
+    else if (op === 'avg') projections.push(`AVG(${numeric}) AS ${quoteIdent(alias)}`);
+    else if (op === 'min') projections.push(`MIN(${numeric}) AS ${quoteIdent(alias)}`);
+    else if (op === 'max') projections.push(`MAX(${numeric}) AS ${quoteIdent(alias)}`);
+    else
+      throw new FiregraphError(
+        `SQLite backend does not support aggregate op: ${String(op)}`,
+        'INVALID_QUERY',
+      );
+  }
+
+  const params: unknown[] = [scope];
+  const conditions: string[] = ['"scope" = ?'];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+
+  const sql =
+    `SELECT ${projections.join(', ')} ` +
+    `FROM ${quoteIdent(table)} ` +
+    `WHERE ${conditions.join(' AND ')}`;
+  return { stmt: { sql, params }, aliases };
 }
 
 /**

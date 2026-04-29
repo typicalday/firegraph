@@ -30,6 +30,7 @@ import type {
   WriteMode,
 } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
+import { runFirestoreAggregate } from '../internal/firestore-aggregate.js';
 import type {
   BatchAdapter,
   FirestoreAdapter,
@@ -45,6 +46,7 @@ import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-
 import { buildEdgeQueryPlan } from '../query.js';
 import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -70,6 +72,7 @@ export type FirestoreStandardCapability =
   | 'core.transactions'
   | 'core.batch'
   | 'core.subgraph'
+  | 'query.aggregate'
   | 'raw.firestore';
 
 const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
@@ -79,6 +82,7 @@ const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
     'core.transactions',
     'core.batch',
     'core.subgraph',
+    'query.aggregate',
     'raw.firestore',
   ]);
 
@@ -301,6 +305,14 @@ class FirestoreStandardBackendImpl implements StorageBackend<FirestoreStandardCa
     }
     const snap = await q.get();
     return snap.docs.map((doc) => doc.data() as StoredGraphRecord);
+  }
+
+  // --- Aggregate ---
+
+  aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+    return runFirestoreAggregate(this.db.collection(this.collectionPath), spec, filters, {
+      edition: 'standard',
+    });
   }
 }
 

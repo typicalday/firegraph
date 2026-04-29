@@ -25,6 +25,7 @@ import { NODE_RELATION } from '../internal/constants.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
+  AggregateSpec,
   BulkBatchError,
   BulkOptions,
   BulkResult,
@@ -37,6 +38,7 @@ import type {
 } from '../types.js';
 import type { CompiledStatement } from './sql.js';
 import {
+  compileAggregate,
   compileCountScopePrefix,
   compileDelete,
   compileDeleteScopePrefix,
@@ -231,6 +233,7 @@ export type SqliteCapability =
   | 'core.transactions'
   | 'core.batch'
   | 'core.subgraph'
+  | 'query.aggregate'
   | 'raw.sql';
 
 const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
@@ -238,6 +241,7 @@ const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
   'core.write',
   'core.batch',
   'core.subgraph',
+  'query.aggregate',
   'raw.sql',
 ];
 
@@ -609,6 +613,48 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     );
     const rows = await this.executor.all(stmt.sql, stmt.params);
     return rows.map(rowToRecord);
+  }
+
+  // --- Aggregate ---
+
+  /**
+   * Run an aggregate query in a single SQL statement. Supports the full
+   * count/sum/avg/min/max set — the SQLite engine evaluates each aggregate
+   * function over the filtered row set and the executor returns one row
+   * with one column per alias. SUM/MIN/MAX of an empty set returns 0
+   * (SQLite's `SUM(NULL) = NULL` is mapped to a clean number for the
+   * cross-backend contract); AVG returns NaN, matching the mathematical
+   * convention and the Firestore Standard helper.
+   */
+  async aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+    const { stmt, aliases } = compileAggregate(
+      this.collectionPath,
+      this.storageScope,
+      spec,
+      filters,
+    );
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const row = rows[0] ?? {};
+    const out: Record<string, number> = {};
+    for (const alias of aliases) {
+      const v = row[alias];
+      if (v === null || v === undefined) {
+        // SQLite returns NULL for SUM/MIN/MAX over an empty set. Resolve
+        // to 0 for SUM/MIN/MAX (well-defined) and NaN for AVG (empty-set
+        // average is undefined). COUNT(*) is never null.
+        const op = spec[alias].op;
+        out[alias] = op === 'avg' ? Number.NaN : 0;
+      } else if (typeof v === 'bigint') {
+        out[alias] = Number(v);
+      } else if (typeof v === 'number') {
+        out[alias] = v;
+      } else {
+        // Some drivers return strings for very large or precise numerics.
+        // Coerce defensively — the contract is `number`.
+        out[alias] = Number(v);
+      }
+    }
+    return out;
   }
 }
 

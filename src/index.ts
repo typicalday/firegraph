@@ -88,6 +88,10 @@ export {
 export { createTraversal } from './traverse.js';
 export type {
   AggregateExtension,
+  AggregateField,
+  AggregateOp,
+  AggregateResult,
+  AggregateSpec,
   BulkBatchError,
   BulkOptions,
   BulkProgress,

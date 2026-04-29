@@ -107,6 +107,7 @@ function makeInspectableNamespace(): InspectableNamespace {
     return {
       _fgGetDoc: wrap(doInstance._fgGetDoc.bind(doInstance)),
       _fgQuery: wrap(doInstance._fgQuery.bind(doInstance)),
+      _fgAggregate: wrap(doInstance._fgAggregate.bind(doInstance)),
       _fgSetDoc: wrap(doInstance._fgSetDoc.bind(doInstance)),
       _fgUpdateDoc: wrap(doInstance._fgUpdateDoc.bind(doInstance)),
       _fgDeleteDoc: wrap(doInstance._fgDeleteDoc.bind(doInstance)),

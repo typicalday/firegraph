@@ -226,6 +226,95 @@ describe('FiregraphDO — queries', () => {
   });
 });
 
+describe('FiregraphDO — aggregate', () => {
+  // The DO RPC returns `Record<string, number | null>` so the empty-set
+  // null distinction survives the structured-clone boundary; the
+  // DORPCBackend in src/cloudflare/backend.ts is responsible for the
+  // null → 0 / NaN resolution. These tests verify the wire shape directly.
+
+  let doInstance: FiregraphDO;
+
+  beforeEach(async () => {
+    ({ doInstance } = setupDO());
+    for (const [uid, price] of [
+      ['kX1nQ2mP9xR4wL1tY8s3a', 10],
+      ['kX1nQ2mP9xR4wL1tY8s3b', 20],
+      ['kX1nQ2mP9xR4wL1tY8s3c', 100],
+    ] as const) {
+      await doInstance._fgSetDoc(
+        computeNodeDocId(uid),
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: NODE_RELATION,
+          bType: 'tour',
+          bUid: uid,
+          data: { price, status: 'active' },
+        },
+        'replace',
+      );
+    }
+  });
+
+  it('returns count/sum/avg over the seeded rows', async () => {
+    const out = await doInstance._fgAggregate(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    // Numbers cross the wire as `number` (or null for empty SUM/AVG); the DO
+    // RPC coerces bigint → number on its side so the wire contract is clean.
+    expect(out.n).toBe(3);
+    expect(out.s).toBe(130);
+    // Average of 10/20/100 over 3 rows = 43.333...
+    expect(out.a).toBeCloseTo(130 / 3, 6);
+  });
+
+  it('returns numeric MIN/MAX (not lexicographic) thanks to CAST AS REAL', async () => {
+    // Without the cast applied in compileDOAggregate, MIN("100", "20", "10")
+    // would resolve to "10" (lexicographic) — exactly the bug the cast
+    // exists to defend against.
+    const out = await doInstance._fgAggregate(
+      {
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.lo).toBe(10);
+    expect(out.hi).toBe(100);
+  });
+
+  it('returns the full {n: 0, s: null, a: null, lo: null, hi: null} wire shape over an empty filter set', async () => {
+    // The DO returns null directly for SUM/MIN/MAX/AVG so the client-side
+    // backend can resolve null → 0 (SUM/MIN/MAX) or NaN (AVG) consistently
+    // across backends. COUNT is special: SQLite returns 0, never null.
+    // Pin the FULL object — not per-key probes — so a regression that
+    // accidentally substitutes 0/NaN for null on the DO side (defeating
+    // the whole reason this RPC carries `number | null`) is caught here.
+    const out = await doInstance._fgAggregate(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'doesNotExist' }],
+    );
+    expect(out).toEqual({
+      n: 0,
+      s: null,
+      a: null,
+      lo: null,
+      hi: null,
+    });
+  });
+});
+
 describe('FiregraphDO — batch', () => {
   let doInstance: FiregraphDO;
   let db: BetterSqliteDb;

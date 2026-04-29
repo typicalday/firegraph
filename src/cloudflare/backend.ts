@@ -44,6 +44,7 @@ import type {
 import { createCapabilities } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -85,6 +86,18 @@ export interface DurableObjectIdLike {
 export interface FiregraphStub {
   _fgGetDoc(docId: string): Promise<DORecordWire | null>;
   _fgQuery(filters: QueryFilter[], options?: QueryOptions): Promise<DORecordWire[]>;
+  /**
+   * Optional — added in Phase 4 (`query.aggregate`). Marked optional so
+   * external worker code that hand-rolls a stub wrapper around a real DO
+   * stub (e.g. for testing or for layering structured-clone shims) keeps
+   * compiling without modification. `FiregraphDO` always implements this
+   * method, but callers of `DORPCBackend.aggregate` must either assert the
+   * stub supports it or be prepared for `UNSUPPORTED_OPERATION` at runtime.
+   */
+  _fgAggregate?(
+    spec: AggregateSpec,
+    filters: QueryFilter[],
+  ): Promise<Record<string, number | null>>;
   _fgSetDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void>;
   _fgUpdateDoc(docId: string, update: UpdatePayload): Promise<void>;
   _fgDeleteDoc(docId: string): Promise<void>;
@@ -230,13 +243,19 @@ export interface DORPCBackendOptions {
  * without a corresponding runtime method would let callers reach a method
  * that doesn't exist.
  */
-export type CloudflareCapability = 'core.read' | 'core.write' | 'core.batch' | 'core.subgraph';
+export type CloudflareCapability =
+  | 'core.read'
+  | 'core.write'
+  | 'core.batch'
+  | 'core.subgraph'
+  | 'query.aggregate';
 
 const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>([
   'core.read',
   'core.write',
   'core.batch',
   'core.subgraph',
+  'query.aggregate',
 ]);
 
 export class DORPCBackend implements StorageBackend<CloudflareCapability> {
@@ -278,6 +297,43 @@ export class DORPCBackend implements StorageBackend<CloudflareCapability> {
   async query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]> {
     const wires = await this.stub._fgQuery(filters, options);
     return wires.map(hydrateDORecord);
+  }
+
+  // --- Aggregate ---
+
+  /**
+   * Run an aggregate query inside the backing DO. The DO returns a row of
+   * `{ alias: number | null }` (null = SQLite NULL for SUM/MIN/MAX over an
+   * empty set, or the count being literally 0); this method resolves NULL
+   * to 0 for SUM/MIN/MAX and to NaN for AVG, matching the SQLite backend
+   * and the Firestore Standard helper.
+   */
+  async aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+    const stub = this.stub;
+    if (!stub._fgAggregate) {
+      // `_fgAggregate` is optional on `FiregraphStub` so external worker
+      // code that hand-rolls a stub wrapper keeps compiling. `FiregraphDO`
+      // always implements it, but a custom wrapper may not — surface a
+      // clean error rather than `TypeError: stub._fgAggregate is not a
+      // function`.
+      throw new FiregraphError(
+        'aggregate() not supported by this Durable Object stub. The wrapped ' +
+          'stub does not implement `_fgAggregate`. If you control the stub ' +
+          'wrapper, forward `_fgAggregate` to the underlying DO.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const wire = await stub._fgAggregate(spec, filters);
+    const out: Record<string, number> = {};
+    for (const [alias, { op }] of Object.entries(spec)) {
+      const v = wire[alias];
+      if (v === null || v === undefined) {
+        out[alias] = op === 'avg' ? Number.NaN : 0;
+      } else {
+        out[alias] = v;
+      }
+    }
+    return out;
   }
 
   // --- Writes ---

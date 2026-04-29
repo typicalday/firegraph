@@ -129,11 +129,21 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('raw.firestore')).toBe(true);
   });
 
-  it('Standard edition does not silently declare extension capabilities before they ship', () => {
+  it('Standard edition declares query.aggregate (Phase 4) — count/sum/avg only', () => {
+    // Standard supports the classic Query.aggregate API (count/sum/avg). It
+    // does NOT support min/max — those throw UNSUPPORTED_AGGREGATE at runtime.
+    // The capability flag means "supports at least count/sum/avg", per the
+    // Phase 4 contract documented in the design plan.
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    const caps = backend.capabilities;
+    expect(caps.has('query.aggregate')).toBe(true);
+  });
+
+  it('Standard edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    expect(caps.has('query.aggregate')).toBe(false);
+    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('query.select')).toBe(false);
@@ -156,13 +166,24 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('raw.firestore')).toBe(true);
   });
 
-  it('Enterprise edition does not silently declare extension capabilities before Phases 4-10 ship', () => {
+  it('Enterprise edition declares query.aggregate (Phase 4)', () => {
+    // Enterprise routes through the same classic Query.aggregate helper as
+    // Standard for now — pipeline-based min/max is a future optimization
+    // (Phase 11+). Both editions reject min/max with UNSUPPORTED_AGGREGATE.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    const caps = backend.capabilities;
+    expect(caps.has('query.aggregate')).toBe(true);
+  });
+
+  it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
     });
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    expect(caps.has('query.aggregate')).toBe(false);
+    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('query.select')).toBe(false);
@@ -190,10 +211,18 @@ describe('SqliteBackendImpl capabilities', () => {
     expect(backend.capabilities.has('core.transactions')).toBe(true);
   });
 
+  it('declares query.aggregate (Phase 4) — full count/sum/avg/min/max set via SQL', () => {
+    // SQLite implements all five aggregate ops natively in `compileAggregate`
+    // (with `CAST(... AS REAL)` to force numeric semantics on JSON-extracted
+    // values). Unlike the Firestore editions, min/max work here.
+    const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
+    expect(backend.capabilities.has('query.aggregate')).toBe(true);
+  });
+
   it('does not silently declare query.* extensions before they ship', () => {
     const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
     const caps = backend.capabilities;
-    expect(caps.has('query.aggregate')).toBe(false);
+    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('query.select')).toBe(false);
@@ -208,6 +237,7 @@ describe('DORPCBackend capabilities', () => {
     const stub: FiregraphStub = {
       _fgGetDoc: vi.fn(),
       _fgQuery: vi.fn(),
+      _fgAggregate: vi.fn(),
       _fgSetDoc: vi.fn(),
       _fgUpdateDoc: vi.fn(),
       _fgDeleteDoc: vi.fn(),
@@ -234,6 +264,14 @@ describe('DORPCBackend capabilities', () => {
     // SQL surface is hidden behind RPC; not exposed.
     expect(caps.has('raw.sql')).toBe(false);
     expect(caps.has('raw.firestore')).toBe(false);
+  });
+
+  it('declares query.aggregate (Phase 4) — full count/sum/avg/min/max via DO SQLite RPC', () => {
+    // The DO backend forwards aggregates through `_fgAggregate`, which runs
+    // `compileDOAggregate` against the per-DO SQLite. Same surface as the
+    // shared-table SQLite backend, just dispatched over RPC.
+    const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
+    expect(backend.capabilities.has('query.aggregate')).toBe(true);
   });
 });
 

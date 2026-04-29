@@ -32,6 +32,7 @@ import type {
   WriteMode,
 } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
+import { runFirestoreAggregate } from '../internal/firestore-aggregate.js';
 import type {
   BatchAdapter,
   FirestoreAdapter,
@@ -47,6 +48,7 @@ import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-
 import { buildEdgeQueryPlan } from '../query.js';
 import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
   CascadeResult,
@@ -80,6 +82,7 @@ export type FirestoreEnterpriseCapability =
   | 'core.transactions'
   | 'core.batch'
   | 'core.subgraph'
+  | 'query.aggregate'
   | 'raw.firestore';
 
 const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
@@ -89,6 +92,7 @@ const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'core.transactions',
     'core.batch',
     'core.subgraph',
+    'query.aggregate',
     'raw.firestore',
   ]);
 
@@ -354,6 +358,21 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     }
     const snap = await q.get();
     return snap.docs.map((doc) => doc.data() as StoredGraphRecord);
+  }
+
+  // --- Aggregate ---
+
+  /**
+   * Aggregate via the classic `Query.aggregate()` API. Supports count/sum/avg
+   * — min/max throws `UNSUPPORTED_AGGREGATE`. The Pipelines `aggregate()`
+   * stage could in principle add min/max on Enterprise, but that is deferred
+   * to a future phase; both editions currently route through the same
+   * classic-API helper so capability semantics stay symmetric.
+   */
+  aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+    return runFirestoreAggregate(this.db.collection(this.collectionPath), spec, filters, {
+      edition: 'enterprise',
+    });
   }
 }
 
