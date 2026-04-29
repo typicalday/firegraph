@@ -28,7 +28,6 @@ import type {
   BulkBatchError,
   BulkOptions,
   BulkResult,
-  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -209,16 +208,32 @@ class SqliteBatchBackendImpl implements BatchBackend {
 }
 
 /**
- * Capabilities the SQLite-backed `StorageBackend` declares.
+ * Capability union declared by the SQLite-backed `StorageBackend`.
  *
- * `core.transactions` is conditional: D1 has no read-then-conditional-write
- * transactions, so a D1 executor leaves `executor.transaction` undefined and
- * we drop the cap. DO SQLite and better-sqlite3 expose interactive
- * transactions and pick up the cap. The `query.*` extensions are not
- * declared here — Phase 4+ will wire them in once the SQLite path actually
- * implements aggregate / join / dml.
+ * `core.transactions` is part of the static union because `runTransaction`
+ * is always present as a method on the class. The runtime cap-set determines
+ * whether that method is *functional*: D1 leaves `executor.transaction`
+ * undefined and the call throws `UNSUPPORTED_OPERATION`; DO SQLite and
+ * better-sqlite3 wire the executor and the call works. The static type
+ * therefore promises only that the method exists — callers that care about
+ * portability check `client.capabilities.has('core.transactions')` before
+ * opening a tx, and code that runs against an unknown driver can rely on the
+ * runtime guard inside `runTransaction`.
+ *
+ * The `query.*` extension capabilities are NOT declared here — Phases 4+
+ * wire them in once the SQLite path actually implements aggregate / join /
+ * dml. Conservative declaration keeps the type-level gate from lying about
+ * surface that throws at runtime.
  */
-const SQLITE_CORE_CAPS: ReadonlyArray<Capability> = [
+export type SqliteCapability =
+  | 'core.read'
+  | 'core.write'
+  | 'core.transactions'
+  | 'core.batch'
+  | 'core.subgraph'
+  | 'raw.sql';
+
+const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
   'core.read',
   'core.write',
   'core.batch',
@@ -226,8 +241,8 @@ const SQLITE_CORE_CAPS: ReadonlyArray<Capability> = [
   'raw.sql',
 ];
 
-class SqliteBackendImpl implements StorageBackend {
-  readonly capabilities: BackendCapabilities;
+class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
+  readonly capabilities: BackendCapabilities<SqliteCapability>;
   /** Logical table name (returned through `collectionPath` for parity with Firestore). */
   readonly collectionPath: string;
   readonly scopePath: string;
@@ -243,7 +258,7 @@ class SqliteBackendImpl implements StorageBackend {
     this.collectionPath = tableName;
     this.storageScope = storageScope;
     this.scopePath = scopePath;
-    const caps = new Set<Capability>(SQLITE_CORE_CAPS);
+    const caps = new Set<SqliteCapability>(SQLITE_CORE_CAPS);
     if (typeof executor.transaction === 'function') {
       caps.add('core.transactions');
     }
@@ -609,7 +624,7 @@ export function createSqliteBackend(
   executor: SqliteExecutor,
   tableName: string,
   options: SqliteBackendOptions = {},
-): StorageBackend {
+): StorageBackend<SqliteCapability> {
   const storageScope = options.storageScope ?? '';
   const scopePath = options.scopePath ?? '';
   return new SqliteBackendImpl(executor, tableName, storageScope, scopePath);

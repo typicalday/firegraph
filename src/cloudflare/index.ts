@@ -40,6 +40,7 @@
  */
 
 export type {
+  CloudflareCapability,
   DORPCBackendOptions,
   DurableObjectIdLike,
   FiregraphNamespace,

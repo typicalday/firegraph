@@ -47,7 +47,6 @@ import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
   BulkOptions,
   BulkResult,
-  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -57,21 +56,31 @@ import type {
 } from '../types.js';
 
 /**
- * The Standard backend's static capability set.
+ * Capability union declared by the Firestore Standard backend.
  *
  * Conservative declaration: only capabilities backed by an actual runtime
- * method are declared. Phases 4-10 layer in `query.aggregate`,
+ * method are listed. Phases 4-10 layer in `query.aggregate`,
  * `query.select`, `search.vector`, and `realtime.listen` as their
- * corresponding methods land.
+ * corresponding methods land — this union and the matching cap-set
+ * literal are updated in lockstep.
  */
-const STANDARD_CAPS: ReadonlySet<Capability> = new Set<Capability>([
-  'core.read',
-  'core.write',
-  'core.transactions',
-  'core.batch',
-  'core.subgraph',
-  'raw.firestore',
-]);
+export type FirestoreStandardCapability =
+  | 'core.read'
+  | 'core.write'
+  | 'core.transactions'
+  | 'core.batch'
+  | 'core.subgraph'
+  | 'raw.firestore';
+
+const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
+  new Set<FirestoreStandardCapability>([
+    'core.read',
+    'core.write',
+    'core.transactions',
+    'core.batch',
+    'core.subgraph',
+    'raw.firestore',
+  ]);
 
 export interface FirestoreStandardOptions {
   /** Internal: the logical scope path inherited from a parent subgraph. */
@@ -177,8 +186,9 @@ class FirestoreStandardBatchBackend implements BatchBackend {
   }
 }
 
-class FirestoreStandardBackendImpl implements StorageBackend {
-  readonly capabilities: BackendCapabilities = createCapabilities(STANDARD_CAPS);
+class FirestoreStandardBackendImpl implements StorageBackend<FirestoreStandardCapability> {
+  readonly capabilities: BackendCapabilities<FirestoreStandardCapability> =
+    createCapabilities(STANDARD_CAPS);
   readonly collectionPath: string;
   readonly scopePath: string;
   private readonly adapter: FirestoreAdapter;
@@ -306,7 +316,7 @@ export function createFirestoreStandardBackend(
   db: Firestore,
   collectionPath: string,
   options: FirestoreStandardOptions = {},
-): StorageBackend {
+): StorageBackend<FirestoreStandardCapability> {
   const scopePath = options.scopePath ?? '';
   return new FirestoreStandardBackendImpl(db, collectionPath, scopePath);
 }

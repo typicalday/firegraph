@@ -21,9 +21,12 @@ import { GraphTransactionImpl } from './transaction.js';
 import type {
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
+  CoreGraphClient,
   DefineTypeOptions,
   DynamicGraphClient,
+  DynamicGraphMethods,
   DynamicRegistryConfig,
   EdgeTopology,
   FindEdgesParams,
@@ -64,7 +67,7 @@ function buildWritableEdgeRecord(
   return { aType, aUid, axbType, bType, bUid, data };
 }
 
-export class GraphClientImpl implements DynamicGraphClient {
+export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
   readonly scanProtection: ScanProtection;
 
   // Static mode
@@ -675,23 +678,52 @@ export class GraphClientImpl implements DynamicGraphClient {
 /**
  * Create a `GraphClient` backed by a `StorageBackend`.
  *
- * This is the canonical client factory after the Phase 2 edition split:
- * each edition's package subpath (`firegraph/firestore-standard`,
- * `firegraph/firestore-enterprise`, `firegraph/sqlite`,
- * `firegraph/cloudflare`) re-exports this function for ergonomic single-
- * import usage. The Firestore-specific overload that used to live in
- * `src/firestore.ts` has been removed — callers must now build a backend
- * via the appropriate edition factory and pass it in.
+ * Phase 3: the type parameter `C` is inferred from
+ * `StorageBackend<C>.capabilities` and propagates to the returned
+ * `GraphClient<C>`. Extension surfaces (aggregate, search, raw escape
+ * hatches, …) are conditionally intersected — they exist on the returned
+ * type only when `C` declares the matching capability. Calls into
+ * undeclared extensions are TypeScript errors at the call site, not
+ * runtime failures.
+ *
+ * The runtime delegate `GraphClientImpl` carries only the portable core
+ * methods today; extension methods land in Phases 4–10 alongside their
+ * backend implementations. Until then the type-level surface is ahead of
+ * the runtime, but no backend declares any extension capability so the
+ * narrowing is effectively a no-op for current callers.
  *
  * `createGraphClientFromBackend` is retained as a deprecated alias for
- * backward compatibility while the codebase migrates.
+ * backward compatibility while the codebase migrates off the old name.
  */
-export function createGraphClient(
-  backend: StorageBackend,
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
+  options: GraphClientOptions & { registryMode: DynamicRegistryConfig },
+  metaBackend?: StorageBackend,
+): DynamicGraphClient<C>;
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
   options?: GraphClientOptions,
   metaBackend?: StorageBackend,
-): GraphClient | DynamicGraphClient {
-  return new GraphClientImpl(backend, options, metaBackend) as GraphClient | DynamicGraphClient;
+): GraphClient<C>;
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
+  options?: GraphClientOptions,
+  metaBackend?: StorageBackend,
+): GraphClient<C> | DynamicGraphClient<C> {
+  // The double cast bridges the gap between the runtime delegate
+  // (`GraphClientImpl`, which structurally implements
+  // `CoreGraphClient & DynamicGraphMethods`) and the conditionally-
+  // intersected return types `GraphClient<C>` / `DynamicGraphClient<C>`.
+  // The implementation signature can't pick between the two overloads
+  // without inspecting `options.registryMode` at the type level, which
+  // requires conditional types over the `options` argument; the cast
+  // collapses that ambiguity. Sound today because every `*Extension`
+  // body is empty and `DynamicGraphMethods` is always present at runtime
+  // (the validation routing inside `GraphClientImpl` no-ops the dynamic
+  // methods when registryMode is absent).
+  return new GraphClientImpl(backend, options, metaBackend) as unknown as
+    | GraphClient<C>
+    | DynamicGraphClient<C>;
 }
 
 /**

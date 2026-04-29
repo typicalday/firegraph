@@ -9,5 +9,5 @@ export { createGraphClient } from '../client.js';
 export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
 export { generateId } from '../id.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';
-export type { FirestoreStandardOptions } from './backend.js';
+export type { FirestoreStandardCapability, FirestoreStandardOptions } from './backend.js';
 export { createFirestoreStandardBackend } from './backend.js';

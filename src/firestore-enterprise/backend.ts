@@ -49,7 +49,6 @@ import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
   BulkOptions,
   BulkResult,
-  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -61,27 +60,37 @@ import type { PipelineQueryAdapter } from './pipeline-adapter.js';
 import { createPipelineQueryAdapter } from './pipeline-adapter.js';
 
 /**
- * The Enterprise backend's static capability set.
+ * Capability union declared by the Firestore Enterprise backend.
  *
  * `core.transactions` is included because transactions are still supported
  * via the classic Query API (pipelines themselves are not transactionally
  * bound; the GA notes call this out explicitly). The pipeline-only
  * extension capabilities (`query.aggregate`, `query.join`, `query.dml`,
  * `search.*`) are NOT declared yet — Phases 4-10 wire them in once the
- * matching backend methods exist.
+ * matching backend methods exist, at which point this union grows in
+ * lockstep with the cap-set literal below.
  *
  * Conservative declaration matters here: declaring a capability we don't
  * implement turns the type-level gate (Phase 3) into a lie that throws at
  * runtime instead of failing to compile.
  */
-const ENTERPRISE_CAPS: ReadonlySet<Capability> = new Set<Capability>([
-  'core.read',
-  'core.write',
-  'core.transactions',
-  'core.batch',
-  'core.subgraph',
-  'raw.firestore',
-]);
+export type FirestoreEnterpriseCapability =
+  | 'core.read'
+  | 'core.write'
+  | 'core.transactions'
+  | 'core.batch'
+  | 'core.subgraph'
+  | 'raw.firestore';
+
+const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
+  new Set<FirestoreEnterpriseCapability>([
+    'core.read',
+    'core.write',
+    'core.transactions',
+    'core.batch',
+    'core.subgraph',
+    'raw.firestore',
+  ]);
 
 export type FirestoreEnterpriseQueryMode = 'pipeline' | 'classic';
 
@@ -222,8 +231,9 @@ class FirestoreEnterpriseBatchBackend implements BatchBackend {
   }
 }
 
-class FirestoreEnterpriseBackendImpl implements StorageBackend {
-  readonly capabilities: BackendCapabilities = createCapabilities(ENTERPRISE_CAPS);
+class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpriseCapability> {
+  readonly capabilities: BackendCapabilities<FirestoreEnterpriseCapability> =
+    createCapabilities(ENTERPRISE_CAPS);
   readonly collectionPath: string;
   readonly scopePath: string;
   private readonly adapter: FirestoreAdapter;
@@ -360,7 +370,7 @@ export function createFirestoreEnterpriseBackend(
   db: Firestore,
   collectionPath: string,
   options: FirestoreEnterpriseOptions = {},
-): StorageBackend {
+): StorageBackend<FirestoreEnterpriseCapability> {
   const requestedMode: FirestoreEnterpriseQueryMode = options.defaultQueryMode ?? 'pipeline';
   const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
   const effectiveMode: FirestoreEnterpriseQueryMode =

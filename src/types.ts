@@ -588,7 +588,18 @@ export interface GraphWriter {
   removeEdge(aUid: string, axbType: string, bUid: string): Promise<void>;
 }
 
-export interface GraphClient extends GraphReader, GraphWriter {
+/**
+ * Portable graph client surface.
+ *
+ * Every backend supports these methods unconditionally — they are the
+ * "graph as a graph" operations: read/write nodes and edges, run
+ * transactions, scope into subgraphs, etc. Edition-specific extensions
+ * (aggregate, full-text search, vector search, raw escape hatches, etc.)
+ * are added by intersection in `GraphClient<C>` only when the backend
+ * declares the matching capability — see the `*Extension` interfaces and
+ * `GraphClient<C>` below.
+ */
+export interface CoreGraphClient extends GraphReader, GraphWriter {
   runTransaction<T>(fn: (tx: GraphTransaction) => Promise<T>): Promise<T>;
   batch(): GraphBatch;
   /** Delete a node and all its outgoing/incoming edges in chunked batches. */
@@ -626,7 +637,111 @@ export interface GraphClient extends GraphReader, GraphWriter {
   findEdgesGlobal(params: FindEdgesParams, collectionName?: string): Promise<StoredGraphRecord[]>;
 }
 
-export interface DynamicGraphClient extends GraphClient {
+// ---------------------------------------------------------------------------
+// Capability Extensions
+// ---------------------------------------------------------------------------
+//
+// Each `*Extension` interface bundles one logical capability's surface.
+// Phase 3 declares the *types* — runtime methods on `GraphClientImpl` land
+// in Phases 4–10 alongside the matching backend implementations. Until then
+// the extension methods are unreachable in practice because no backend
+// declares the relevant capability (see `BackendCapabilities` in each
+// backend's `*BackendImpl` constructor). The conservative invariant
+// preserves the contract: a declared capability is always backed by a real
+// method.
+
+/** Aggregate query surface — count/sum/avg/min/max over a filter set. */
+export interface AggregateExtension {
+  // Methods land in Phase 4. The interface stays empty for now so it can
+  // grow without breaking consumers that only typecheck against the type.
+}
+
+/** Server-side projection — return only the requested data fields. */
+export interface SelectExtension {
+  // Methods land in Phase 7.
+}
+
+/** Multi-hop fan-out with target-node hydration in one round trip. */
+export interface JoinExtension {
+  // Methods land in Phase 6.
+}
+
+/** Server-side conditional bulk DML — bulkDelete / bulkUpdate. */
+export interface DmlExtension {
+  // Methods land in Phase 5.
+}
+
+/** Native full-text search. */
+export interface FullTextSearchExtension {
+  // Methods land in Phase 9.
+}
+
+/** Native geospatial distance search. */
+export interface GeoExtension {
+  // Methods land in Phase 10.
+}
+
+/** Native vector / nearest-neighbour search. */
+export interface VectorExtension {
+  // Methods land in Phase 8.
+}
+
+/** Escape hatch — expose the underlying Firestore handle. */
+export interface RawFirestoreExtension {
+  // Property surface lands in a later phase. The interface exists today so
+  // that `GraphClient<'raw.firestore' | …>` is a distinct type from
+  // `GraphClient<…>` without `'raw.firestore'`, even before any property
+  // is declared.
+}
+
+/** Escape hatch — expose the underlying SQL executor. */
+export interface RawSqlExtension {
+  // Property surface lands in a later phase.
+}
+
+/** Realtime listener API — `onSnapshot`-style live subscriptions. */
+export interface RealtimeListenExtension {
+  // Method surface lands in a later phase. The interface exists today so the
+  // conditional intersection in `GraphClient<C>` is symmetric with every
+  // other capability slot — `realtime.listen` is part of the closed
+  // `Capability` union, so it must have a matching extension placeholder.
+}
+
+/**
+ * Capability-gated graph client.
+ *
+ * `C` is the closed union of capabilities the underlying backend
+ * declared. Each extension is conditionally intersected: it appears in the
+ * resulting type only when the matching capability is in `C`. The default
+ * `C = Capability` evaluates every conditional truthy, yielding the full
+ * surface — that is the "permissive" shape returned when no capability
+ * narrowing is in effect (e.g. legacy callers using
+ * `let x: GraphClient = …` without a parameter).
+ *
+ * Why distributive conditionals work: `'query.aggregate' extends C ? A : B`
+ * distributes over the union members of `C`. If any union member is
+ * `'query.aggregate'`, the conditional evaluates to `A`; otherwise `B`.
+ * Intersection with `object` (the false branch) is a no-op, so omitted
+ * extensions contribute nothing to the resulting type.
+ */
+export type GraphClient<C extends Capability = Capability> = CoreGraphClient &
+  ('query.aggregate' extends C ? AggregateExtension : object) &
+  ('query.select' extends C ? SelectExtension : object) &
+  ('query.join' extends C ? JoinExtension : object) &
+  ('query.dml' extends C ? DmlExtension : object) &
+  ('search.fullText' extends C ? FullTextSearchExtension : object) &
+  ('search.geo' extends C ? GeoExtension : object) &
+  ('search.vector' extends C ? VectorExtension : object) &
+  ('realtime.listen' extends C ? RealtimeListenExtension : object) &
+  ('raw.firestore' extends C ? RawFirestoreExtension : object) &
+  ('raw.sql' extends C ? RawSqlExtension : object);
+
+/**
+ * Methods present only on dynamic-registry clients. Composed with
+ * `GraphClient<C>` to form `DynamicGraphClient<C>` — the type returned
+ * by `createGraphClient(...)` when `registryMode` is set on the options.
+ */
+export interface DynamicGraphMethods {
   /** Define or update a node type in the dynamic registry. */
   defineNodeType(
     name: string,
@@ -647,6 +762,13 @@ export interface DynamicGraphClient extends GraphClient {
   /** Reload the registry from meta-type nodes in the graph. */
   reloadRegistry(): Promise<void>;
 }
+
+/**
+ * Dynamic-registry graph client. Same conditional capability surface as
+ * `GraphClient<C>`, plus the meta-type definition methods.
+ */
+export type DynamicGraphClient<C extends Capability = Capability> = GraphClient<C> &
+  DynamicGraphMethods;
 
 export interface GraphTransaction extends GraphReader, GraphWriter {}
 

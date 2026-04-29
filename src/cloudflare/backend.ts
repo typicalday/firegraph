@@ -46,7 +46,6 @@ import { NODE_RELATION } from '../internal/constants.js';
 import type {
   BulkOptions,
   BulkResult,
-  Capability,
   CascadeResult,
   DynamicGraphClient,
   FindEdgesParams,
@@ -217,7 +216,7 @@ export interface DORPCBackendOptions {
 }
 
 /**
- * Capabilities the DO RPC backend declares.
+ * Capability union declared by the DO RPC backend.
  *
  * Note the absence of `core.transactions`: `runTransaction` throws
  * `UNSUPPORTED_OPERATION` because holding a synchronous SQLite transaction
@@ -225,16 +224,23 @@ export interface DORPCBackendOptions {
  * `transactionsUnsupported` above). `raw.sql` is also intentionally absent —
  * the SQL surface lives inside the DO and isn't exposed across the RPC
  * boundary.
+ *
+ * Conservative declaration matters: the type-level capability gate (Phase 3)
+ * relies on the union and the runtime cap-set agreeing. Adding a cap here
+ * without a corresponding runtime method would let callers reach a method
+ * that doesn't exist.
  */
-const DO_CAPS: ReadonlySet<Capability> = new Set<Capability>([
+export type CloudflareCapability = 'core.read' | 'core.write' | 'core.batch' | 'core.subgraph';
+
+const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>([
   'core.read',
   'core.write',
   'core.batch',
   'core.subgraph',
 ]);
 
-export class DORPCBackend implements StorageBackend {
-  readonly capabilities: BackendCapabilities = createCapabilities(DO_CAPS);
+export class DORPCBackend implements StorageBackend<CloudflareCapability> {
+  readonly capabilities: BackendCapabilities<CloudflareCapability> = createCapabilities(DO_CAPS);
   readonly collectionPath = 'firegraph';
   readonly scopePath: string;
   /** @internal */

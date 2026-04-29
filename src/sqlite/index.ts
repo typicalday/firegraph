@@ -11,5 +11,5 @@ export { createGraphClient } from '../client.js';
 export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
 export { generateId } from '../id.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';
-export type { SqliteBackendOptions } from './backend.js';
+export type { SqliteBackendOptions, SqliteCapability } from './backend.js';
 export { createSqliteBackend } from './backend.js';
