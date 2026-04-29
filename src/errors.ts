@@ -113,3 +113,29 @@ export class CrossBackendTransactionError extends FiregraphError {
     this.name = 'CrossBackendTransactionError';
   }
 }
+
+/**
+ * Thrown when a caller invokes a capability-gated operation on a backend
+ * that does not declare the required capability. Capability gating is
+ * primarily a compile-time concern (see `BackendCapabilities` and the
+ * type-level extension surfaces in `GraphClient<C>`), but this runtime
+ * error covers the cases where the type system is bypassed — dynamic
+ * registries, `as any` casts, or callers explicitly downcasting through
+ * the generic-erased `StorageBackend` shape.
+ *
+ * The error code is `CAPABILITY_NOT_SUPPORTED`. The message names the
+ * missing capability and the backend that was asked, so app code can
+ * diagnose without inspecting the cap set itself.
+ */
+export class CapabilityNotSupportedError extends FiregraphError {
+  constructor(
+    public readonly capability: string,
+    backendDescription: string,
+  ) {
+    super(
+      `Capability "${capability}" is not supported by ${backendDescription}.`,
+      'CAPABILITY_NOT_SUPPORTED',
+    );
+    this.name = 'CapabilityNotSupportedError';
+  }
+}

@@ -29,11 +29,13 @@ import type {
   WritableRecord,
   WriteMode,
 } from '../../src/internal/backend.js';
+import { createCapabilities } from '../../src/internal/backend.js';
 import { createRoutingBackend, type RoutingContext } from '../../src/internal/routing-backend.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -102,6 +104,9 @@ function createMockBackend(
   };
 
   const backend: MockBackend = {
+    capabilities: createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    ),
     collectionPath,
     scopePath,
     calls,

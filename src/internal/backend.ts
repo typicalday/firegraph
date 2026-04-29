@@ -12,6 +12,7 @@
 import type {
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -20,6 +21,58 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type { DataPathOp } from './write-plan.js';
+
+/**
+ * Runtime descriptor of which `Capability`s a `StorageBackend` actually
+ * implements. Static for the lifetime of a backend instance; declared at
+ * construction. The phantom `_phantom` field is a type-level marker
+ * (never read at runtime) that lets the type parameter `C` flow through
+ * the descriptor for use by `GraphClient<C>` conditional gating.
+ *
+ * Use `createCapabilities` to construct one. Use `.has(c)` to check
+ * membership at runtime; the type system gates extension methods on the
+ * client level (see `.claude/backend-capabilities.md`).
+ */
+export interface BackendCapabilities<C extends Capability = Capability> {
+  /** Runtime membership check. */
+  has(capability: Capability): boolean;
+  /** Iterate declared capabilities (diagnostics, error messages). */
+  values(): IterableIterator<Capability>;
+  /** Type-level marker. Never read at runtime. */
+  readonly _phantom?: C;
+}
+
+/**
+ * Construct a `BackendCapabilities<C>` from an explicit set. The set is
+ * captured by reference; callers should treat it as readonly after passing
+ * it in. The runtime cost of `has()` is one Set lookup.
+ */
+export function createCapabilities<C extends Capability>(
+  caps: ReadonlySet<C>,
+): BackendCapabilities<C> {
+  return {
+    has: (capability: Capability): boolean => caps.has(capability as C),
+    values: () => caps.values() as IterableIterator<Capability>,
+  };
+}
+
+/**
+ * Intersect multiple capability sets. Used by `RoutingStorageBackend` to
+ * derive the capability set of a composite backend: a routed graph can
+ * only honour a capability if every wrapped backend honours it.
+ */
+export function intersectCapabilities(
+  parts: ReadonlyArray<BackendCapabilities>,
+): BackendCapabilities {
+  if (parts.length === 0) return createCapabilities(new Set<Capability>());
+  const sets = parts.map((p) => new Set<Capability>(p.values()));
+  const [first, ...rest] = sets;
+  const intersection = new Set<Capability>();
+  for (const c of first) {
+    if (rest.every((s) => s.has(c))) intersection.add(c);
+  }
+  return createCapabilities(intersection);
+}
 
 /**
  * Per-record write payload — backend-agnostic. Timestamps are not present;
@@ -106,7 +159,9 @@ export interface BatchBackend {
  * that's a collection path; for SQLite it's a (table, scopePath) pair.
  * `subgraph()` returns a child backend bound to a nested location.
  */
-export interface StorageBackend {
+export interface StorageBackend<C extends Capability = Capability> {
+  /** Capabilities this backend instance declares. Static for the lifetime of the backend. */
+  readonly capabilities: BackendCapabilities<C>;
   /** Backend-internal location identifier (collection path or table name). */
   readonly collectionPath: string;
   /** Subgraph scope (empty string for root). */

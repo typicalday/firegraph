@@ -19,6 +19,7 @@ import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -28,6 +29,7 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -35,6 +37,7 @@ import type {
   WritableRecord,
   WriteMode,
 } from './backend.js';
+import { createCapabilities } from './backend.js';
 import type { BatchAdapter, FirestoreAdapter, TransactionAdapter } from './firestore-adapter.js';
 import {
   createBatchAdapter,
@@ -167,7 +170,23 @@ class FirestoreBatchBackend implements BatchBackend {
   }
 }
 
+/**
+ * Capabilities the unified Firestore backend currently implements. This is
+ * intentionally conservative: only the operations actually exposed by
+ * firegraph today appear here. Phase 2 splits this into edition-specific
+ * capability sets (`firestore-standard` vs `firestore-enterprise`).
+ */
+const FIRESTORE_CAPS: ReadonlySet<Capability> = new Set<Capability>([
+  'core.read',
+  'core.write',
+  'core.transactions',
+  'core.batch',
+  'core.subgraph',
+  'raw.firestore',
+]);
+
 class FirestoreBackendImpl implements StorageBackend {
+  readonly capabilities: BackendCapabilities = createCapabilities(FIRESTORE_CAPS);
   readonly collectionPath: string;
   readonly scopePath: string;
   private readonly adapter: FirestoreAdapter;

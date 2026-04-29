@@ -33,6 +33,7 @@
 
 import { FiregraphError } from '../errors.js';
 import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -40,10 +41,12 @@ import type {
   WritableRecord,
   WriteMode,
 } from '../internal/backend.js';
+import { createCapabilities } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
 import type {
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
   DynamicGraphClient,
   FindEdgesParams,
@@ -213,7 +216,25 @@ export interface DORPCBackendOptions {
   makeSiblingClient?: (siblingStorageKey: string) => GraphClient | DynamicGraphClient;
 }
 
+/**
+ * Capabilities the DO RPC backend declares.
+ *
+ * Note the absence of `core.transactions`: `runTransaction` throws
+ * `UNSUPPORTED_OPERATION` because holding a synchronous SQLite transaction
+ * across async RPC calls would block the DO's single-threaded executor (see
+ * `transactionsUnsupported` above). `raw.sql` is also intentionally absent —
+ * the SQL surface lives inside the DO and isn't exposed across the RPC
+ * boundary.
+ */
+const DO_CAPS: ReadonlySet<Capability> = new Set<Capability>([
+  'core.read',
+  'core.write',
+  'core.batch',
+  'core.subgraph',
+]);
+
 export class DORPCBackend implements StorageBackend {
+  readonly capabilities: BackendCapabilities = createCapabilities(DO_CAPS);
   readonly collectionPath = 'firegraph';
   readonly scopePath: string;
   /** @internal */

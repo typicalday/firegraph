@@ -16,6 +16,7 @@ import type {
   BulkBatchError,
   BulkOptions,
   BulkResult,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -24,6 +25,7 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -31,6 +33,7 @@ import type {
   WritableRecord,
   WriteMode,
 } from './backend.js';
+import { createCapabilities } from './backend.js';
 import { NODE_RELATION } from './constants.js';
 import type { SqliteExecutor, SqliteTxExecutor } from './sqlite-executor.js';
 import type { CompiledStatement } from './sqlite-sql.js';
@@ -205,7 +208,26 @@ class SqliteBatchBackendImpl implements BatchBackend {
   }
 }
 
+/**
+ * Capabilities the SQLite-backed `StorageBackend` declares.
+ *
+ * `core.transactions` is conditional: D1 has no read-then-conditional-write
+ * transactions, so a D1 executor leaves `executor.transaction` undefined and
+ * we drop the cap. DO SQLite and better-sqlite3 expose interactive
+ * transactions and pick up the cap. The `query.*` extensions are not
+ * declared here — Phase 4+ will wire them in once the SQLite path actually
+ * implements aggregate / join / dml.
+ */
+const SQLITE_CORE_CAPS: ReadonlyArray<Capability> = [
+  'core.read',
+  'core.write',
+  'core.batch',
+  'core.subgraph',
+  'raw.sql',
+];
+
 class SqliteBackendImpl implements StorageBackend {
+  readonly capabilities: BackendCapabilities;
   /** Logical table name (returned through `collectionPath` for parity with Firestore). */
   readonly collectionPath: string;
   readonly scopePath: string;
@@ -221,6 +243,11 @@ class SqliteBackendImpl implements StorageBackend {
     this.collectionPath = tableName;
     this.storageScope = storageScope;
     this.scopePath = scopePath;
+    const caps = new Set<Capability>(SQLITE_CORE_CAPS);
+    if (typeof executor.transaction === 'function') {
+      caps.add('core.transactions');
+    }
+    this.capabilities = createCapabilities(caps);
   }
 
   // --- Reads ---

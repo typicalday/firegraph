@@ -78,6 +78,43 @@ export interface QueryFilter {
 }
 
 // ---------------------------------------------------------------------------
+// Backend Capabilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Closed string-literal union of every logical capability a storage backend
+ * may declare. Capabilities express user-facing query features, not SDK
+ * details — the same logical capability may map to different SDK calls per
+ * backend (e.g. `query.aggregate` is `runAggregationQuery` on Firestore
+ * Standard, `pipeline().aggregate()` on Firestore Enterprise, `GROUP BY` on
+ * SQL).
+ *
+ * See `.claude/backend-capabilities.md` for the design rationale and the
+ * capability matrix per backend.
+ */
+export type Capability =
+  // Core read/write — every backend declares these
+  | 'core.read'
+  | 'core.write'
+  | 'core.transactions'
+  | 'core.batch'
+  | 'core.subgraph'
+  // Logical query capabilities (may map to different SDK calls per backend)
+  | 'query.aggregate'
+  | 'query.select'
+  | 'query.join'
+  | 'query.dml'
+  // Edition-specific extensions (Firestore Enterprise only today)
+  | 'search.fullText'
+  | 'search.geo'
+  | 'search.vector'
+  // Realtime
+  | 'realtime.listen'
+  // Escape hatches
+  | 'raw.firestore'
+  | 'raw.sql';
+
+// ---------------------------------------------------------------------------
 // Migration Types
 // ---------------------------------------------------------------------------
 

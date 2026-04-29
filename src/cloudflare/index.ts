@@ -66,6 +66,10 @@ export { buildDOSchemaStatements } from './schema.js';
 // pulls `gcp-metadata` → `google-logging-utils` and crashes at module
 // load on workerd's `--disallow-code-generation-from-strings` runtime).
 export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
+export { CapabilityNotSupportedError } from '../errors.js';
 export { generateId } from '../id.js';
+export type { BackendCapabilities } from '../internal/backend.js';
+export { createCapabilities, intersectCapabilities } from '../internal/backend.js';
 export { deleteField } from '../internal/write-plan.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';
+export type { Capability } from '../types.js';

@@ -26,10 +26,12 @@ import type {
   StorageBackend,
   TransactionBackend,
 } from '../../src/internal/backend.js';
+import { createCapabilities } from '../../src/internal/backend.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   BulkResult,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   QueryFilter,
@@ -490,6 +492,9 @@ describe('createSiblingClient', () => {
     // across module boundaries in monorepos with duplicated copies).
     const noop = async (): Promise<void> => {};
     const fakeBackend: StorageBackend = {
+      capabilities: createCapabilities(
+        new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+      ),
       collectionPath: 'firestore-graphs',
       scopePath: '',
       async getDoc() {

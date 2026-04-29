@@ -71,6 +71,7 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -78,6 +79,7 @@ import type {
   WritableRecord,
   WriteMode,
 } from './backend.js';
+import { intersectCapabilities } from './backend.js';
 
 /**
  * Context passed to a routing callback when `subgraph(parentUid, name)` is
@@ -110,6 +112,26 @@ export interface RoutingBackendOptions {
    * consulted.
    */
   route: (ctx: RoutingContext) => StorageBackend | null | undefined;
+  /**
+   * Capability sets for any backend `route()` may return. The root routing
+   * wrapper's `capabilities` becomes the intersection of `base.capabilities`
+   * and every set passed here, satisfying invariant 5 from
+   * `.claude/backend-capabilities.md` ("a graph mounted across multiple
+   * backends declares the intersection of child capability sets").
+   *
+   * Capability declarations are required by invariant 3 to be **static** at
+   * construction. Because `route()` is consulted dynamically, the wrapper
+   * cannot discover routed children's caps after the fact — callers
+   * intersecting across backends must enumerate the participants up front.
+   *
+   * When `undefined` or empty, the routing wrapper mirrors
+   * `base.capabilities`. That matches the common single-backend routing
+   * use case (route one subgraph name to a peer of the same backend type)
+   * without forcing every caller to declare an explicit list. Mixed-backend
+   * callers should always populate this — the cap surface won't lie about
+   * what's safe across hops.
+   */
+  routedCapabilities?: ReadonlyArray<BackendCapabilities>;
 }
 
 function assertValidSubgraphArgs(parentNodeUid: string, name: string): void {
@@ -130,6 +152,26 @@ function assertValidSubgraphArgs(parentNodeUid: string, name: string): void {
 }
 
 class RoutingStorageBackend implements StorageBackend {
+  /**
+   * Effective capability set for this wrapper.
+   *
+   * - **Root wrapper** (`createRoutingBackend(...)` direct return): if the
+   *   caller supplied `options.routedCapabilities`, the cap set is the
+   *   intersection of `base.capabilities` and every set in that list. If
+   *   not, the cap set mirrors `base.capabilities` (suitable when routes
+   *   target peers of the same backend type — no capability differential
+   *   to honour).
+   * - **Child wrapper** (returned from `subgraph()`): the cap set mirrors
+   *   the *wrapped* backend (either `base.subgraph(...)` or the backend
+   *   returned by `route()`). Each child handle reflects what's safe to
+   *   call against the specific backend it targets — invariant 3 holds
+   *   per-instance.
+   *
+   * This satisfies invariant 5 (intersection across mixed-backend graphs)
+   * when callers opt in, and falls back to a non-lying mirror when they
+   * don't.
+   */
+  readonly capabilities: BackendCapabilities;
   readonly collectionPath: string;
   /**
    * Logical (names-only) scope path for *this* wrapper. Tracked
@@ -162,10 +204,24 @@ class RoutingStorageBackend implements StorageBackend {
     private readonly options: RoutingBackendOptions,
     storageScope: string,
     logicalScopePath: string,
+    /**
+     * Explicit cap set for this wrapper. Passed by `subgraph()` so child
+     * wrappers mirror the routed child's caps. `createRoutingBackend`
+     * leaves it `undefined` so the constructor computes the root-level
+     * intersection from `options.routedCapabilities`.
+     */
+    capabilities?: BackendCapabilities,
   ) {
     this.collectionPath = base.collectionPath;
     this.scopePath = logicalScopePath;
     this.storageScope = storageScope;
+    if (capabilities) {
+      this.capabilities = capabilities;
+    } else if (options.routedCapabilities && options.routedCapabilities.length > 0) {
+      this.capabilities = intersectCapabilities([base.capabilities, ...options.routedCapabilities]);
+    } else {
+      this.capabilities = base.capabilities;
+    }
     if (base.findEdgesGlobal) {
       // We deliberately do *not* fan out across routed children: we have no
       // enumeration index for which backends exist. Callers needing
@@ -241,14 +297,32 @@ class RoutingStorageBackend implements StorageBackend {
       // layout is its business — for routing purposes we carry *our*
       // logical view forward (`childScopePath`) so grandchildren see a
       // correct context regardless of what `routed.scopePath` happens to
-      // be (typically `''` for a freshly-minted per-DO backend).
-      return new RoutingStorageBackend(routed, this.options, childStorageScope, childScopePath);
+      // be (typically `''` for a freshly-minted per-DO backend). The child
+      // wrapper mirrors the routed backend's own cap set: invariant 3
+      // (static caps per instance) holds, and the user's view of the
+      // child handle reflects what that backend actually supports.
+      return new RoutingStorageBackend(
+        routed,
+        this.options,
+        childStorageScope,
+        childScopePath,
+        routed.capabilities,
+      );
     }
 
     // No route — delegate to the base backend and keep routing in effect
-    // for grandchildren.
+    // for grandchildren. Child wrapper mirrors the base subgraph's caps
+    // (typically identical to `base.capabilities` itself, but we ask the
+    // child explicitly so a backend that narrows caps in subgraphs is
+    // honoured).
     const childBase = this.base.subgraph(parentNodeUid, name);
-    return new RoutingStorageBackend(childBase, this.options, childStorageScope, childScopePath);
+    return new RoutingStorageBackend(
+      childBase,
+      this.options,
+      childStorageScope,
+      childScopePath,
+      childBase.capabilities,
+    );
   }
 
   // --- Bulk operations: delegate, but cascade is base-scope only ---

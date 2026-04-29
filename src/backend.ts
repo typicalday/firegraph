@@ -11,8 +11,9 @@
  * Entry point: `firegraph/backend`.
  */
 
-export { CrossBackendTransactionError } from './errors.js';
+export { CapabilityNotSupportedError, CrossBackendTransactionError } from './errors.js';
 export type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -20,6 +21,7 @@ export type {
   WritableRecord,
   WriteMode,
 } from './internal/backend.js';
+export { createCapabilities, intersectCapabilities } from './internal/backend.js';
 export type { RoutingBackendOptions, RoutingContext } from './internal/routing-backend.js';
 export { createRoutingBackend } from './internal/routing-backend.js';
 export type { DataPathOp } from './internal/write-plan.js';

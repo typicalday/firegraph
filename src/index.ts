@@ -25,6 +25,7 @@ export {
   NODE_TYPE_SCHEMA,
 } from './dynamic-registry.js';
 export {
+  CapabilityNotSupportedError,
   CrossBackendTransactionError,
   DynamicRegistryError,
   EdgeNotFoundError,
@@ -92,6 +93,7 @@ export type {
   BulkOptions,
   BulkProgress,
   BulkResult,
+  Capability,
   CascadeResult,
   DefineTypeOptions,
   DiscoveredEntity,
