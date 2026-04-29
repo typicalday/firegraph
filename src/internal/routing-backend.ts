@@ -66,6 +66,8 @@ import type {
   BulkResult,
   BulkUpdatePatch,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   GraphReader,
   QueryFilter,
@@ -223,6 +225,22 @@ class RoutingStorageBackend implements StorageBackend {
    */
   bulkDelete?: StorageBackend['bulkDelete'];
   bulkUpdate?: StorageBackend['bulkUpdate'];
+  /**
+   * Multi-source fan-out pass-through. Same conditional-install pattern as
+   * `aggregate` and the bulk-DML methods: gated on BOTH the base method's
+   * existence AND `this.capabilities` advertising `query.join`. If
+   * `routedCapabilities` intersected `query.join` away (e.g. one routed peer
+   * is Firestore Standard which has no pipeline-join support), the method is
+   * not installed even though `base.expand` exists. This preserves the
+   * "declared capability ⇒ method exists" invariant in both directions.
+   *
+   * Like `aggregate` and bulk DML, `expand` runs against the base backend
+   * only — it cannot fan out across routed children, since each routed
+   * subgraph is a separate physical store. Cross-graph hops (which resolve
+   * to per-source subgraph readers) are therefore never dispatched through
+   * `expand` by `traverse.ts`; the same constraint applies here, naturally.
+   */
+  expand?: StorageBackend['expand'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -279,6 +297,12 @@ class RoutingStorageBackend implements StorageBackend {
     if (base.bulkUpdate && this.capabilities.has('query.dml')) {
       this.bulkUpdate = (filters: QueryFilter[], patch: BulkUpdatePatch, options?: BulkOptions) =>
         base.bulkUpdate!(filters, patch, options);
+    }
+    if (base.expand && this.capabilities.has('query.join')) {
+      // Same scope rationale as `aggregate` and bulk DML: `expand` runs
+      // against the base backend only. A routed child's own `expand` is
+      // reached through `.subgraph().expand()` against the routed handle.
+      this.expand = (params: ExpandParams): Promise<ExpandResult> => base.expand!(params);
     }
   }
 

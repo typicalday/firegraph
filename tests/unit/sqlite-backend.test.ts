@@ -2419,3 +2419,332 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     expect(subRows).toHaveLength(0);
   });
 });
+
+describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
+  // Phase 6 query.join: server-side multi-source fan-out via SQL `IN (?, ?, …)`.
+  // Mirrors the bulk-DML compiler asserts above — leading `"scope" = ?`,
+  // parameter ordering, axbType-specific self-loop guard.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- Compiler shape ---
+
+  it('compileExpand emits leading scope + axbType + IN (?, ?, …) predicates in that order', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, 'memories', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+    });
+    // Column refs use the on-disk snake_case names (`a_uid`, `axb_type`,
+    // …) — see `FIELD_TO_COLUMN` in `src/internal/sqlite-schema.ts`.
+    expect(stmt.sql).toContain(`SELECT * FROM "${TABLE}"`);
+    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" IN (?, ?, ?)');
+    // Param order: scope, axbType, then each source UID in order.
+    expect(stmt.params).toEqual(['memories', 'wrote', 'a', 'b', 'c']);
+  });
+
+  it('compileExpand reverse direction filters on bUid', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['x', 'y'],
+      axbType: 'wrote',
+      direction: 'reverse',
+    });
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.sql).not.toContain('"a_uid" IN (');
+    expect(stmt.params).toEqual(['', 'wrote', 'x', 'y']);
+  });
+
+  it('compileExpand with axbType "is" adds the self-loop guard', async () => {
+    // Forward expand on the node relation could otherwise pull node-as-self-loop
+    // rows. The `"a_uid" != "b_uid"` predicate excludes them.
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'is',
+    });
+    expect(stmt.sql).toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileExpand without axbType "is" omits the self-loop guard', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'wrote',
+    });
+    expect(stmt.sql).not.toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileExpand multiplies limitPerSource by sources.length to produce a soft cap', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+      limitPerSource: 5,
+    });
+    // Total cap = 3 sources * 5 per-source = 15.
+    expect(stmt.sql).toMatch(/LIMIT \?/);
+    expect(stmt.params[stmt.params.length - 1]).toBe(15);
+  });
+
+  it('compileExpand with no limitPerSource omits LIMIT entirely', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'wrote',
+    });
+    expect(stmt.sql).not.toContain('LIMIT');
+  });
+
+  it('compileExpand rejects empty sources list', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    expect(() => compileExpand(TABLE, '', { sources: [], axbType: 'wrote' })).toThrow(
+      /INVALID_QUERY|empty/,
+    );
+  });
+
+  it('compileExpandHydrate scopes the lookup and includes the self-loop predicate', async () => {
+    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpandHydrate(TABLE, 'memories', ['x', 'y']);
+    // Hydration pulls node rows: scope-bound, axbType = 'is', self-loop, IN list.
+    // Column refs use snake_case (`a_uid`, `b_uid`, `axb_type`).
+    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" = "b_uid"');
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.params).toEqual(['memories', 'is', 'x', 'y']);
+  });
+
+  it('compileExpandHydrate rejects empty target list', async () => {
+    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileExpandHydrate(TABLE, '', [])).toThrow(/INVALID_QUERY|empty/);
+  });
+
+  // --- Functional integration: backend.expand() against in-memory SQLite ---
+
+  it('backend.expand fans out across multiple sources in one round trip', async () => {
+    // Seed 2 source nodes, each with 2 outgoing edges.
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    const t3 = generateId();
+    const t4 = generateId();
+    for (const uid of [a, b, t1, t2, t3, t4]) {
+      await backend.setDoc(
+        uid,
+        { aType: 'agent', aUid: uid, axbType: 'is', bType: 'agent', bUid: uid, data: {} },
+        'replace',
+      );
+    }
+    const edges = [
+      [a, t1],
+      [a, t2],
+      [b, t3],
+      [b, t4],
+    ] as const;
+    for (const [from, to] of edges) {
+      await backend.setDoc(
+        `0:${from}:wrote:${to}`,
+        {
+          aType: 'agent',
+          aUid: from,
+          axbType: 'wrote',
+          bType: 'agent',
+          bUid: to,
+          data: {},
+        },
+        'replace',
+      );
+    }
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+    });
+    expect(out.edges).toHaveLength(4);
+    const sourceUids = new Set(out.edges.map((e) => e.aUid));
+    expect(sourceUids).toEqual(new Set([a, b]));
+  });
+
+  it('backend.expand with hydrate returns aligned target nodes', async () => {
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    for (const uid of [a, b, t1, t2]) {
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'agent',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'agent',
+          bUid: uid,
+          data: { name: uid },
+        },
+        'replace',
+      );
+    }
+    await backend.setDoc(
+      `0:${a}:wrote:${t1}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'agent', bUid: t1, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${b}:wrote:${t2}`,
+      { aType: 'agent', aUid: b, axbType: 'wrote', bType: 'agent', bUid: t2, data: {} },
+      'replace',
+    );
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+      hydrate: true,
+    });
+    expect(out.edges).toHaveLength(2);
+    expect(out.targets).toHaveLength(2);
+    // Targets align with edges by index.
+    for (let i = 0; i < out.edges.length; i++) {
+      expect(out.targets![i]?.bUid).toBe(out.edges[i].bUid);
+    }
+  });
+
+  it('backend.expand reverse direction with hydrate aligns targets to aUid', async () => {
+    // Audit gap: the forward-direction hydrate test pins
+    // `targets[i].bUid === edges[i].bUid`, but the row-stitching code in
+    // `SqliteBackendImpl.expand` uses a `direction === 'forward' ? bUid : aUid`
+    // ternary. A regression flipping that ternary would only fail under
+    // reverse-direction hydrate. Seed `(t1)-[wrote]->(a)` and
+    // `(t2)-[wrote]->(b)`; expand reverse from `[a, b]` should return both
+    // edges and align `targets[i].bUid` (the canonical node UID) to
+    // `edges[i].aUid` (the source side under reverse direction).
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    for (const uid of [a, b, t1, t2]) {
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'agent',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'agent',
+          bUid: uid,
+          data: { name: uid },
+        },
+        'replace',
+      );
+    }
+    await backend.setDoc(
+      `0:${t1}:wrote:${a}`,
+      { aType: 'agent', aUid: t1, axbType: 'wrote', bType: 'agent', bUid: a, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${t2}:wrote:${b}`,
+      { aType: 'agent', aUid: t2, axbType: 'wrote', bType: 'agent', bUid: b, data: {} },
+      'replace',
+    );
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+      direction: 'reverse',
+      hydrate: true,
+    });
+    expect(out.edges).toHaveLength(2);
+    expect(out.targets).toHaveLength(2);
+    // Reverse direction: the "target" side (the node hydrated from the
+    // self-loop row) is the aUid. Index alignment must hold.
+    for (let i = 0; i < out.edges.length; i++) {
+      expect(out.targets![i]?.bUid).toBe(out.edges[i].aUid);
+    }
+  });
+
+  it('backend.expand emits aType / bType predicates with snake_case columns', async () => {
+    // Audit gap: the leading-predicate-order test only covers core predicates.
+    // `aType` / `bType` are optional refinements and the compiler resolves
+    // them through `compileFieldRef`, but no test pins the snake_case shape.
+    // A regression that emitted `"aType" = ?` instead of `"a_type" = ?`
+    // would crash the SQLite layer with "no such column: aType" — the same
+    // class of bug we just fixed for `axbType` / `aUid` / `bUid`.
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      aType: 'agent',
+      bType: 'note',
+    });
+    expect(stmt.sql).toContain('"a_type" = ?');
+    expect(stmt.sql).toContain('"b_type" = ?');
+    expect(stmt.sql).not.toContain('"aType"');
+    expect(stmt.sql).not.toContain('"bType"');
+    // Param ordering: scope, axbType, sources..., aType, bType.
+    expect(stmt.params).toEqual(['', 'wrote', 'a', 'b', 'agent', 'note']);
+  });
+
+  it('backend.expand short-circuits empty sources list to an empty result', async () => {
+    // Spec contract: empty sources never reaches the compiler. The client
+    // also short-circuits, but the backend itself must too — defence in depth.
+    const out = await backend.expand!({
+      sources: [],
+      axbType: 'wrote',
+    });
+    expect(out.edges).toEqual([]);
+    expect(out.targets).toBeUndefined();
+  });
+
+  it('backend.expand in a subgraph does not fan out to sibling scopes', async () => {
+    // Cross-scope safety. Seed identical edges in parent + sibling subgraphs;
+    // expand inside `memories` must only return rows from that scope.
+    const a = generateId();
+    await backend.setDoc(
+      a,
+      { aType: 'agent', aUid: a, axbType: 'is', bType: 'agent', bUid: a, data: {} },
+      'replace',
+    );
+
+    const sub = backend.subgraph(a, 'memories');
+    const t = generateId();
+    await sub.setDoc(
+      t,
+      { aType: 'memory', aUid: t, axbType: 'is', bType: 'memory', bUid: t, data: {} },
+      'replace',
+    );
+    await sub.setDoc(
+      `0:${a}:wrote:${t}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'memory', bUid: t, data: {} },
+      'replace',
+    );
+
+    // Parent-scope edge (sibling-ish for the test) — not in the subgraph.
+    const t2 = generateId();
+    await backend.setDoc(
+      t2,
+      { aType: 'memory', aUid: t2, axbType: 'is', bType: 'memory', bUid: t2, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${a}:wrote:${t2}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'memory', bUid: t2, data: {} },
+      'replace',
+    );
+
+    const out = await sub.expand!({ sources: [a], axbType: 'wrote' });
+    expect(out.edges).toHaveLength(1);
+    expect(out.edges[0].bUid).toBe(t);
+  });
+});

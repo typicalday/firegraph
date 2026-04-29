@@ -1,5 +1,6 @@
 import { TraversalError } from './errors.js';
 import type {
+  ExpandParams,
   FindEdgesParams,
   GraphClient,
   GraphReader,
@@ -22,6 +23,42 @@ let _crossGraphWarned = false;
 /** Type guard to check if a reader is a GraphClient (has subgraph method). */
 function isGraphClient(reader: GraphReader): reader is GraphClient {
   return 'subgraph' in reader && typeof (reader as GraphClient).subgraph === 'function';
+}
+
+/**
+ * Type guard to detect whether a reader has the `query.join` capability —
+ * i.e. the backend supports server-side multi-source fan-out via `expand()`.
+ *
+ * Branching on this lets us dispatch one `expand()` call per hop instead of
+ * one `findEdges()` per source. The savings scale linearly with source-set
+ * size; for the common case of a 50-source hop, that's 50 round trips
+ * collapsed into 1.
+ *
+ * Cross-graph hops are explicitly NOT routed through `expand()` even when
+ * the cap is present — each source UID resolves to a distinct subgraph
+ * reader, which can't be batched into one server-side statement. The
+ * traversal driver enforces that boundary directly (see the `isCrossGraph`
+ * branch below).
+ */
+function readerSupportsExpand(
+  reader: GraphReader,
+): reader is GraphClient & {
+  expand(params: ExpandParams): Promise<{ edges: StoredGraphRecord[] }>;
+} {
+  if (!isGraphClient(reader)) return false;
+  const client = reader as GraphClient;
+  // `capabilities` lives on the public client surface (see `CoreGraphClient`).
+  // The runtime check is required because `expand` exists on every
+  // `GraphClientImpl` (the permissive `GraphClient<Capability>` shape) but
+  // throws `UNSUPPORTED_OPERATION` when the backend doesn't declare the cap.
+  // Reading `capabilities` instead of feeling for the method is the cap-aware
+  // dispatch the rest of the codebase uses.
+  return (
+    'capabilities' in client &&
+    typeof client.capabilities?.has === 'function' &&
+    client.capabilities.has('query.join') &&
+    typeof (client as { expand?: unknown }).expand === 'function'
+  );
 }
 
 class Semaphore {
@@ -109,6 +146,104 @@ class TraversalBuilderImpl implements TraversalBuilder {
       const direction = hop.direction ?? 'forward';
       const isCrossGraph = direction === 'forward' && !!resolvedTargetGraph;
 
+      // Fast path: server-side fan-out via `expand()` when the reader supports
+      // `query.join`. Eligibility:
+      //   1. Not a cross-graph hop — each cross-graph source resolves to its
+      //      own subgraph reader, which can't be batched into one statement.
+      //   2. All sources share the same reader. Mixed readers happen only
+      //      after a previous cross-graph carry-forward; for the typical
+      //      single-graph or fully-routed-to-one-DO case, this is true.
+      //   3. The shared reader's backend declares `query.join`.
+      //
+      // Budget accounting: one `expand()` call counts as ONE read against
+      // `maxReads`, regardless of source-set size. That reflects reality
+      // (1 server round trip = 1 read) and is the entire point of the
+      // capability — a 50-source hop collapses 50 round trips into 1.
+      // Callers who expect "1 read per source" semantics from `maxReads`
+      // will see traversals reach further than they did with the per-source
+      // loop; this is an improvement, not a regression.
+      // Fast-path eligibility check (3): sources share a reader. Mixed-reader
+      // sources happen only after a cross-graph carry-forward (hop N had a
+      // `targetGraph`, fanning each source UID into its own subgraph reader).
+      // The empty-sources branch is already handled by the `if (sources.length === 0)`
+      // continue earlier in the loop, so `sources` is non-empty here.
+      const sharedReader = sources.every((s) => s.reader === sources[0].reader)
+        ? sources[0].reader
+        : null;
+      const canFastPath = !isCrossGraph && sharedReader && readerSupportsExpand(sharedReader);
+
+      if (canFastPath && sharedReader) {
+        if (totalReads >= maxReads) {
+          hopTruncated = true;
+        } else {
+          totalReads++;
+          const limit = hop.limit ?? DEFAULT_LIMIT;
+          const expandParams: ExpandParams = {
+            sources: sources.map((s) => s.uid),
+            axbType: hop.axbType,
+            direction,
+          };
+          if (hop.aType) expandParams.aType = hop.aType;
+          if (hop.bType) expandParams.bType = hop.bType;
+          if (hop.orderBy) expandParams.orderBy = hop.orderBy;
+          // With a hop-level `filter`, we can't apply `limitPerSource` at the
+          // SQL layer — the filter is a JS predicate that runs after rows
+          // come back. Pass undefined to fetch all matching edges, filter,
+          // then enforce per-source limit in JS below.
+          if (!hop.filter) {
+            expandParams.limitPerSource = limit;
+          }
+          const result = await (
+            sharedReader as GraphClient & {
+              expand(p: ExpandParams): Promise<{ edges: StoredGraphRecord[] }>;
+            }
+          ).expand(expandParams);
+          let edges = result.edges;
+          if (hop.filter) {
+            edges = edges.filter(hop.filter);
+            // Enforce per-source post-filter limit. Without this, a source
+            // whose post-filter edge count exceeds `limit` would carry
+            // through more next-hop sources than the user requested.
+            const counts = new Map<string, number>();
+            const kept: StoredGraphRecord[] = [];
+            for (const e of edges) {
+              const sourceUid = direction === 'forward' ? e.aUid : e.bUid;
+              const c = counts.get(sourceUid) ?? 0;
+              if (c < limit) {
+                counts.set(sourceUid, c + 1);
+                kept.push(e);
+              }
+            }
+            edges = kept;
+          }
+          for (const edge of edges) {
+            hopEdges.push({ edge, reader: sharedReader });
+          }
+        }
+
+        // Skip the per-source task loop — we already filled `hopEdges`.
+        const fastEdges = hopEdges.map((h) => h.edge);
+        hopResults.push({
+          axbType: hop.axbType,
+          depth,
+          edges: returnIntermediates ? [...fastEdges] : fastEdges,
+          sourceCount,
+          truncated: hopTruncated,
+        });
+        if (hopTruncated) truncated = true;
+
+        // Build next sources, same dedup logic as the slow path.
+        const seen = new Map<string, GraphReader>();
+        for (const { edge, reader: edgeReader } of hopEdges) {
+          const nextUid = direction === 'forward' ? edge.bUid : edge.aUid;
+          if (!seen.has(nextUid)) seen.set(nextUid, edgeReader);
+        }
+        sources = [...seen.entries()].map(([uid, reader]) => ({ uid, reader }));
+        continue;
+      }
+
+      // Slow path (per-source loop): cross-graph hops, mixed-reader sources,
+      // or backends without `query.join`.
       const tasks = sources.map(({ uid, reader: sourceReader }) => async () => {
         if (totalReads >= maxReads) {
           hopTruncated = true;

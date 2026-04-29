@@ -31,6 +31,8 @@ import type {
   BulkResult,
   BulkUpdatePatch,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   GraphReader,
   QueryFilter,
@@ -45,6 +47,8 @@ import {
   compileCountScopePrefix,
   compileDelete,
   compileDeleteScopePrefix,
+  compileExpand,
+  compileExpandHydrate,
   compileSelect,
   compileSelectByDocId,
   compileSelectGlobal,
@@ -225,10 +229,11 @@ class SqliteBatchBackendImpl implements BatchBackend {
  * opening a tx, and code that runs against an unknown driver can rely on the
  * runtime guard inside `runTransaction`.
  *
- * The `query.*` extension capabilities are NOT declared here — Phases 4+
- * wire them in once the SQLite path actually implements aggregate / join /
- * dml. Conservative declaration keeps the type-level gate from lying about
- * surface that throws at runtime.
+ * The `query.*` extension capabilities follow the same conservative
+ * declaration rule as the cap descriptor itself — only land in the union
+ * when the corresponding method is actually wired up. Today that's
+ * `query.aggregate` (Phase 4), `query.dml` (Phase 5), and `query.join`
+ * (Phase 6 — fan-out via `IN (…)` in one statement).
  */
 export type SqliteCapability =
   | 'core.read'
@@ -238,6 +243,7 @@ export type SqliteCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.dml'
+  | 'query.join'
   | 'raw.sql';
 
 const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
@@ -247,6 +253,7 @@ const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
   'core.subgraph',
   'query.aggregate',
   'query.dml',
+  'query.join',
   'raw.sql',
 ];
 
@@ -711,6 +718,56 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
       Date.now(),
     );
     return this.executeDmlWithReturning(stmt, options);
+  }
+
+  /**
+   * Multi-source fan-out — `query.join` capability.
+   *
+   * Issues a single `SELECT … WHERE "aUid" IN (?, ?, …)` statement that
+   * matches every edge from every source UID in one round trip. When
+   * `params.hydrate === true`, follows up with a second statement that
+   * fetches the target node rows; both queries hit the same table so
+   * the executor amortises connection / parsing cost across them.
+   *
+   * Empty `params.sources` short-circuits to an empty result without
+   * touching the executor — `IN ()` is not valid SQL.
+   *
+   * Per-source ordering / strict per-source LIMIT enforcement is NOT
+   * implemented here; see the `ExpandParams.limitPerSource` JSDoc and
+   * `compileExpand` for the cap semantics. Strict per-source caps would
+   * require window functions and were judged out of scope for the
+   * round-trip-collapse goal.
+   */
+  async expand(params: ExpandParams): Promise<ExpandResult> {
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    const stmt = compileExpand(this.collectionPath, this.storageScope, params);
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const edges = rows.map(rowToRecord);
+    if (!params.hydrate) {
+      return { edges };
+    }
+    // Hydration: fetch target nodes for every edge in one IN-clause statement.
+    // The "target" side depends on direction — forward hops point at `bUid`,
+    // reverse hops point at `aUid`.
+    const direction = params.direction ?? 'forward';
+    const targetUids = edges.map((e) => (direction === 'forward' ? e.bUid : e.aUid));
+    const uniqueTargets = [...new Set(targetUids)];
+    if (uniqueTargets.length === 0) {
+      return { edges, targets: [] };
+    }
+    const hydrateStmt = compileExpandHydrate(this.collectionPath, this.storageScope, uniqueTargets);
+    const hydrateRows = await this.executor.all(hydrateStmt.sql, hydrateStmt.params);
+    const byUid = new Map<string, StoredGraphRecord>();
+    for (const row of hydrateRows) {
+      const node = rowToRecord(row);
+      // Node UID is `bUid` (== `aUid` for self-loop) by convention. Key the
+      // map by `bUid` so the alignment loop below indexes correctly.
+      byUid.set(node.bUid, node);
+    }
+    const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
+    return { edges, targets };
   }
 
   /**

@@ -39,6 +39,8 @@ import type {
   BulkUpdatePatch,
   Capability,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   GraphReader,
   QueryFilter,
@@ -114,6 +116,7 @@ function createMockBackend(
         'core.subgraph',
         'query.aggregate',
         'query.dml',
+        'query.join',
       ]),
     ),
     collectionPath,
@@ -199,6 +202,12 @@ function createMockBackend(
     ): Promise<BulkResult> {
       calls.push({ method: 'bulkUpdate', args: [filters, patch, options] });
       return { deleted: 0, batches: 1, errors: [] };
+    },
+    async expand(params: ExpandParams): Promise<ExpandResult> {
+      calls.push({ method: 'expand', args: [params] });
+      // Return the canonical empty-result shape — the routing wrapper
+      // never inspects the payload, so a structural empty is enough.
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
     },
   };
   return backend;
@@ -623,6 +632,68 @@ describe('createRoutingBackend — pass-through delegation', () => {
     expect(router.capabilities.has('query.dml')).toBe(false);
     expect(router.bulkDelete).toBeUndefined();
     expect(router.bulkUpdate).toBeUndefined();
+  });
+
+  it('delegates expand to the base backend when the base declares query.join', async () => {
+    // Phase 6 query.join pass-through: same install/omit pair as
+    // aggregate/DML. The base ships `expand(...)` and declares
+    // `query.join`; the router must surface a callable `expand` and
+    // forward the params object verbatim. Same "declared cap ⇒ method
+    // exists" invariant as the other capability-gated methods.
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.expand).toBe('function');
+    const out = await router.expand!({
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+    });
+    expect(out).toEqual({ edges: [] });
+    const expandCall = base.calls.find((c) => c.method === 'expand');
+    expect(expandCall).toBeDefined();
+    expect(expandCall!.args[0]).toEqual({ sources: ['a', 'b'], axbType: 'wrote' });
+  });
+
+  it('omits expand on the router when the base backend omits it', () => {
+    // Drivers without query.join (Firestore today) propagate through the
+    // router as an undefined method. Required for the GraphClient
+    // feature-detection guard to be sound — `typeof backend.expand` is the
+    // documented contract. Without this gate, type-narrowing on
+    // `capabilities.has('query.join')` would lie to consumers.
+    const base = createMockBackend('base');
+    (base as { expand?: unknown }).expand = undefined;
+    (base as { capabilities: typeof base.capabilities }).capabilities = createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(router.expand).toBeUndefined();
+    expect(typeof router.expand).toBe('undefined');
+  });
+
+  it('omits expand on the router when routedCapabilities intersects query.join away', () => {
+    // Cap-gate isolation test (mirror of aggregate/DML). A routed peer
+    // that lacks query.join drops the cap from the intersection, so the
+    // router must omit `expand` even though the underlying base method is
+    // callable. Otherwise the wrapper would advertise "no query.join" via
+    // its capability descriptor while still exposing a working `expand`,
+    // violating the inverse "declared-absent ⇒ runtime-absent" direction.
+    const base = createMockBackend('base');
+    expect(base.expand).toBeDefined();
+    expect(base.capabilities.has('query.join')).toBe(true);
+
+    const routedNoJoin = createCapabilities(
+      // Mixed-backend scenario: a routed peer (e.g. a Firestore-backed
+      // shard) that lacks query.join. The intersection drops the cap.
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, {
+      route: () => null,
+      routedCapabilities: [routedNoJoin],
+    });
+
+    expect(router.capabilities.has('query.join')).toBe(false);
+    expect(router.expand).toBeUndefined();
   });
 
   it('exposes the base backend collectionPath and scopePath', () => {

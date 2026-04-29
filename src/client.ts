@@ -8,7 +8,7 @@ import {
   META_NODE_TYPE,
 } from './dynamic-registry.js';
 import { DynamicRegistryError, FiregraphError, QuerySafetyError } from './errors.js';
-import type { StorageBackend, WritableRecord } from './internal/backend.js';
+import type { BackendCapabilities, StorageBackend, WritableRecord } from './internal/backend.js';
 import { NODE_RELATION } from './internal/constants.js';
 import { assertNoDeleteSentinels, flattenPatch } from './internal/write-plan.js';
 import type { MigrationResult } from './migration.js';
@@ -32,6 +32,8 @@ import type {
   DynamicGraphMethods,
   DynamicRegistryConfig,
   EdgeTopology,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   FindNodesParams,
   GraphBatch,
@@ -72,6 +74,16 @@ function buildWritableEdgeRecord(
 
 export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
   readonly scanProtection: ScanProtection;
+
+  /**
+   * Capability set of the underlying backend. Mirrors `backend.capabilities`
+   * verbatim so callers can portability-check (`client.capabilities.has(
+   * 'query.join')`) without reaching for the backend handle. Static for the
+   * lifetime of the client.
+   */
+  get capabilities(): BackendCapabilities {
+    return this.backend.capabilities;
+  }
 
   // Static mode
   private readonly staticRegistry?: GraphRegistry;
@@ -595,6 +607,39 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
     }
     const filters = this.buildDmlFilters(params);
     return this.backend.bulkUpdate(filters, patch, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multi-source fan-out (capability: query.join)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fan out from `params.sources` over a single edge type in one round trip.
+   * On backends without `query.join`, throws `UNSUPPORTED_OPERATION` — the
+   * cap-less fallback is the per-source `findEdges` loop, which lives in
+   * `traverse.ts` (the higher-level traversal walker) rather than here.
+   *
+   * `expand()` is intentionally edge-type-only — the source set is a flat
+   * UID list and the hop matches one `axbType`. Multi-axbType expansions
+   * become multiple `expand()` calls, one per relation.
+   *
+   * `params.sources.length === 0` short-circuits to an empty result. The
+   * backend never sees the call. (`compileExpand` itself rejects empty
+   * because `IN ()` is not valid SQL.)
+   */
+  async expand(params: ExpandParams): Promise<ExpandResult> {
+    if (!this.backend.expand) {
+      throw new FiregraphError(
+        'expand() is not supported by the current storage backend. ' +
+          'Backends without `query.join` can use createTraversal() instead — ' +
+          'the per-hop loop is functionally equivalent (just slower).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    return this.backend.expand(params);
   }
 
   /**

@@ -16,6 +16,8 @@ import type {
   BulkUpdatePatch,
   Capability,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   GraphReader,
   QueryFilter,
@@ -241,4 +243,19 @@ export interface StorageBackend<C extends Capability = Capability> {
     patch: BulkUpdatePatch,
     options?: BulkOptions,
   ): Promise<BulkResult>;
+
+  // --- Server-side multi-source fan-out ---
+  /**
+   * Fan out from `params.sources` over a single edge type in one server-side
+   * round trip. Present only on backends that declare `query.join`. The
+   * traversal layer (`traverse.ts`) calls `expand` once per hop when the
+   * backend declares the cap; otherwise it falls back to the per-source
+   * `findEdges` loop.
+   *
+   * Cross-graph hops are never dispatched through `expand` — each source
+   * UID resolves to a distinct subgraph location, which can't be fanned
+   * out as a single statement. The traversal layer enforces that
+   * boundary; `expand` itself does not need to inspect `targetGraph`.
+   */
+  expand?(params: ExpandParams): Promise<ExpandResult>;
 }

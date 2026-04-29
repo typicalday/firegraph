@@ -109,6 +109,8 @@ export type {
   DynamicRegistryConfig,
   EdgeTopology,
   EdgeTypeData,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   FindNodesParams,
   FullTextSearchExtension,

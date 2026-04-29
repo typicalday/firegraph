@@ -14,6 +14,7 @@
 
 import { FiregraphError } from '../errors.js';
 import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
 import {
   compileDataOpsExpr,
   isFirestoreSpecialType,
@@ -23,7 +24,13 @@ import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
-import type { AggregateSpec, QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
+import type {
+  AggregateSpec,
+  ExpandParams,
+  QueryFilter,
+  QueryOptions,
+  StoredGraphRecord,
+} from '../types.js';
 import { DO_FIELD_TO_COLUMN, quoteDOIdent } from './schema.js';
 
 const DO_BACKEND_LABEL = 'DO SQLite';
@@ -235,6 +242,110 @@ export function compileDOSelect(
   sql += compileLimit(options, params);
 
   return { sql, params };
+}
+
+/**
+ * Compile an `expand()` fan-out into one DO-side SELECT statement. Mirrors
+ * `compileExpand` in the shared SQLite module but without a scope predicate
+ * — every row in this DO belongs to the same subgraph.
+ *
+ * Forward direction:
+ *
+ *   SELECT * FROM <table>
+ *   WHERE "axbType" = ? AND "aUid" IN (?, ?, …)
+ *     [AND "aType" = ?] [AND "bType" = ?]
+ *   [ORDER BY …]
+ *   [LIMIT ?]
+ *
+ * Reverse swaps the IN-predicate to `"bUid"`. Per-source LIMIT enforcement
+ * is approximated by `sources.length * limitPerSource` (see
+ * `ExpandParams.limitPerSource`); window-function partitioning is out of
+ * scope for the round-trip-collapse goal.
+ *
+ * Empty `params.sources` is rejected at the compiler — `IN ()` is invalid
+ * SQL. The DO backend short-circuits empty input before reaching here.
+ */
+export function compileDOExpand(table: string, params: ExpandParams): CompiledStatement {
+  if (params.sources.length === 0) {
+    throw new FiregraphError(
+      'compileDOExpand requires a non-empty sources list — empty IN () is invalid SQL.',
+      'INVALID_QUERY',
+    );
+  }
+  const direction = params.direction ?? 'forward';
+  // Resolve every column reference through `compileFieldRef` so the
+  // emitted SQL uses the on-disk snake_case names (`a_uid`, `axb_type`,
+  // `b_uid`, …) defined by `DO_FIELD_TO_COLUMN` in `schema.ts`.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const aTypeCol = compileFieldRef('aType').expr;
+  const bTypeCol = compileFieldRef('bType').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+  const sourceColumn = direction === 'forward' ? aUidCol : bUidCol;
+
+  const sqlParams: unknown[] = [params.axbType];
+  const conditions: string[] = [`${axbTypeCol} = ?`];
+
+  const placeholders = params.sources.map(() => '?').join(', ');
+  conditions.push(`${sourceColumn} IN (${placeholders})`);
+  for (const uid of params.sources) sqlParams.push(uid);
+
+  if (params.aType !== undefined) {
+    conditions.push(`${aTypeCol} = ?`);
+    sqlParams.push(params.aType);
+  }
+  if (params.bType !== undefined) {
+    conditions.push(`${bTypeCol} = ?`);
+    sqlParams.push(params.bType);
+  }
+
+  // Self-loop guard for the corner case where the caller asks for the
+  // node-relation as the hop type. See `compileExpand` for the full story.
+  if (params.axbType === NODE_RELATION) {
+    conditions.push(`${aUidCol} != ${bUidCol}`);
+  }
+
+  let sql = `SELECT * FROM ${quoteDOIdent(table)} WHERE ${conditions.join(' AND ')}`;
+
+  if (params.orderBy) {
+    sql += compileOrderBy({ orderBy: params.orderBy }, sqlParams);
+  }
+  if (params.limitPerSource !== undefined) {
+    const totalLimit = params.sources.length * params.limitPerSource;
+    sql += ` LIMIT ?`;
+    sqlParams.push(totalLimit);
+  }
+  return { sql, params: sqlParams };
+}
+
+/**
+ * Hydration-pass for `expand({ hydrate: true })` on a DO. Pulls every node
+ * row whose `bUid` is in the supplied target list (one statement). The
+ * caller stitches alignment in JS via a `Map<bUid, row>`.
+ */
+export function compileDOExpandHydrate(table: string, targetUids: string[]): CompiledStatement {
+  if (targetUids.length === 0) {
+    throw new FiregraphError(
+      'compileDOExpandHydrate requires a non-empty target list — empty IN () is invalid SQL.',
+      'INVALID_QUERY',
+    );
+  }
+  const placeholders = targetUids.map(() => '?').join(', ');
+  const sqlParams: unknown[] = [NODE_RELATION];
+  for (const uid of targetUids) sqlParams.push(uid);
+
+  // Resolve column refs via `compileFieldRef` — see `compileDOExpand`
+  // for the schema-rename rationale.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+
+  return {
+    sql:
+      `SELECT * FROM ${quoteDOIdent(table)} ` +
+      `WHERE ${axbTypeCol} = ? AND ${aUidCol} = ${bUidCol} AND ${bUidCol} IN (${placeholders})`,
+    params: sqlParams,
+  };
 }
 
 /**

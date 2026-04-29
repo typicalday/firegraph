@@ -699,3 +699,100 @@ describe('cloudflare/sql compileDOBulkUpdate', () => {
     expect(() => compileDOBulkUpdate('firegraph', [], { stamped: tagged }, Date.now())).toThrow();
   });
 });
+
+describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
+  // Phase 6 query.join: per-DO multi-source fan-out via SQL `IN (?, ?, …)`.
+  // Mirror of compileExpand / compileExpandHydrate in shared SQLite, minus
+  // the leading "scope" = ? predicate (the DO is the scope).
+
+  it('compileDOExpand emits IN (?, ?, …) with leading axbType, no scope predicate', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+    });
+    // Column refs use snake_case (`a_uid`, `axb_type`, `b_uid`) — see
+    // `DO_FIELD_TO_COLUMN` in `src/cloudflare/schema.ts`.
+    expect(stmt.sql).toContain(`SELECT * FROM "firegraph"`);
+    expect(stmt.sql).not.toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" IN (?, ?, ?)');
+    // Param order: axbType, then each source UID in order.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'c']);
+  });
+
+  it('compileDOExpand reverse direction filters on bUid', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['x', 'y'],
+      axbType: 'wrote',
+      direction: 'reverse',
+    });
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.sql).not.toContain('"a_uid" IN (');
+  });
+
+  it('compileDOExpand with axbType "is" adds the self-loop guard', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a'],
+      axbType: 'is',
+    });
+    expect(stmt.sql).toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileDOExpand emits a_type / b_type predicates with snake_case columns', async () => {
+    // Audit gap: the leading-shape test doesn't exercise the optional
+    // `aType` / `bType` refinements. Compiler resolves them through
+    // `compileFieldRef`, which routes camelCase field names → snake_case
+    // columns via `DO_FIELD_TO_COLUMN`. A regression that emitted
+    // `"aType" = ?` would crash workerd's SQLite with "no such column".
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      aType: 'agent',
+      bType: 'note',
+    });
+    expect(stmt.sql).toContain('"a_type" = ?');
+    expect(stmt.sql).toContain('"b_type" = ?');
+    expect(stmt.sql).not.toContain('"aType"');
+    expect(stmt.sql).not.toContain('"bType"');
+    // Param ordering: axbType, sources..., aType, bType.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'agent', 'note']);
+  });
+
+  it('compileDOExpand multiplies limitPerSource by sources.length', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      limitPerSource: 7,
+    });
+    expect(stmt.sql).toMatch(/LIMIT \?/);
+    expect(stmt.params[stmt.params.length - 1]).toBe(14);
+  });
+
+  it('compileDOExpand rejects empty sources list', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    expect(() => compileDOExpand('firegraph', { sources: [], axbType: 'wrote' })).toThrow(
+      /INVALID_QUERY|empty/,
+    );
+  });
+
+  it('compileDOExpandHydrate emits the self-loop predicate without a scope clause', async () => {
+    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpandHydrate('firegraph', ['x', 'y']);
+    expect(stmt.sql).not.toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" = "b_uid"');
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    // Param order: axbType ('is'), then each target UID.
+    expect(stmt.params).toEqual(['is', 'x', 'y']);
+  });
+
+  it('compileDOExpandHydrate rejects empty target list', async () => {
+    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    expect(() => compileDOExpandHydrate('firegraph', [])).toThrow(/INVALID_QUERY|empty/);
+  });
+});

@@ -228,12 +228,20 @@ describe('SqliteBackendImpl capabilities', () => {
     expect(backend.capabilities.has('query.dml')).toBe(true);
   });
 
+  it('declares query.join (Phase 6) — server-side multi-source fan-out via SQL IN(...)', () => {
+    // SQLite implements multi-source fan-out via `compileExpand`, which emits
+    // `WHERE "aUid" IN (?, ?, …)` against the edges table and (when hydrating)
+    // a second statement that pulls target nodes by `bUid`. The traversal layer
+    // dispatches to `expand()` once per hop on backends that declare this cap.
+    const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
+    expect(backend.capabilities.has('query.join')).toBe(true);
+  });
+
   it('does not silently declare query.* extensions before they ship', () => {
     const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
     const caps = backend.capabilities;
-    // query.aggregate ships in Phase 4; query.dml ships in Phase 5 — see the
-    // dedicated assertions above.
-    expect(caps.has('query.join')).toBe(false);
+    // query.aggregate ships in Phase 4; query.dml ships in Phase 5; query.join
+    // ships in Phase 6 — see the dedicated assertions above.
     expect(caps.has('query.select')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
@@ -290,6 +298,15 @@ describe('DORPCBackend capabilities', () => {
     // "wipe everything" case bounded by construction.
     const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
     expect(backend.capabilities.has('query.dml')).toBe(true);
+  });
+
+  it('declares query.join (Phase 6) — server-side multi-source fan-out via DO RPC', () => {
+    // The DO backend forwards `expand` through `_fgExpand`, which runs
+    // `compileDOExpand` against the per-DO SQLite. Mirrors the shared-table
+    // SQLite backend's surface, just dispatched over RPC. The traversal layer
+    // dispatches once per hop; cross-graph hops still fall back to per-source.
+    const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
+    expect(backend.capabilities.has('query.join')).toBe(true);
   });
 });
 

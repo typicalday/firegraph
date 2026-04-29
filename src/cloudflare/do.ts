@@ -80,12 +80,14 @@ import type {
   BulkResult,
   BulkUpdatePatch,
   CascadeResult,
+  ExpandParams,
   FindEdgesParams,
   GraphRegistry,
   IndexSpec,
   QueryFilter,
   QueryOptions,
 } from '../types.js';
+import type { ExpandResultWire } from './backend.js';
 import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
 import type { CompiledStatement, DORecordWire } from './sql.js';
 import {
@@ -94,6 +96,8 @@ import {
   compileDOBulkUpdate,
   compileDODelete,
   compileDODeleteAll,
+  compileDOExpand,
+  compileDOExpandHydrate,
   compileDOSelect,
   compileDOSelectByDocId,
   compileDOSet,
@@ -504,6 +508,52 @@ export class FiregraphDO extends DurableObject<unknown> {
     void _options;
     const stmt = compileDOBulkUpdate(this.table, filters, patch.data, Date.now());
     return this.execDmlWithReturning(stmt);
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: multi-source fan-out (`query.join`)
+  //
+  // One `SELECT … WHERE "aUid" IN (?, ?, …)` (or `"bUid"` for reverse)
+  // collapses N per-source `findEdges` round trips into one. When the
+  // caller asks for hydration, a second IN-clause statement fetches the
+  // target node rows; the DO does the alignment in JS so the wire payload
+  // is two `DORecordWire[]` arrays instead of a JOIN-shaped row that
+  // would force a custom client-side decoder.
+  // ---------------------------------------------------------------------------
+
+  async _fgExpand(params: ExpandParams): Promise<ExpandResultWire> {
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    const stmt = compileDOExpand(this.table, params);
+    const rows = this.state.storage.sql
+      .exec<Record<string, unknown>>(stmt.sql, ...stmt.params)
+      .toArray();
+    const edges = rows.map((row) => rowToDORecord(row));
+    if (!params.hydrate) {
+      return { edges };
+    }
+    // Same alignment story as `SqliteBackendImpl.expand` — collect distinct
+    // target UIDs, fetch them in one IN-clause statement, build a Map keyed
+    // by node UID (== `bUid` for self-loops), then walk the original edge
+    // list to produce the index-aligned `targets` array.
+    const direction = params.direction ?? 'forward';
+    const targetUids = edges.map((e) => (direction === 'forward' ? e.bUid : e.aUid));
+    const uniqueTargets = [...new Set(targetUids)];
+    if (uniqueTargets.length === 0) {
+      return { edges, targets: [] };
+    }
+    const hydrateStmt = compileDOExpandHydrate(this.table, uniqueTargets);
+    const hydrateRows = this.state.storage.sql
+      .exec<Record<string, unknown>>(hydrateStmt.sql, ...hydrateStmt.params)
+      .toArray();
+    const byUid = new Map<string, DORecordWire>();
+    for (const row of hydrateRows) {
+      const node = rowToDORecord(row);
+      byUid.set(node.bUid, node);
+    }
+    const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
+    return { edges, targets };
   }
 
   /**

@@ -46,3 +46,9 @@ export {
 // it's bundled here so `intersectCapabilities` consumers building a
 // composed type can name both in one place.
 export type { BulkUpdatePatch, DmlExtension } from './types.js';
+// Join types (Phase 6, `query.join`). Same rationale as the DML re-exports:
+// backend authors implementing the optional `StorageBackend.expand` signature
+// can pull `ExpandParams` / `ExpandResult` from this entry directly.
+// `JoinExtension` is the client-surface counterpart, bundled here so a
+// composed cap-typed client can name all three in one place.
+export type { ExpandParams, ExpandResult, JoinExtension } from './types.js';

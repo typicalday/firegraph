@@ -50,6 +50,8 @@ import type {
   BulkUpdatePatch,
   CascadeResult,
   DynamicGraphClient,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   GraphClient,
   GraphReader,
@@ -121,7 +123,32 @@ export interface FiregraphStub {
     patch: BulkUpdatePatch,
     options?: BulkOptions,
   ): Promise<BulkResult>;
+  /**
+   * Optional — added in Phase 6 (`query.join`). Same back-compat rationale as
+   * `_fgAggregate` / `_fgBulkDelete`: external worker code that hand-rolls a
+   * stub wrapper keeps compiling without modification. `FiregraphDO` always
+   * implements this method; callers of `DORPCBackend.expand` either assert
+   * the stub supports it or accept `UNSUPPORTED_OPERATION` at runtime.
+   *
+   * The wire shape uses `ExpandResultWire` so `StoredGraphRecord` instances
+   * (which carry `Timestamp` wrappers) survive the structured-clone hop —
+   * they're rehydrated on this side via `hydrateDORecord`, just like the
+   * `query()` and `_fgBulkRemoveEdges` paths.
+   */
+  _fgExpand?(params: ExpandParams): Promise<ExpandResultWire>;
   _fgDestroy(): Promise<void>;
+}
+
+/**
+ * Wire shape for `_fgExpand`. The DO returns rows as `DORecordWire` (the
+ * SQLite row layout) and the backend re-hydrates them on this side, so
+ * `Timestamp` wrappers are reconstructed locally and never round-trip
+ * through workerd's structured-clone boundary as plain objects.
+ */
+export interface ExpandResultWire {
+  edges: DORecordWire[];
+  /** Aligned with `edges`; absent when the caller didn't request hydration. */
+  targets?: Array<DORecordWire | null>;
 }
 
 export interface FiregraphNamespace {
@@ -266,7 +293,8 @@ export type CloudflareCapability =
   | 'core.batch'
   | 'core.subgraph'
   | 'query.aggregate'
-  | 'query.dml';
+  | 'query.dml'
+  | 'query.join';
 
 const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>([
   'core.read',
@@ -275,6 +303,7 @@ const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>
   'core.subgraph',
   'query.aggregate',
   'query.dml',
+  'query.join',
 ]);
 
 export class DORPCBackend implements StorageBackend<CloudflareCapability> {
@@ -498,6 +527,40 @@ export class DORPCBackend implements StorageBackend<CloudflareCapability> {
       );
     }
     return stub._fgBulkUpdate(filters, patch, options);
+  }
+
+  /**
+   * Multi-source fan-out — `query.join` capability. Routes the call through
+   * the DO's `_fgExpand` RPC, which compiles to one `SELECT … WHERE
+   * "aUid" IN (?, …)` statement (plus, when `params.hydrate === true`, a
+   * second IN-clause statement against the node rows).
+   *
+   * Defensive `_fgExpand` presence check matches the bulk-DML pattern: the
+   * RPC method is optional on `FiregraphStub` so external worker code with
+   * a hand-rolled stub wrapper still type-checks. We surface a clear
+   * `UNSUPPORTED_OPERATION` rather than `TypeError: stub._fgExpand is not a
+   * function` if the wrapper hasn't forwarded the method.
+   */
+  async expand(params: ExpandParams): Promise<ExpandResult> {
+    const stub = this.stub;
+    if (!stub._fgExpand) {
+      throw new FiregraphError(
+        'expand() not supported by this Durable Object stub. The wrapped ' +
+          'stub does not implement `_fgExpand`. If you control the stub ' +
+          'wrapper, forward `_fgExpand` to the underlying DO.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    const wire = await stub._fgExpand(params);
+    const edges = wire.edges.map(hydrateDORecord);
+    if (!params.hydrate) {
+      return { edges };
+    }
+    const targets = (wire.targets ?? []).map((row) => (row ? hydrateDORecord(row) : null));
+    return { edges, targets };
   }
 
   // --- Cross-scope queries ---

@@ -9,6 +9,7 @@
 
 import { FiregraphError } from '../errors.js';
 import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
 import {
   compileDataOpsExpr,
   isFirestoreSpecialType,
@@ -19,7 +20,13 @@ import { FIELD_TO_COLUMN, quoteIdent } from '../internal/sqlite-schema.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
-import type { AggregateSpec, QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
+import type {
+  AggregateSpec,
+  ExpandParams,
+  QueryFilter,
+  QueryOptions,
+  StoredGraphRecord,
+} from '../types.js';
 
 const SQLITE_BACKEND_LABEL = 'shared-table SQLite';
 const SQLITE_BACKEND_ERR_LABEL = 'SQLite backend';
@@ -344,6 +351,159 @@ export function compileSelectByDocId(
   return {
     sql: `SELECT * FROM ${quoteIdent(table)} WHERE "scope" = ? AND "doc_id" = ? LIMIT 1`,
     params: [scope, docId],
+  };
+}
+
+/**
+ * Compile an `expand()` fan-out into one SELECT statement.
+ *
+ * Shape (forward direction, with hydrate=false):
+ *
+ *   SELECT * FROM <table>
+ *   WHERE "scope" = ? AND "axbType" = ? AND "aUid" IN (?, ?, …)
+ *     [AND "aType" = ?] [AND "bType" = ?]
+ *   [ORDER BY …]
+ *   [LIMIT ?]
+ *
+ * The `IN ("aUid", …)` clause replaces the per-source `findEdges` loop
+ * `traverse.ts` would otherwise issue, collapsing N round trips into one
+ * regardless of how many sources the caller passes. Reverse direction
+ * swaps the `IN` predicate to `"bUid"` and the optional `aType`/`bType`
+ * filters cover the same dimensions either way.
+ *
+ * Hydration (`params.hydrate === true`) is **not** baked into this
+ * function. The backend issues a follow-up `SELECT * WHERE "scope" = ?
+ * AND "aUid" = "bUid" AND "axbType" = 'is' AND "bUid" IN (…)` against the
+ * target-side UIDs and stitches the alignment in JS. A single-statement
+ * JOIN is technically possible (edges and nodes share one table here)
+ * but produces colliding column names and forces a manual aliased
+ * row-decoder, with no measurable perf win on an in-process executor.
+ * Two `exec()` calls keep the row-decoder shared with the rest of
+ * `findEdges` / `findNodes`.
+ *
+ * Empty `sources` is an invariant violation here — the SQLite backend
+ * intercepts that case before reaching the compiler and short-circuits
+ * to an empty result. The compiler itself rejects it because an empty
+ * `IN ()` clause is invalid SQL.
+ */
+export function compileExpand(
+  table: string,
+  scope: string,
+  params: ExpandParams,
+): CompiledStatement {
+  if (params.sources.length === 0) {
+    throw new FiregraphError(
+      'compileExpand requires a non-empty sources list — empty IN () is invalid SQL. ' +
+        'Callers should short-circuit empty input before reaching the compiler.',
+      'INVALID_QUERY',
+    );
+  }
+  const direction = params.direction ?? 'forward';
+  // Column identifiers must use the on-disk snake_case names
+  // (`a_uid`, `axb_type`, `b_uid`, …) — see `FIELD_TO_COLUMN` in
+  // `src/internal/sqlite-schema.ts`. We resolve every column reference
+  // through `compileFieldRef` so a future schema rename can't drift
+  // between read-paths.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const aTypeCol = compileFieldRef('aType').expr;
+  const bTypeCol = compileFieldRef('bType').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+  const sourceColumn = direction === 'forward' ? aUidCol : bUidCol;
+
+  const sqlParams: unknown[] = [scope, params.axbType];
+  const conditions: string[] = ['"scope" = ?', `${axbTypeCol} = ?`];
+
+  // The IN list. Source UIDs are not currently chunked — SQLite has no hard
+  // cap on bound parameters (the default `SQLITE_MAX_VARIABLE_NUMBER` is
+  // 32766 in modern builds), and traversal callers cap source-set growth
+  // through `maxReads` long before any realistic IN-list size. If a caller
+  // ever blows past that cap, the backend surfaces it as the underlying
+  // SQLite error rather than failing silently.
+  const placeholders = params.sources.map(() => '?').join(', ');
+  conditions.push(`${sourceColumn} IN (${placeholders})`);
+  for (const uid of params.sources) sqlParams.push(uid);
+
+  if (params.aType !== undefined) {
+    conditions.push(`${aTypeCol} = ?`);
+    sqlParams.push(params.aType);
+  }
+  if (params.bType !== undefined) {
+    conditions.push(`${bTypeCol} = ?`);
+    sqlParams.push(params.bType);
+  }
+
+  // Exclude self-loop "node" rows. Without this, an `axbType = 'is'`
+  // expand (which would only happen via an explicit hop on the node
+  // relation) could match the node-as-self-loop rows. Forward expand
+  // over a non-`is` axbType already excludes them via the axbType
+  // predicate; this clause is a belt-and-braces guard for the corner
+  // case where the caller explicitly asks for `axbType: 'is'`.
+  if (params.axbType === NODE_RELATION) {
+    conditions.push(`${aUidCol} != ${bUidCol}`);
+  }
+
+  let sql = `SELECT * FROM ${quoteIdent(table)} WHERE ${conditions.join(' AND ')}`;
+
+  // ORDER BY uses the same `compileFieldRef` rules as `findEdges`, so
+  // dotted `data.*` paths translate to `json_extract` and hit the same
+  // expression indexes when present. Per-source-strict ordering would
+  // require window functions; see `ExpandParams.limitPerSource` JSDoc
+  // for the contract — this LIMIT is a soft total cap.
+  if (params.orderBy) {
+    sql += compileOrderBy({ orderBy: params.orderBy }, sqlParams);
+  }
+
+  if (params.limitPerSource !== undefined) {
+    // Total cap = sources.length * limitPerSource. We multiply at compile
+    // time so the bound parameter is a concrete integer; SQLite parses
+    // `LIMIT ?` once and the executor binds it in flight.
+    const totalLimit = params.sources.length * params.limitPerSource;
+    sql += ` LIMIT ?`;
+    sqlParams.push(totalLimit);
+  }
+
+  return { sql, params: sqlParams };
+}
+
+/**
+ * Compile the hydration-pass query for `expand({ hydrate: true })`. Issues
+ * one statement against the same table that fetches every node row whose
+ * `bUid` is in the supplied set. The backend stitches alignment in JS
+ * (a `Map<bUid, StoredGraphRecord>` keyed by the canonical node UID).
+ *
+ * Empty input is rejected for the same reason as `compileExpand`.
+ */
+export function compileExpandHydrate(
+  table: string,
+  scope: string,
+  targetUids: string[],
+): CompiledStatement {
+  if (targetUids.length === 0) {
+    throw new FiregraphError(
+      'compileExpandHydrate requires a non-empty target list — empty IN () is invalid SQL.',
+      'INVALID_QUERY',
+    );
+  }
+  const placeholders = targetUids.map(() => '?').join(', ');
+  const sqlParams: unknown[] = [scope, NODE_RELATION];
+  for (const uid of targetUids) sqlParams.push(uid);
+
+  // Resolve column refs via `compileFieldRef` — see `compileExpand` for
+  // the schema-rename rationale.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+
+  // Self-loop predicate (`a_uid = b_uid`) is what distinguishes a node
+  // row from an edge row in the single-table schema. Without it, an
+  // accidental `is`-typed edge (which firegraph forbids today, but the
+  // schema doesn't enforce) could mask a real node row in the result.
+  return {
+    sql:
+      `SELECT * FROM ${quoteIdent(table)} ` +
+      `WHERE "scope" = ? AND ${axbTypeCol} = ? AND ${aUidCol} = ${bUidCol} AND ${bUidCol} IN (${placeholders})`,
+    params: sqlParams,
   };
 }
 

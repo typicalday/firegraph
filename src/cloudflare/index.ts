@@ -83,4 +83,7 @@ export type {
   BulkUpdatePatch,
   Capability,
   DmlExtension,
+  ExpandParams,
+  ExpandResult,
+  JoinExtension,
 } from '../types.js';

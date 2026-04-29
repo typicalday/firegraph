@@ -1,6 +1,7 @@
 import type { FieldValue, Timestamp, WhereFilterOp } from '@google-cloud/firestore';
 
 import type { ViewResolverConfig } from './config.js';
+import type { BackendCapabilities } from './internal/backend.js';
 import type { GraphTimestamp } from './timestamp.js';
 
 export interface GraphRecord {
@@ -600,6 +601,26 @@ export interface GraphWriter {
  * `GraphClient<C>` below.
  */
 export interface CoreGraphClient extends GraphReader, GraphWriter {
+  /**
+   * Capability set of the underlying storage backend. Mirrors
+   * `StorageBackend.capabilities` so callers can do portability checks
+   * without reaching for the backend handle:
+   *
+   * ```ts
+   * if (client.capabilities.has('query.join')) {
+   *   await client.expand({ sources, axbType: 'wrote' });
+   * } else {
+   *   // fall back to the per-source loop in createTraversal()
+   * }
+   * ```
+   *
+   * The set is static for the lifetime of the client (invariant 3 from
+   * `.claude/backend-capabilities.md`). Subgraph clients return the cap
+   * set of their wrapped backend — typically identical to the parent's,
+   * but the routing wrapper may return a narrowed set when crossing into
+   * a routed child of a different backend type.
+   */
+  readonly capabilities: BackendCapabilities;
   runTransaction<T>(fn: (tx: GraphTransaction) => Promise<T>): Promise<T>;
   batch(): GraphBatch;
   /** Delete a node and all its outgoing/incoming edges in chunked batches. */
@@ -692,9 +713,92 @@ export interface SelectExtension {
   // Methods land in Phase 7.
 }
 
-/** Multi-hop fan-out with target-node hydration in one round trip. */
+/**
+ * Parameters for one expansion hop — fan out from a set of source UIDs over
+ * a single edge type in one server-side round trip.
+ *
+ * The shape mirrors `HopDefinition` (see `traverse.ts`) but is flat instead
+ * of chained: a multi-hop traversal calls `expand()` once per depth, and
+ * the traversal layer drives the hop-to-hop loop. We keep `expand()` per-
+ * depth (not per-traversal) for two reasons:
+ *
+ *   1. **Backend symmetry.** SQL `JOIN`s and Firestore Pipeline subqueries
+ *      both express N→1-source fan-out cleanly, but neither expresses
+ *      arbitrary-depth chained joins as a single statement (CTEs are
+ *      possible, but the `IN (?, …)` cap on Firestore makes a multi-depth
+ *      pipeline brittle). Per-depth fan-out is the largest constant-factor
+ *      win that's portable across all backends declaring `query.join`.
+ *
+ *   2. **Result shaping.** Per-hop edges feed cross-graph hops and
+ *      `targetGraph` re-routing, which traversal already owns. Pushing the
+ *      whole chain into one backend call would re-implement that logic at
+ *      the storage layer.
+ */
+export interface ExpandParams {
+  /** Source UIDs from which to expand. The hop matches every row whose
+   * `aUid` (forward) or `bUid` (reverse) is in this list. May be empty —
+   * empty input yields empty output without touching the backend. */
+  sources: string[];
+  /** Edge relation name. Required. */
+  axbType: string;
+  /** Hop direction. `'forward'` (default) follows `aUid → bUid`; `'reverse'`
+   * follows `bUid → aUid`. */
+  direction?: 'forward' | 'reverse';
+  /** Optional `aType` predicate on the matched edge. */
+  aType?: string;
+  /** Optional `bType` predicate on the matched edge. */
+  bType?: string;
+  /** Per-source soft fan-out cap. The backend translates this to an upper
+   * bound on the total result count (`sources.length * limitPerSource`); it
+   * does **not** enforce strict per-source limits — a SQL `LIMIT N` over an
+   * `IN (…)` query may return all N rows from a single source if that's
+   * where the matches concentrate. Callers needing strict per-source caps
+   * should fall back to the per-hop loop. */
+  limitPerSource?: number;
+  /** Order edges by field; applied before limit. */
+  orderBy?: { field: string; direction?: 'asc' | 'desc' };
+  /** Hydrate target nodes alongside edges. When `true`, the returned
+   * `ExpandResult.targets` array is index-aligned with `edges` and contains
+   * the corresponding target-side node record (the b-side for forward, the
+   * a-side for reverse) or `null` when the node row is missing. */
+  hydrate?: boolean;
+}
+
+/** Result shape for one `expand()` call.
+ *
+ * `edges` is the list of edge rows that matched the hop, in the order the
+ * backend returned them (subject to `orderBy`). `targets`, when present,
+ * is the same length as `edges` — one slot per edge — and holds the
+ * corresponding target-side node record (or `null` when the target node
+ * does not exist). */
+export interface ExpandResult {
+  edges: StoredGraphRecord[];
+  /** Present iff the request set `hydrate: true`. Index-aligned with
+   * `edges`; entries are `null` for edges whose target node row is
+   * missing. */
+  targets?: Array<StoredGraphRecord | null>;
+}
+
+/** Multi-hop fan-out with target-node hydration in one round trip per hop.
+ *
+ * Backends declaring `query.join` translate one `expand()` call into one
+ * server-side query (SQL `IN (…)`, Firestore Pipeline batched fan-out).
+ * That collapses the per-source `findEdges` loop in `traverse.ts` into a
+ * single round trip per hop, regardless of source-set size.
+ *
+ * Backends without `query.join` are not required to expose `expand()` at
+ * all — `traverse.ts` keeps the per-source loop for them. The capability
+ * gate is the single source of truth on whether the optimization runs. */
 export interface JoinExtension {
-  // Methods land in Phase 6.
+  /** Fan out from `params.sources` over `params.axbType` in one round
+   * trip. See `ExpandParams` for shape and `ExpandResult` for return value.
+   *
+   * Cross-graph hops (those with `targetGraph`) are not eligible for
+   * `expand()` because each source UID would resolve to a distinct
+   * subgraph location — there's no single collection to fan out over.
+   * Callers (notably `traverse.ts`) detect cross-graph hops and stay on
+   * the per-source loop. */
+  expand(params: ExpandParams): Promise<ExpandResult>;
 }
 
 /**
