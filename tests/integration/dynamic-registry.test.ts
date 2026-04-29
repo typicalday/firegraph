@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { META_EDGE_TYPE, META_NODE_TYPE } from '../../src/dynamic-registry.js';
 import { DynamicRegistryError, RegistryViolationError, ValidationError } from '../../src/errors.js';
-import { createGraphClient } from '../../src/firestore.js';
 import { createRegistry } from '../../src/registry.js';
 import type { DynamicGraphClient } from '../../src/types.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 const tourSchema = {

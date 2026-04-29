@@ -17,6 +17,8 @@ import { createCapabilities, intersectCapabilities } from '../../src/backend.js'
 import { createRoutingBackend } from '../../src/backend.js';
 import type { FiregraphNamespace, FiregraphStub } from '../../src/cloudflare/backend.js';
 import { DORPCBackend } from '../../src/cloudflare/backend.js';
+import { createFirestoreEnterpriseBackend } from '../../src/firestore-enterprise/backend.js';
+import { createFirestoreStandardBackend } from '../../src/firestore-standard/backend.js';
 import type {
   StorageBackend,
   TransactionBackend,
@@ -24,9 +26,8 @@ import type {
   WritableRecord,
   WriteMode,
 } from '../../src/internal/backend.js';
-import { createFirestoreBackend } from '../../src/internal/firestore-backend.js';
-import { createSqliteBackend } from '../../src/internal/sqlite-backend.js';
 import type { SqliteExecutor } from '../../src/internal/sqlite-executor.js';
+import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import type {
   BulkOptions,
   BulkResult,
@@ -117,9 +118,34 @@ describe('FirestoreBackend capabilities', () => {
     } as unknown as Firestore;
   }
 
-  it('declares the full core surface plus raw.firestore', () => {
-    const backend = createFirestoreBackend(makeStubFirestore(), 'firegraph', {
-      queryMode: 'standard',
+  it('Standard edition declares the full core surface plus raw.firestore', () => {
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    const caps = backend.capabilities;
+    expect(caps.has('core.read')).toBe(true);
+    expect(caps.has('core.write')).toBe(true);
+    expect(caps.has('core.transactions')).toBe(true);
+    expect(caps.has('core.batch')).toBe(true);
+    expect(caps.has('core.subgraph')).toBe(true);
+    expect(caps.has('raw.firestore')).toBe(true);
+  });
+
+  it('Standard edition does not silently declare extension capabilities before they ship', () => {
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    const caps = backend.capabilities;
+    expect(caps.has('raw.sql')).toBe(false);
+    expect(caps.has('query.aggregate')).toBe(false);
+    expect(caps.has('query.join')).toBe(false);
+    expect(caps.has('query.dml')).toBe(false);
+    expect(caps.has('query.select')).toBe(false);
+    expect(caps.has('search.fullText')).toBe(false);
+    expect(caps.has('search.geo')).toBe(false);
+    expect(caps.has('search.vector')).toBe(false);
+    expect(caps.has('realtime.listen')).toBe(false);
+  });
+
+  it('Enterprise edition declares the full core surface plus raw.firestore', () => {
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
     });
     const caps = backend.capabilities;
     expect(caps.has('core.read')).toBe(true);
@@ -130,9 +156,9 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('raw.firestore')).toBe(true);
   });
 
-  it('does not silently declare query.* extensions or raw.sql before they ship', () => {
-    const backend = createFirestoreBackend(makeStubFirestore(), 'firegraph', {
-      queryMode: 'standard',
+  it('Enterprise edition does not silently declare extension capabilities before Phases 4-10 ship', () => {
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
     });
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);

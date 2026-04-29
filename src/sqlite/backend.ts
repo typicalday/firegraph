@@ -11,6 +11,18 @@
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
 import { FiregraphError } from '../errors.js';
+import type {
+  BackendCapabilities,
+  BatchBackend,
+  StorageBackend,
+  TransactionBackend,
+  UpdatePayload,
+  WritableRecord,
+  WriteMode,
+} from '../internal/backend.js';
+import { createCapabilities } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
+import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
   BulkBatchError,
@@ -24,19 +36,7 @@ import type {
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
-import type {
-  BackendCapabilities,
-  BatchBackend,
-  StorageBackend,
-  TransactionBackend,
-  UpdatePayload,
-  WritableRecord,
-  WriteMode,
-} from './backend.js';
-import { createCapabilities } from './backend.js';
-import { NODE_RELATION } from './constants.js';
-import type { SqliteExecutor, SqliteTxExecutor } from './sqlite-executor.js';
-import type { CompiledStatement } from './sqlite-sql.js';
+import type { CompiledStatement } from './sql.js';
 import {
   compileCountScopePrefix,
   compileDelete,
@@ -47,7 +47,7 @@ import {
   compileSet,
   compileUpdate,
   rowToRecord,
-} from './sqlite-sql.js';
+} from './sql.js';
 
 export interface SqliteBackendOptions {
   /** Logical scope path (chained subgraph names) — used for `allowedIn` matching. */

@@ -66,6 +66,36 @@
         "types": "./dist/backend.d.cts",
         "default": "./dist/backend.cjs"
       }
+    },
+    "./firestore-standard": {
+      "import": {
+        "types": "./dist/firestore-standard/index.d.ts",
+        "default": "./dist/firestore-standard/index.js"
+      },
+      "require": {
+        "types": "./dist/firestore-standard/index.d.cts",
+        "default": "./dist/firestore-standard/index.cjs"
+      }
+    },
+    "./firestore-enterprise": {
+      "import": {
+        "types": "./dist/firestore-enterprise/index.d.ts",
+        "default": "./dist/firestore-enterprise/index.js"
+      },
+      "require": {
+        "types": "./dist/firestore-enterprise/index.d.cts",
+        "default": "./dist/firestore-enterprise/index.cjs"
+      }
+    },
+    "./sqlite": {
+      "import": {
+        "types": "./dist/sqlite/index.d.ts",
+        "default": "./dist/sqlite/index.js"
+      },
+      "require": {
+        "types": "./dist/sqlite/index.d.cts",
+        "default": "./dist/sqlite/index.cjs"
+      }
     }
   },
   "bin": {

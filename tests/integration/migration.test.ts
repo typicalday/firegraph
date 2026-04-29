@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
 import { createRegistry } from '../../src/registry.js';
 import type { GraphClient, MigrationStep } from '../../src/types.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 // ---------------------------------------------------------------------------

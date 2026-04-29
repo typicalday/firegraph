@@ -673,17 +673,30 @@ export class GraphClientImpl implements DynamicGraphClient {
 }
 
 /**
- * Create a `GraphClient` backed by an arbitrary `StorageBackend`.
+ * Create a `GraphClient` backed by a `StorageBackend`.
  *
- * Used by backend-specific factories (e.g. `createDOClient` in
- * `firegraph/cloudflare`) — most callers should use the higher-level
- * `createGraphClient(firestore, ...)` overload below for Firestore, or the
- * Cloudflare factory for DO-backed graphs.
+ * This is the canonical client factory after the Phase 2 edition split:
+ * each edition's package subpath (`firegraph/firestore-standard`,
+ * `firegraph/firestore-enterprise`, `firegraph/sqlite`,
+ * `firegraph/cloudflare`) re-exports this function for ergonomic single-
+ * import usage. The Firestore-specific overload that used to live in
+ * `src/firestore.ts` has been removed — callers must now build a backend
+ * via the appropriate edition factory and pass it in.
+ *
+ * `createGraphClientFromBackend` is retained as a deprecated alias for
+ * backward compatibility while the codebase migrates.
  */
-export function createGraphClientFromBackend(
+export function createGraphClient(
   backend: StorageBackend,
   options?: GraphClientOptions,
   metaBackend?: StorageBackend,
 ): GraphClient | DynamicGraphClient {
   return new GraphClientImpl(backend, options, metaBackend) as GraphClient | DynamicGraphClient;
 }
+
+/**
+ * @deprecated Use `createGraphClient` instead. Kept temporarily so existing
+ * callers (Cloudflare client, routing backend, tests) continue to compile
+ * during the Phase 2 transition.
+ */
+export const createGraphClientFromBackend = createGraphClient;

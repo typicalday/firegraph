@@ -8,18 +8,18 @@
  */
 
 import { FiregraphError } from '../errors.js';
-import type { GraphTimestamp } from '../timestamp.js';
-import { GraphTimestampImpl } from '../timestamp.js';
-import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
-import type { UpdatePayload, WritableRecord, WriteMode } from './backend.js';
+import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
 import {
   compileDataOpsExpr,
   isFirestoreSpecialType,
   validateJsonPathKey,
-} from './sqlite-data-ops.js';
-import { assertJsonSafePayload } from './sqlite-payload-guard.js';
-import { FIELD_TO_COLUMN, quoteIdent } from './sqlite-schema.js';
-import { assertUpdatePayloadExclusive, flattenPatch } from './write-plan.js';
+} from '../internal/sqlite-data-ops.js';
+import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
+import { FIELD_TO_COLUMN, quoteIdent } from '../internal/sqlite-schema.js';
+import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
+import type { GraphTimestamp } from '../timestamp.js';
+import { GraphTimestampImpl } from '../timestamp.js';
+import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
 
 const SQLITE_BACKEND_LABEL = 'shared-table SQLite';
 const SQLITE_BACKEND_ERR_LABEL = 'SQLite backend';

@@ -14,10 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createGraphClientFromBackend } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
 import type { StorageBackend } from '../../src/internal/backend.js';
-import { createSqliteBackend } from '../../src/internal/sqlite-backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
 import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
+import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import type { GraphClient } from '../../src/types.js';
 const TABLE = 'firegraph_test';
 
@@ -472,7 +472,7 @@ describe('SqliteBackend (raw)', () => {
     // The backend's getDoc path uses default integer mode (numbers), but
     // exercising rowToRecord directly with bigint inputs ensures D1's bigint
     // returns are handled.
-    const { rowToRecord } = await import('../../src/internal/sqlite-sql.js');
+    const { rowToRecord } = await import('../../src/sqlite/sql.js');
     const record = rowToRecord(row);
     expect(record.createdAt.toMillis()).toBeGreaterThan(0);
     expect(record.updatedAt.toMillis()).toBeGreaterThan(0);

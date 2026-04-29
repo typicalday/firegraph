@@ -1,9 +1,17 @@
 /**
- * Firestore implementation of `StorageBackend`.
+ * Firestore Enterprise edition `StorageBackend`.
  *
- * Wraps the existing `FirestoreAdapter`, `TransactionAdapter`, and
- * `BatchAdapter` so the Firestore code path keeps the exact behavior it
- * had before the backend abstraction landed.
+ * The Enterprise edition wires the classic Query API (transactions, single-
+ * doc reads/writes, listeners) alongside the Pipelines query engine. Pipeline
+ * mode is the default for `query()` outside the emulator; classic mode is
+ * always used for transactions and doc-level operations because pipelines
+ * have no transactional binding (per Firestore's GA notes — April 2026).
+ *
+ * Capability declarations target the full Enterprise surface — pipelines
+ * GA features (aggregate, join, DML, full-text search, geo, vector). The
+ * actual implementation of those extension methods lands in Phases 4-10
+ * of the capability refactor; today this file declares only the core
+ * capabilities that match the runtime methods it exposes.
  */
 
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
@@ -14,6 +22,28 @@ import {
   removeNodeCascade as removeNodeCascadeImpl,
 } from '../bulk.js';
 import { FiregraphError } from '../errors.js';
+import type {
+  BackendCapabilities,
+  BatchBackend,
+  StorageBackend,
+  TransactionBackend,
+  UpdatePayload,
+  WritableRecord,
+  WriteMode,
+} from '../internal/backend.js';
+import { createCapabilities } from '../internal/backend.js';
+import type {
+  BatchAdapter,
+  FirestoreAdapter,
+  TransactionAdapter,
+} from '../internal/firestore-classic-adapter.js';
+import {
+  createBatchAdapter,
+  createFirestoreAdapter,
+  createTransactionAdapter,
+} from '../internal/firestore-classic-adapter.js';
+import type { DataPathOp } from '../internal/write-plan.js';
+import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
@@ -24,35 +54,57 @@ import type {
   FindEdgesParams,
   GraphReader,
   QueryFilter,
-  QueryMode,
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
-import type {
-  BackendCapabilities,
-  BatchBackend,
-  StorageBackend,
-  TransactionBackend,
-  UpdatePayload,
-  WritableRecord,
-  WriteMode,
-} from './backend.js';
-import { createCapabilities } from './backend.js';
-import type { BatchAdapter, FirestoreAdapter, TransactionAdapter } from './firestore-adapter.js';
-import {
-  createBatchAdapter,
-  createFirestoreAdapter,
-  createTransactionAdapter,
-} from './firestore-adapter.js';
 import type { PipelineQueryAdapter } from './pipeline-adapter.js';
 import { createPipelineQueryAdapter } from './pipeline-adapter.js';
-import type { DataPathOp } from './write-plan.js';
-import { assertSafePath, assertUpdatePayloadExclusive } from './write-plan.js';
 
-export interface FirestoreBackendOptions {
-  queryMode?: QueryMode;
+/**
+ * The Enterprise backend's static capability set.
+ *
+ * `core.transactions` is included because transactions are still supported
+ * via the classic Query API (pipelines themselves are not transactionally
+ * bound; the GA notes call this out explicitly). The pipeline-only
+ * extension capabilities (`query.aggregate`, `query.join`, `query.dml`,
+ * `search.*`) are NOT declared yet — Phases 4-10 wire them in once the
+ * matching backend methods exist.
+ *
+ * Conservative declaration matters here: declaring a capability we don't
+ * implement turns the type-level gate (Phase 3) into a lie that throws at
+ * runtime instead of failing to compile.
+ */
+const ENTERPRISE_CAPS: ReadonlySet<Capability> = new Set<Capability>([
+  'core.read',
+  'core.write',
+  'core.transactions',
+  'core.batch',
+  'core.subgraph',
+  'raw.firestore',
+]);
+
+export type FirestoreEnterpriseQueryMode = 'pipeline' | 'classic';
+
+export interface FirestoreEnterpriseOptions {
+  /**
+   * Query execution mode for `findEdges` / `findNodes`. `'pipeline'` (the
+   * default outside the emulator) routes through the Pipeline query engine;
+   * `'classic'` falls back to the Query API. Pipeline-only capabilities
+   * (search, aggregate, etc., once implemented) always use pipelines
+   * regardless of this option.
+   *
+   * The emulator does not execute pipeline queries, so this option is
+   * forced to `'classic'` whenever `FIRESTORE_EMULATOR_HOST` is set, with
+   * a one-time `console.warn` if the caller explicitly asked for pipeline
+   * mode.
+   */
+  defaultQueryMode?: FirestoreEnterpriseQueryMode;
+  /** Internal: the logical scope path inherited from a parent subgraph. */
   scopePath?: string;
 }
+
+let _emulatorFallbackWarned = false;
+let _classicInProductionWarned = false;
 
 /** Build a `data.a.b.c` dotted path for Firestore's `update()` API. */
 function dottedDataPath(op: DataPathOp): string {
@@ -112,7 +164,7 @@ function stampWritableRecord(record: WritableRecord): Record<string, unknown> {
   return out;
 }
 
-class FirestoreTransactionBackend implements TransactionBackend {
+class FirestoreEnterpriseTransactionBackend implements TransactionBackend {
   constructor(
     private readonly adapter: TransactionAdapter,
     private readonly db: Firestore,
@@ -143,7 +195,7 @@ class FirestoreTransactionBackend implements TransactionBackend {
   }
 }
 
-class FirestoreBatchBackend implements BatchBackend {
+class FirestoreEnterpriseBatchBackend implements BatchBackend {
   constructor(
     private readonly adapter: BatchAdapter,
     private readonly db: Firestore,
@@ -170,23 +222,8 @@ class FirestoreBatchBackend implements BatchBackend {
   }
 }
 
-/**
- * Capabilities the unified Firestore backend currently implements. This is
- * intentionally conservative: only the operations actually exposed by
- * firegraph today appear here. Phase 2 splits this into edition-specific
- * capability sets (`firestore-standard` vs `firestore-enterprise`).
- */
-const FIRESTORE_CAPS: ReadonlySet<Capability> = new Set<Capability>([
-  'core.read',
-  'core.write',
-  'core.transactions',
-  'core.batch',
-  'core.subgraph',
-  'raw.firestore',
-]);
-
-class FirestoreBackendImpl implements StorageBackend {
-  readonly capabilities: BackendCapabilities = createCapabilities(FIRESTORE_CAPS);
+class FirestoreEnterpriseBackendImpl implements StorageBackend {
+  readonly capabilities: BackendCapabilities = createCapabilities(ENTERPRISE_CAPS);
   readonly collectionPath: string;
   readonly scopePath: string;
   private readonly adapter: FirestoreAdapter;
@@ -195,7 +232,7 @@ class FirestoreBackendImpl implements StorageBackend {
   constructor(
     private readonly db: Firestore,
     collectionPath: string,
-    private readonly queryMode: QueryMode,
+    private readonly queryMode: FirestoreEnterpriseQueryMode,
     scopePath: string,
   ) {
     this.collectionPath = collectionPath;
@@ -242,13 +279,13 @@ class FirestoreBackendImpl implements StorageBackend {
   runTransaction<T>(fn: (tx: TransactionBackend) => Promise<T>): Promise<T> {
     return this.db.runTransaction(async (firestoreTx: Transaction) => {
       const txAdapter = createTransactionAdapter(this.db, this.collectionPath, firestoreTx);
-      return fn(new FirestoreTransactionBackend(txAdapter, this.db));
+      return fn(new FirestoreEnterpriseTransactionBackend(txAdapter, this.db));
     });
   }
 
   createBatch(): BatchBackend {
     const batchAdapter = createBatchAdapter(this.db, this.collectionPath);
-    return new FirestoreBatchBackend(batchAdapter, this.db);
+    return new FirestoreEnterpriseBatchBackend(batchAdapter, this.db);
   }
 
   // --- Subgraphs ---
@@ -256,7 +293,7 @@ class FirestoreBackendImpl implements StorageBackend {
   subgraph(parentNodeUid: string, name: string): StorageBackend {
     const subPath = `${this.collectionPath}/${parentNodeUid}/${name}`;
     const newScope = this.scopePath ? `${this.scopePath}/${name}` : name;
-    return new FirestoreBackendImpl(this.db, subPath, this.queryMode, newScope);
+    return new FirestoreEnterpriseBackendImpl(this.db, subPath, this.queryMode, newScope);
   }
 
   // --- Cascade & bulk ---
@@ -311,18 +348,48 @@ class FirestoreBackendImpl implements StorageBackend {
 }
 
 /**
- * Create a Firestore-backed `StorageBackend`.
+ * Create a Firestore Enterprise-edition `StorageBackend`.
  *
- * The query-mode auto-fallback for the emulator (`FIRESTORE_EMULATOR_HOST`)
- * is performed at the call site (`createGraphClient`) so that the backend
- * itself doesn't reach into `process.env`.
+ * Pipeline mode is the default. When `FIRESTORE_EMULATOR_HOST` is set the
+ * effective mode is forced to `'classic'` because the emulator does not
+ * execute pipelines; if the caller explicitly asked for pipeline mode in
+ * that environment, a one-time `console.warn` surfaces the override so
+ * the deployment mismatch is visible without breaking the test run.
  */
-export function createFirestoreBackend(
+export function createFirestoreEnterpriseBackend(
   db: Firestore,
   collectionPath: string,
-  options: FirestoreBackendOptions = {},
+  options: FirestoreEnterpriseOptions = {},
 ): StorageBackend {
-  const queryMode = options.queryMode ?? 'pipeline';
+  const requestedMode: FirestoreEnterpriseQueryMode = options.defaultQueryMode ?? 'pipeline';
+  const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
+  const effectiveMode: FirestoreEnterpriseQueryMode =
+    isEmulator && requestedMode === 'pipeline' ? 'classic' : requestedMode;
+
+  if (
+    isEmulator &&
+    requestedMode === 'pipeline' &&
+    effectiveMode === 'classic' &&
+    !_emulatorFallbackWarned
+  ) {
+    _emulatorFallbackWarned = true;
+    console.warn(
+      '[firegraph] Firestore Enterprise pipeline mode is unavailable in the emulator; ' +
+        'falling back to classic Query API for this run. Set ' +
+        "`defaultQueryMode: 'classic'` to silence this warning.",
+    );
+  }
+
+  if (!isEmulator && requestedMode === 'classic' && !_classicInProductionWarned) {
+    _classicInProductionWarned = true;
+    console.warn(
+      "[firegraph] Firestore Enterprise backend created with `defaultQueryMode: 'classic'`. " +
+        'Classic-mode `query()` against Enterprise causes full collection scans for ' +
+        '`data.*` filters (high billing). For production reads on Standard Firestore, ' +
+        "import from `'firegraph/firestore-standard'` instead.",
+    );
+  }
+
   const scopePath = options.scopePath ?? '';
-  return new FirestoreBackendImpl(db, collectionPath, queryMode, scopePath);
+  return new FirestoreEnterpriseBackendImpl(db, collectionPath, effectiveMode, scopePath);
 }

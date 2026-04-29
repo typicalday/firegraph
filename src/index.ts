@@ -1,4 +1,4 @@
-export { createGraphClientFromBackend } from './client.js';
+export { createGraphClient, createGraphClientFromBackend } from './client.js';
 export type { CodegenOptions } from './codegen/index.js';
 export { generateTypes } from './codegen/index.js';
 export type {
@@ -39,7 +39,6 @@ export {
   TraversalError,
   ValidationError,
 } from './errors.js';
-export { createGraphClient } from './firestore.js';
 export { generateId } from './id.js';
 export type {
   FirestoreIndex,
@@ -64,7 +63,6 @@ export type { QueryClientErrorCode, QueryClientOptions } from './query-client/in
 export { QueryClient, QueryClientError } from './query-client/index.js';
 export type { QuerySafetyResult } from './query-safety.js';
 export { analyzeQuerySafety } from './query-safety.js';
-export { buildEdgeRecord, buildNodeRecord } from './record.js';
 export { createMergedRegistry, createRegistry } from './registry.js';
 export {
   compileMigrationFn,
