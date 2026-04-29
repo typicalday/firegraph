@@ -31,7 +31,9 @@ import { NODE_RELATION } from '../../src/internal/constants.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
   AggregateSpec,
+  BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   Capability,
   CascadeResult,
   FindEdgesParams,
@@ -97,6 +99,18 @@ function makeStub(name: string): FakeStub {
     async _fgBulkRemoveEdges(params: FindEdgesParams): Promise<BulkResult> {
       calls.push({ method: '_fgBulkRemoveEdges', args: [params] });
       return { deleted: 0, batches: 0, errors: [] };
+    },
+    async _fgBulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+      calls.push({ method: '_fgBulkDelete', args: [filters, options] });
+      return { deleted: 0, batches: 1, errors: [] };
+    },
+    async _fgBulkUpdate(
+      filters: QueryFilter[],
+      patch: BulkUpdatePatch,
+      options?: BulkOptions,
+    ): Promise<BulkResult> {
+      calls.push({ method: '_fgBulkUpdate', args: [filters, patch, options] });
+      return { deleted: 0, batches: 1, errors: [] };
     },
     async _fgDestroy() {
       calls.push({ method: '_fgDestroy', args: [] });
@@ -461,6 +475,67 @@ describe('DORPCBackend — cascade + bulk + destroy', () => {
     await backend.bulkRemoveEdges({ aUid: 'x', axbType: 'y' }, reader);
 
     expect(stubs.get('main')!.calls.at(-1)!.method).toBe('_fgBulkRemoveEdges');
+  });
+
+  it('forwards bulkDelete to _fgBulkDelete with filters and options', async () => {
+    const { ns, stubs } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const out = await backend.bulkDelete!(filters, { batchSize: 50 });
+
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = stubs.get('main')!.calls.find((c) => c.method === '_fgBulkDelete');
+    expect(dmlCall).toBeTruthy();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual({ batchSize: 50 });
+  });
+
+  it('forwards bulkUpdate to _fgBulkUpdate with filters, patch, and options', async () => {
+    const { ns, stubs } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const patch: BulkUpdatePatch = { data: { status: 'archived' } };
+    const out = await backend.bulkUpdate!(filters, patch);
+
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = stubs.get('main')!.calls.find((c) => c.method === '_fgBulkUpdate');
+    expect(dmlCall).toBeTruthy();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual(patch);
+  });
+
+  it('throws UNSUPPORTED_OPERATION when the wrapped stub omits _fgBulkDelete / _fgBulkUpdate', async () => {
+    // Both DML methods are optional on `FiregraphStub` so external worker code
+    // that hand-rolls a thin RPC wrapper around a DO can still compile (same
+    // pattern as `_fgAggregate`). The backend must surface a clean
+    // `UNSUPPORTED_OPERATION` rather than landing as a runtime TypeError.
+    const stubs = new Map<string, FakeStub>();
+    const ns: FiregraphNamespace = {
+      idFromName(name: string): FakeId {
+        return { name, toString: () => name };
+      },
+      get(id: DurableObjectIdLike) {
+        const name = (id as FakeId).name;
+        let stub = stubs.get(name);
+        if (!stub) {
+          stub = makeStub(name);
+          (stub as unknown as { _fgBulkDelete?: unknown })._fgBulkDelete = undefined;
+          (stub as unknown as { _fgBulkUpdate?: unknown })._fgBulkUpdate = undefined;
+          stubs.set(name, stub);
+        }
+        return stub;
+      },
+    };
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+
+    await expect(backend.bulkDelete!([], {})).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+      message: expect.stringContaining('_fgBulkDelete'),
+    });
+    await expect(backend.bulkUpdate!([], { data: { x: 1 } }, {})).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+      message: expect.stringContaining('_fgBulkUpdate'),
+    });
   });
 
   it('destroy() forwards to _fgDestroy (cross-DO cascade hook)', async () => {

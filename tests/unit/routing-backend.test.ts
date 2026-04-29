@@ -36,6 +36,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   Capability,
   CascadeResult,
   FindEdgesParams,
@@ -112,6 +113,7 @@ function createMockBackend(
         'core.batch',
         'core.subgraph',
         'query.aggregate',
+        'query.dml',
       ]),
     ),
     collectionPath,
@@ -183,6 +185,20 @@ function createMockBackend(
       const out: Record<string, number> = {};
       for (const alias of Object.keys(spec)) out[alias] = 0;
       return out;
+    },
+    async bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+      calls.push({ method: 'bulkDelete', args: [filters, options] });
+      // Return the canonical "no-rows-touched" shape every DML backend
+      // produces when a server-side DELETE matches zero rows.
+      return { deleted: 0, batches: 1, errors: [] };
+    },
+    async bulkUpdate(
+      filters: QueryFilter[],
+      patch: BulkUpdatePatch,
+      options?: BulkOptions,
+    ): Promise<BulkResult> {
+      calls.push({ method: 'bulkUpdate', args: [filters, patch, options] });
+      return { deleted: 0, batches: 1, errors: [] };
     },
   };
   return backend;
@@ -529,6 +545,84 @@ describe('createRoutingBackend — pass-through delegation', () => {
 
     expect(router.capabilities.has('query.aggregate')).toBe(false);
     expect(router.aggregate).toBeUndefined();
+  });
+
+  it('delegates bulkDelete to the base backend when the base declares query.dml', async () => {
+    // Phase 5 DML pass-through: identical contract shape to the
+    // aggregate/findEdgesGlobal install pair. The base backend ships
+    // `bulkDelete` and `query.dml`; the router must surface a callable
+    // method that forwards arguments unchanged.
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.bulkDelete).toBe('function');
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const out = await router.bulkDelete!(filters, { batchSize: 50 });
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = base.calls.find((c) => c.method === 'bulkDelete');
+    expect(dmlCall).toBeDefined();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual({ batchSize: 50 });
+  });
+
+  it('delegates bulkUpdate to the base backend when the base declares query.dml', async () => {
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.bulkUpdate).toBe('function');
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const patch: BulkUpdatePatch = { data: { status: 'archived' } };
+    const out = await router.bulkUpdate!(filters, patch);
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = base.calls.find((c) => c.method === 'bulkUpdate');
+    expect(dmlCall).toBeDefined();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual(patch);
+  });
+
+  it('omits bulkDelete/bulkUpdate on the router when the base backend omits them', () => {
+    // Drivers without DML support (Firestore Standard, the upcoming
+    // pre-pipeline-DML branch) propagate through the router as undefined
+    // methods. The "declared capability ⇒ method exists" invariant is
+    // what makes the GraphClient feature-detection guard sound.
+    const base = createMockBackend('base');
+    (base as { bulkDelete?: unknown }).bulkDelete = undefined;
+    (base as { bulkUpdate?: unknown }).bulkUpdate = undefined;
+    (base as { capabilities: typeof base.capabilities }).capabilities = createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(router.bulkDelete).toBeUndefined();
+    expect(router.bulkUpdate).toBeUndefined();
+  });
+
+  it('omits bulkDelete/bulkUpdate on the router when routedCapabilities intersects query.dml away', () => {
+    // Cap-gate isolation test (mirror of the aggregate cap-gate test). A
+    // routed peer that lacks DML support drops `query.dml` from the
+    // intersection, so the router must omit the methods even though the
+    // underlying base methods are callable. Otherwise the routing wrapper
+    // would advertise "no DML" via its capability descriptor while still
+    // exposing working `bulkDelete`/`bulkUpdate` methods — violating the
+    // inverse direction of "declared capability ⇒ method exists".
+    const base = createMockBackend('base');
+    expect(base.bulkDelete).toBeDefined();
+    expect(base.bulkUpdate).toBeDefined();
+    expect(base.capabilities.has('query.dml')).toBe(true);
+
+    const routedNoDml = createCapabilities(
+      // Mixed-backend scenario: a routed peer (e.g. Firestore Standard)
+      // that lacks DML support. The intersection drops `query.dml`.
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, {
+      route: () => null,
+      routedCapabilities: [routedNoDml],
+    });
+
+    expect(router.capabilities.has('query.dml')).toBe(false);
+    expect(router.bulkDelete).toBeUndefined();
+    expect(router.bulkUpdate).toBeUndefined();
   });
 
   it('exposes the base backend collectionPath and scopePath', () => {

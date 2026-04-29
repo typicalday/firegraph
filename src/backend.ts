@@ -38,3 +38,11 @@ export {
   parseStorageScope,
   resolveAncestorScope,
 } from './scope-path.js';
+// DML types (Phase 5, `query.dml`). Re-exported here so backend authors
+// implementing the optional `StorageBackend.bulkDelete` / `bulkUpdate`
+// signatures can pull `BulkUpdatePatch` from the same entry that surfaces
+// `StorageBackend` itself, instead of having to reach into the root
+// `firegraph` package. `DmlExtension` is the client-surface counterpart;
+// it's bundled here so `intersectCapabilities` consumers building a
+// composed type can name both in one place.
+export type { BulkUpdatePatch, DmlExtension } from './types.js';

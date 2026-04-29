@@ -697,9 +697,56 @@ export interface JoinExtension {
   // Methods land in Phase 6.
 }
 
-/** Server-side conditional bulk DML — bulkDelete / bulkUpdate. */
+/**
+ * Patch shape for `bulkUpdate`.
+ *
+ *   - `data`: a deep partial of the row's `data` field. Applied via
+ *     deep-merge semantics (the same `flattenPatch` pipeline that
+ *     `updateNode` / `updateEdge` use). Use `deleteField()` sentinels to
+ *     remove individual leaves; arrays are replaced as a unit, never
+ *     concatenated.
+ *
+ * Backends with `query.dml` translate this to a single server-side UPDATE
+ * statement. The patch is applied to every row that matches the filter
+ * list; there is no per-row callback or read-modify-write loop. Identifying
+ * fields (`aType`, `axbType`, `bType`, `aUid`, `bUid`, `v`) are owned by
+ * firegraph and cannot be mutated through `bulkUpdate` — pass them in the
+ * filter list to scope the update, not in the patch body.
+ */
+export interface BulkUpdatePatch {
+  /** Deep-partial patch applied to each matching row's `data` field. */
+  data: Record<string, unknown>;
+}
+
+/** Server-side conditional bulk DML — bulkDelete / bulkUpdate.
+ *
+ * Backends declaring `query.dml` translate each call to one server-side
+ * statement (Firestore Pipeline `remove`/`update` stage, SQL `DELETE`/
+ * `UPDATE`). Standard Firestore omits this capability and the
+ * Phase 5 code falls back to the existing fetch-then-write loop in
+ * `src/bulk.ts`.
+ *
+ * Both methods scope to the **current backend** only — they do not fan
+ * out to routed children or subcollections. Use `removeNodeCascade` for
+ * the cascade-aware cousin of `bulkDelete`. */
 export interface DmlExtension {
-  // Methods land in Phase 5.
+  /**
+   * Delete every row matching `params` in one server-side statement.
+   * Subject to the same scan-protection rules as `findEdges`: pass
+   * `allowCollectionScan: true` to bypass.
+   */
+  bulkDelete(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Update every row matching `params` with `patch` in one server-side
+   * statement. The patch is deep-merged into each row's `data` field.
+   * Identifying columns (`aType`, `axbType`, etc.) are immutable through
+   * this path — to relabel rows, delete and re-insert.
+   */
+  bulkUpdate(
+    params: FindEdgesParams,
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult>;
 }
 
 /** Native full-text search. */

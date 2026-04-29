@@ -2192,3 +2192,230 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
     expect(out.s).toBe(6);
   });
 });
+
+describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () => {
+  // Phase 5 query.dml: server-side DELETE / UPDATE that bypasses the
+  // O(n) read-then-write loop bulkRemoveEdges uses. Both compilers must
+  // ALWAYS lead with a `"scope" = ?` predicate so a routed-subgraph DML
+  // call cannot leak across siblings — same invariant as compileSelect /
+  // compileAggregate.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- SQL string assertions (compiler output) ---
+
+  it('compileBulkDelete emits a leading "scope" = ? predicate', async () => {
+    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkDelete(TABLE, 'memories', [
+      { field: 'aType', op: '==', value: 'tour' },
+    ]);
+    // Scope predicate leads, column-filter follows. Param order must match.
+    expect(stmt.sql).toContain(`DELETE FROM ${'"' + TABLE + '"'} WHERE "scope" = ? AND `);
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.params).toEqual(['memories', 'tour']);
+  });
+
+  it('compileBulkDelete with no filters still leads with the scope predicate (delete-everything-in-scope)', async () => {
+    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkDelete(TABLE, 'memories', []);
+    // Even the unfiltered case is scope-bound — wiping a subgraph wholesale
+    // must not touch sibling subgraphs. The client-level scan-protection
+    // gate in `bulkDelete()` forces `allowCollectionScan: true` to reach
+    // this path.
+    expect(stmt.sql).toContain('WHERE "scope" = ?');
+    expect(stmt.params).toEqual(['memories']);
+  });
+
+  it('compileBulkUpdate emits SET "data" = json_patch(...) and a leading scope predicate', async () => {
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkUpdate(
+      TABLE,
+      'memories',
+      [{ field: 'aType', op: '==', value: 'tour' }],
+      { status: 'archived' },
+      1700000000000,
+    );
+    // Deep-merge expression on the data column.
+    expect(stmt.sql).toMatch(/UPDATE\s+"firegraph_test"\s+SET\s+"data"\s*=/);
+    // updated_at is bumped.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    // Scope predicate leads in the WHERE.
+    expect(stmt.sql).toContain(`WHERE "scope" = ? AND `);
+    // Params: SET-clause params first (patch value + nowMillis), then
+    // WHERE params (scope value + filter value). The exact ordering
+    // matters because the same convention is shared with compileUpdate.
+    expect(stmt.params[stmt.params.length - 2]).toBe('memories');
+    expect(stmt.params[stmt.params.length - 1]).toBe('tour');
+    expect(stmt.params).toContain(1700000000000);
+  });
+
+  it('compileBulkUpdate rejects an empty patch with INVALID_QUERY', async () => {
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileBulkUpdate(TABLE, 'memories', [], {}, Date.now())).toThrow(
+      /at least one leaf|INVALID_QUERY/,
+    );
+  });
+
+  it('compileBulkUpdate rejects Firestore special types in the patch', async () => {
+    // Mirror of the assertJsonSafePayload guard on single-row replaceData
+    // writes. SQLite rows can't store Firestore Timestamp/GeoPoint/etc.
+    // The DML path hits the same guard.
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    // Construct a tagged Firestore-shaped payload — the guard fires on the
+    // tagged sentinel, so we don't need a real Firestore SDK in this test.
+    const tagged = { __firegraph_ser__: 'Timestamp', seconds: 1, nanoseconds: 0 };
+    expect(() =>
+      compileBulkUpdate(TABLE, 'memories', [], { stamped: tagged }, Date.now()),
+    ).toThrow();
+  });
+
+  // --- Functional integration (in-memory SQLite, full backend.bulkDelete/Update) ---
+
+  async function seedTours(prices: number[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const price of prices) {
+      const uid = generateId();
+      ids.push(uid);
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { price, status: 'active' },
+        },
+        'replace',
+      );
+    }
+    return ids;
+  }
+
+  it('bulkDelete removes only matching rows and reports the row count', async () => {
+    const ids = await seedTours([10, 20, 30, 40]);
+    expect(ids).toHaveLength(4);
+
+    const out = await backend.bulkDelete!([
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.price', op: '>=', value: 25 },
+    ]);
+    // Two of the four rows have price >= 25.
+    expect(out.deleted).toBe(2);
+    expect(out.batches).toBe(1);
+    expect(out.errors).toEqual([]);
+
+    // Surviving rows are still readable.
+    const remaining = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(remaining).toHaveLength(2);
+    const remainingPrices = remaining
+      .map((r) => (r.data as { price: number }).price)
+      .sort((a, b) => a - b);
+    expect(remainingPrices).toEqual([10, 20]);
+  });
+
+  it('bulkDelete with zero filters deletes every row in the current scope', async () => {
+    await seedTours([1, 2, 3]);
+    const out = await backend.bulkDelete!([]);
+    expect(out.deleted).toBe(3);
+    const remaining = await backend.query([]);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('bulkUpdate deep-merges the patch and reports the row count', async () => {
+    const ids = await seedTours([10, 20, 30]);
+    expect(ids).toHaveLength(3);
+
+    const out = await backend.bulkUpdate!([{ field: 'aType', op: '==', value: 'tour' }], {
+      data: { status: 'archived', tags: ['legacy'] },
+    });
+    expect(out.deleted).toBe(3);
+    expect(out.batches).toBe(1);
+    expect(out.errors).toEqual([]);
+
+    // Every row reflects the merged status; the existing `price` field
+    // survives the deep-merge.
+    const rows = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const data = row.data as { status: string; price: number; tags: string[] };
+      expect(data.status).toBe('archived');
+      expect(data.tags).toEqual(['legacy']);
+      // Price wasn't in the patch — must be preserved.
+      expect(typeof data.price).toBe('number');
+    }
+  });
+
+  it('bulkUpdate respects filters when computing affected rows', async () => {
+    await seedTours([10, 20, 30, 40]);
+
+    const out = await backend.bulkUpdate!(
+      [
+        { field: 'aType', op: '==', value: 'tour' },
+        { field: 'data.price', op: '>=', value: 25 },
+      ],
+      { data: { status: 'archived' } },
+    );
+    expect(out.deleted).toBe(2);
+
+    const rows = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    const archived = rows.filter((r) => (r.data as { status?: string }).status === 'archived');
+    const active = rows.filter((r) => (r.data as { status?: string }).status === 'active');
+    expect(archived).toHaveLength(2);
+    expect(active).toHaveLength(2);
+  });
+
+  it('bulkDelete in a subgraph does not touch rows in sibling scopes', async () => {
+    // Cross-scope safety. A bulkDelete on the `memories` subgraph must
+    // leave the parent scope's rows untouched. The leading `"scope" = ?`
+    // predicate is what enforces this; if a future regression dropped it,
+    // this test would fail loudly.
+    const parentUid = generateId();
+    await backend.setDoc(
+      parentUid,
+      {
+        aType: 'agent',
+        aUid: parentUid,
+        axbType: 'is',
+        bType: 'agent',
+        bUid: parentUid,
+        data: { name: 'parent' },
+      },
+      'replace',
+    );
+
+    const sub = backend.subgraph(parentUid, 'memories');
+    const memUid = generateId();
+    await sub.setDoc(
+      memUid,
+      {
+        aType: 'memory',
+        aUid: memUid,
+        axbType: 'is',
+        bType: 'memory',
+        bUid: memUid,
+        data: { topic: 'thing' },
+      },
+      'replace',
+    );
+
+    const out = await sub.bulkDelete!([{ field: 'aType', op: '==', value: 'memory' }]);
+    expect(out.deleted).toBe(1);
+
+    // Parent scope's row is intact.
+    const parentRows = await backend.query([{ field: 'aType', op: '==', value: 'agent' }]);
+    expect(parentRows).toHaveLength(1);
+    // Subgraph is empty.
+    const subRows = await sub.query([]);
+    expect(subRows).toHaveLength(0);
+  });
+});

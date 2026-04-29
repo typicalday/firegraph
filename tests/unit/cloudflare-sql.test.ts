@@ -16,6 +16,8 @@ import {
 } from '../../src/cloudflare/schema.js';
 import {
   compileDOAggregate,
+  compileDOBulkDelete,
+  compileDOBulkUpdate,
   compileDODelete,
   compileDODeleteAll,
   compileDOSelect,
@@ -615,5 +617,85 @@ describe('cloudflare/sql hydrateDORecord — client-side reconstruction', () => 
     const rec = hydrateDORecord(cloned);
     expect(rec.createdAt).toBeInstanceOf(GraphTimestampImpl);
     expect((rec.createdAt as GraphTimestamp).toMillis()).toBe(1_700_000_000_000);
+  });
+});
+
+describe('cloudflare/sql compileDOBulkDelete', () => {
+  // Per-DO single-subgraph table — no scope predicate is needed (and would
+  // be wrong, since the DO is the scope). Mirror of compileBulkDelete in
+  // shared SQLite, minus the leading "scope" = ?.
+
+  it('emits an unscoped DELETE for a filtered query', () => {
+    const stmt = compileDOBulkDelete('firegraph', [{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(stmt.sql).toBe(`DELETE FROM "firegraph" WHERE "a_type" = ?`);
+    expect(stmt.params).toEqual(['tour']);
+  });
+
+  it('emits an unconditional DELETE when no filters are supplied', () => {
+    // The client-level scan-protection gate forces `allowCollectionScan: true`
+    // to reach this path. The compiler itself does not police that — it
+    // produces the canonical SQL. The DO's per-subgraph isolation means
+    // "delete everything" is bounded to one logical subgraph by construction.
+    const stmt = compileDOBulkDelete('firegraph', []);
+    expect(stmt.sql).toBe(`DELETE FROM "firegraph"`);
+    expect(stmt.params).toEqual([]);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', () => {
+    const stmt = compileDOBulkDelete('firegraph', [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'archived' },
+    ]);
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.sql).toContain(`json_extract("data", '$.status') = ?`);
+    expect(stmt.params).toEqual(['tour', 'archived']);
+  });
+});
+
+describe('cloudflare/sql compileDOBulkUpdate', () => {
+  it('emits SET "data" = json_patch-style expr and an updated_at bump', () => {
+    const stmt = compileDOBulkUpdate(
+      'firegraph',
+      [{ field: 'aType', op: '==', value: 'tour' }],
+      { status: 'archived' },
+      1_700_000_000_000,
+    );
+    // Deep-merge expression.
+    expect(stmt.sql).toMatch(/UPDATE\s+"firegraph"\s+SET\s+"data"\s*=/);
+    // updated_at always bumped.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    // No scope predicate — DO has its own physical isolation.
+    expect(stmt.sql).not.toContain(`"scope" = ?`);
+    // WHERE clause references the column-filter, not the JSON path.
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    // updated_at param appears in the param list.
+    expect(stmt.params).toContain(1_700_000_000_000);
+    // Last param is the filter value (after SET-clause params).
+    expect(stmt.params[stmt.params.length - 1]).toBe('tour');
+  });
+
+  it('rejects an empty patch with INVALID_QUERY', () => {
+    expect(() => compileDOBulkUpdate('firegraph', [], {}, Date.now())).toThrow(
+      /at least one leaf|INVALID_QUERY/,
+    );
+  });
+
+  it('emits an unconditional UPDATE when no filters are supplied (with allowCollectionScan)', () => {
+    // Same client-level gate as bulkDelete. Once filters reach the
+    // compiler, an empty list produces an UPDATE-everything-in-the-DO SQL.
+    const stmt = compileDOBulkUpdate('firegraph', [], { archived: true }, 1_700_000_000_000);
+    // No WHERE clause when there are no filters.
+    expect(stmt.sql).not.toContain(' WHERE ');
+    // updated_at and the patched data still flow through.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    expect(stmt.sql).toMatch(/SET\s+"data"\s*=/);
+  });
+
+  it('rejects Firestore special types in the patch', () => {
+    // assertJsonSafePayload guard — DOs use SQLite JSON columns; tagged
+    // Firestore types would round-trip back through the migration
+    // serialization but never write. Rejected at the DML boundary.
+    const tagged = { __firegraph_ser__: 'Timestamp', seconds: 1, nanoseconds: 0 };
+    expect(() => compileDOBulkUpdate('firegraph', [], { stamped: tagged }, Date.now())).toThrow();
   });
 });

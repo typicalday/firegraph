@@ -13,6 +13,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   Capability,
   CascadeResult,
   FindEdgesParams,
@@ -213,4 +214,31 @@ export interface StorageBackend<C extends Capability = Capability> {
    * code `UNSUPPORTED_AGGREGATE` (e.g. Firestore Standard rejects min/max).
    */
   aggregate?(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>>;
+
+  // --- Server-side DML ---
+  /**
+   * Delete every row matching `filters` in one server-side statement.
+   * Present only on backends that declare `query.dml`. The default cascade
+   * implementation in `bulk.ts` uses this when available; backends without
+   * the cap (e.g. Firestore Standard) fall back to a fetch-then-delete
+   * loop driven by `findEdges` + per-row `deleteDoc`.
+   *
+   * The contract matches `findEdges`: scope predicates are honoured
+   * automatically by the backend's own internal scope tracking. Callers
+   * supply only the filter list — the same shape produced by
+   * `buildEdgeQueryPlan`.
+   */
+  bulkDelete?(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Update every row matching `filters` with `patch` in one server-side
+   * statement. The patch is deep-merged into each row's `data` field, the
+   * same flatten-then-merge pipeline `updateDoc` uses. Identifying columns
+   * (`aType`, `axbType`, `aUid`, `bType`, `bUid`, `v`) are not writable
+   * through this path.
+   */
+  bulkUpdate?(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult>;
 }

@@ -47,6 +47,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
   DynamicGraphClient,
   FindEdgesParams,
@@ -104,6 +105,22 @@ export interface FiregraphStub {
   _fgBatch(ops: BatchOp[]): Promise<void>;
   _fgRemoveNodeCascade(uid: string): Promise<CascadeResult>;
   _fgBulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Optional — added in Phase 5 (`query.dml`). Same back-compat rationale as
+   * `_fgAggregate`: external worker code that hand-rolls a stub wrapper keeps
+   * compiling without modification. `FiregraphDO` always implements this
+   * method; callers of `DORPCBackend.bulkDelete` either assert support or
+   * accept `UNSUPPORTED_OPERATION` at runtime.
+   */
+  _fgBulkDelete?(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Optional — added in Phase 5 (`query.dml`). See `_fgBulkDelete`.
+   */
+  _fgBulkUpdate?(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult>;
   _fgDestroy(): Promise<void>;
 }
 
@@ -248,7 +265,8 @@ export type CloudflareCapability =
   | 'core.write'
   | 'core.batch'
   | 'core.subgraph'
-  | 'query.aggregate';
+  | 'query.aggregate'
+  | 'query.dml';
 
 const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>([
   'core.read',
@@ -256,6 +274,7 @@ const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>
   'core.batch',
   'core.subgraph',
   'query.aggregate',
+  'query.dml',
 ]);
 
 export class DORPCBackend implements StorageBackend<CloudflareCapability> {
@@ -431,6 +450,54 @@ export class DORPCBackend implements StorageBackend<CloudflareCapability> {
   ): Promise<BulkResult> {
     void _reader;
     return this.stub._fgBulkRemoveEdges(params, options);
+  }
+
+  // --- Server-side DML (capability: query.dml) ---
+
+  /**
+   * Single-statement bulk DELETE inside the backing DO. The DO compiles
+   * the filter list to one `DELETE … WHERE …` statement and returns a
+   * `BulkResult` whose `deleted` is the affected-row count.
+   *
+   * Defensive `_fgBulkDelete` presence check mirrors `aggregate()`: the
+   * RPC method is optional on `FiregraphStub` so external worker code with
+   * a hand-rolled stub wrapper still type-checks. Surface a clear
+   * `UNSUPPORTED_OPERATION` rather than `TypeError: stub._fgBulkDelete is
+   * not a function` when the wrapper hasn't forwarded the method.
+   */
+  async bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+    const stub = this.stub;
+    if (!stub._fgBulkDelete) {
+      throw new FiregraphError(
+        'bulkDelete() not supported by this Durable Object stub. The wrapped ' +
+          'stub does not implement `_fgBulkDelete`. If you control the stub ' +
+          'wrapper, forward `_fgBulkDelete` to the underlying DO.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    return stub._fgBulkDelete(filters, options);
+  }
+
+  /**
+   * Single-statement bulk UPDATE inside the backing DO. Same contract as
+   * `bulkDelete` for the missing-method case; the DO compiles the patch to
+   * one `UPDATE … SET data = json_patch(...) WHERE …` statement.
+   */
+  async bulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    const stub = this.stub;
+    if (!stub._fgBulkUpdate) {
+      throw new FiregraphError(
+        'bulkUpdate() not supported by this Durable Object stub. The wrapped ' +
+          'stub does not implement `_fgBulkUpdate`. If you control the stub ' +
+          'wrapper, forward `_fgBulkUpdate` to the underlying DO.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    return stub._fgBulkUpdate(filters, patch, options);
   }
 
   // --- Cross-scope queries ---

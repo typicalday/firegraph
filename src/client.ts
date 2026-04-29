@@ -23,6 +23,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   Capability,
   CascadeResult,
   CoreGraphClient,
@@ -538,6 +539,98 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
 
   async bulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
     return this.backend.bulkRemoveEdges(params, this, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Server-side DML (capability: query.dml)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Single-statement bulk DELETE. Translates `params` to a filter list via
+   * `buildEdgeQueryPlan` (the same plan `findEdges` uses) and dispatches to
+   * `backend.bulkDelete`. The fetch-then-delete loop in `bulkRemoveEdges`
+   * is the cap-less fallback; this method is the fast path on backends
+   * declaring `query.dml`.
+   *
+   * Scan-protection rules match `findEdges`: a query with no identifying
+   * fields requires `allowCollectionScan: true` to pass. A bare-empty
+   * filter set (no `aType`, `aUid`, etc., no `where`) is intentionally
+   * allowed — backends that route `bulkDelete` to a per-subgraph DO need
+   * "wipe this subgraph" as a legitimate shape, and the storage scope
+   * inside the backend already bounds the blast radius.
+   */
+  async bulkDelete(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
+    if (!this.backend.bulkDelete) {
+      throw new FiregraphError(
+        'bulkDelete() is not supported by the current storage backend. ' +
+          'Fall back to bulkRemoveEdges() for backends without query.dml ' +
+          '(e.g. Firestore Standard).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters = this.buildDmlFilters(params);
+    return this.backend.bulkDelete(filters, options);
+  }
+
+  /**
+   * Single-statement bulk UPDATE. Same translation path as `bulkDelete`,
+   * but the patch is deep-merged into each matching row's `data` via the
+   * shared `flattenPatch` pipeline. Identifying columns are immutable
+   * through this path (see `BulkUpdatePatch` JSDoc).
+   *
+   * Empty-patch rejection happens inside the backend (`compileBulkUpdate`)
+   * — a `data: {}` payload would only rewrite `updated_at`, which is
+   * almost certainly a bug.
+   */
+  async bulkUpdate(
+    params: FindEdgesParams,
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    if (!this.backend.bulkUpdate) {
+      throw new FiregraphError(
+        'bulkUpdate() is not supported by the current storage backend.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters = this.buildDmlFilters(params);
+    return this.backend.bulkUpdate(filters, patch, options);
+  }
+
+  /**
+   * Translate a `FindEdgesParams` into the `QueryFilter[]` shape the
+   * backend `bulkDelete` / `bulkUpdate` methods expect. Mirrors the
+   * `aggregate()` plan: a bare-empty params object becomes an empty
+   * filter list (after a scan-protection check); a GET-shape (all three
+   * identifiers) is rejected so we never silently turn a single-row
+   * lookup into a server-side DML; otherwise we run `buildEdgeQueryPlan`
+   * and surface its filters.
+   */
+  private buildDmlFilters(params: FindEdgesParams): QueryFilter[] {
+    const hasAnyFilter =
+      params.aType ||
+      params.aUid ||
+      params.axbType ||
+      params.bType ||
+      params.bUid ||
+      (params.where && params.where.length > 0);
+
+    if (!hasAnyFilter) {
+      this.checkQuerySafety([], params.allowCollectionScan);
+      return [];
+    }
+
+    const plan = buildEdgeQueryPlan(params);
+    if (plan.strategy === 'get') {
+      throw new FiregraphError(
+        'bulkDelete() / bulkUpdate() require a query, not a direct document lookup. ' +
+          'Use removeEdge() / updateEdge() for single-row operations, or omit one of ' +
+          'aUid/axbType/bUid to force a query strategy.',
+        'INVALID_QUERY',
+      );
+    }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+    return plan.filters;
   }
 
   // ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
   FindEdgesParams,
   GraphRegistry,
@@ -89,6 +90,8 @@ import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
 import type { CompiledStatement, DORecordWire } from './sql.js';
 import {
   compileDOAggregate,
+  compileDOBulkDelete,
+  compileDOBulkUpdate,
   compileDODelete,
   compileDODeleteAll,
   compileDOSelect,
@@ -462,6 +465,71 @@ export class FiregraphDO extends DurableObject<unknown> {
         deleted: 0,
         batches: 0,
         errors: [{ batchIndex: 0, error, operationCount: deleteStmts.length }],
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: server-side DML (capability `query.dml`)
+  //
+  // Single-statement DELETE/UPDATE WHERE that the SQLite engine handles in
+  // one shot — the cap-less alternative is `_fgBulkRemoveEdges` which fetches
+  // doc IDs first, then deletes them one-by-one inside a transaction. The
+  // DML path skips the round-trip and lets SQLite optimize the WHERE.
+  //
+  // RETURNING "doc_id" gives us an authoritative affected-row count; SQLite
+  // ≥3.35 supports it for both DELETE and UPDATE and DO SQLite is always
+  // recent enough.
+  //
+  // Retry policy: unlike `SqliteBackendImpl.bulkDelete` / `bulkUpdate`, which
+  // wrap a chunked retry/backoff loop around each batch (D1's 1000-statement
+  // cap forces chunking, so a single transient failure shouldn't kill the
+  // whole job), the DO path runs a single un-chunked statement against
+  // `state.storage.sql` synchronously. There's nothing to retry inside the
+  // DO — the engine commits or it doesn't. If a caller wants retry semantics
+  // on the wire, they wrap the `bulkDelete` / `bulkUpdate` call themselves.
+  // ---------------------------------------------------------------------------
+
+  async _fgBulkDelete(filters: QueryFilter[], _options?: BulkOptions): Promise<BulkResult> {
+    void _options;
+    const stmt = compileDOBulkDelete(this.table, filters);
+    return this.execDmlWithReturning(stmt);
+  }
+
+  async _fgBulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    _options?: BulkOptions,
+  ): Promise<BulkResult> {
+    void _options;
+    const stmt = compileDOBulkUpdate(this.table, filters, patch.data, Date.now());
+    return this.execDmlWithReturning(stmt);
+  }
+
+  /**
+   * Run a DML statement with `RETURNING "doc_id"` so the affected-row count
+   * comes back authoritatively. Errors are caught and surfaced via the
+   * `BulkResult.errors` array (single batch, batchIndex 0) so the wire
+   * payload stays a regular `BulkResult` and the client doesn't have to
+   * differentiate "RPC threw" from "single-statement failure."
+   */
+  private execDmlWithReturning(stmt: CompiledStatement): BulkResult {
+    const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
+    try {
+      const rows = this.state.storage.sql
+        .exec<Record<string, unknown>>(sqlWithReturning, ...stmt.params)
+        .toArray();
+      return { deleted: rows.length, batches: 1, errors: [] };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      return {
+        deleted: 0,
+        batches: 0,
+        // Like `_fgBulkRemoveEdges`'s catch arm: a single failed statement
+        // is one batch, and the operationCount is "unknown" for a server-
+        // side DML — we report 0 as the lower bound. Callers that care
+        // about partial state should re-query and reconcile.
+        errors: [{ batchIndex: 0, error, operationCount: 0 }],
       };
     }
   }

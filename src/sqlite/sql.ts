@@ -512,6 +512,101 @@ export function compileDelete(table: string, scope: string, docId: string): Comp
 }
 
 /**
+ * Compile a server-side bulk DELETE — `query.dml` capability.
+ *
+ * Mirrors `compileSelect`'s WHERE construction (scope-leading predicate
+ * + filter list) so any composite index that accelerates a `findEdges`
+ * also accelerates the equivalent `bulkDelete`. Empty-filter callers (a
+ * "delete everything in this scope" sweep) are accepted — the caller is
+ * expected to have opted into a collection scan via `allowCollectionScan`
+ * at the client layer; the SQL itself is the same shape regardless.
+ */
+export function compileBulkDelete(
+  table: string,
+  scope: string,
+  filters: QueryFilter[],
+): CompiledStatement {
+  const params: unknown[] = [scope];
+  const conditions: string[] = ['"scope" = ?'];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+  return {
+    sql: `DELETE FROM ${quoteIdent(table)} WHERE ${conditions.join(' AND ')}`,
+    params,
+  };
+}
+
+/**
+ * Compile a server-side bulk UPDATE — `query.dml` capability.
+ *
+ * The `patch.data` payload is deep-merged into each matching row's `data`
+ * field via the same `flattenPatch` → `compileDataOpsExpr` pipeline that
+ * single-row `compileUpdate` uses. Identifying columns (`aType`, `axbType`,
+ * `aUid`, `bType`, `bUid`, `v`) are intentionally read-only through this
+ * path — to relabel rows, delete and re-insert.
+ *
+ * Empty-patch (no leaves to merge) is rejected: a no-op UPDATE that only
+ * touched `updated_at` would silently rewrite every matching row's
+ * timestamp, which is almost never what the caller wants. If you want to
+ * stamp without editing data, use `setDoc` with `'merge'`.
+ */
+export function compileBulkUpdate(
+  table: string,
+  scope: string,
+  filters: QueryFilter[],
+  patchData: Record<string, unknown>,
+  nowMillis: number,
+): CompiledStatement {
+  const dataOps = flattenPatch(patchData);
+  if (dataOps.length === 0) {
+    throw new FiregraphError(
+      'bulkUpdate() patch.data must contain at least one leaf — an empty patch ' +
+        'would only rewrite `updated_at`, which is almost certainly a bug. ' +
+        'Use `setDoc` with merge mode if you want to stamp without editing data.',
+      'INVALID_QUERY',
+    );
+  }
+  for (const op of dataOps) {
+    if (!op.delete) assertJsonSafePayload(op.value, SQLITE_BACKEND_LABEL);
+  }
+  const setParams: unknown[] = [];
+  const expr = compileDataOpsExpr(
+    dataOps,
+    `COALESCE("data", '{}')`,
+    setParams,
+    SQLITE_BACKEND_ERR_LABEL,
+  );
+  if (expr === null) {
+    // `compileDataOpsExpr` only returns null when there's nothing to do —
+    // we already guarded the empty-patch case above so this is unreachable
+    // in practice, but the type system can't see that.
+    throw new FiregraphError(
+      'bulkUpdate() patch produced no SQL operations — internal invariant violated.',
+      'INVALID_ARGUMENT',
+    );
+  }
+  const setClauses: string[] = [`"data" = ${expr}`, `"updated_at" = ?`];
+  setParams.push(nowMillis);
+
+  // WHERE: scope + filters. Filter params follow the SET params in the
+  // bind list — same ordering convention as `compileUpdate` /
+  // `compileSelect`.
+  const whereParams: unknown[] = [scope];
+  const conditions: string[] = ['"scope" = ?'];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, whereParams));
+  }
+
+  return {
+    sql:
+      `UPDATE ${quoteIdent(table)} SET ${setClauses.join(', ')} ` +
+      `WHERE ${conditions.join(' AND ')}`,
+    params: [...setParams, ...whereParams],
+  };
+}
+
+/**
  * Delete every row whose scope starts with `scopePrefix` followed by '/'.
  * Used by cascade delete to wipe all subgraphs nested under a node.
  *

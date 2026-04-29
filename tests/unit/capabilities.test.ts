@@ -219,12 +219,21 @@ describe('SqliteBackendImpl capabilities', () => {
     expect(backend.capabilities.has('query.aggregate')).toBe(true);
   });
 
+  it('declares query.dml (Phase 5) — server-side bulkDelete/bulkUpdate via SQL', () => {
+    // SQLite implements DML natively in `compileBulkDelete` / `compileBulkUpdate`.
+    // The single statement uses `DELETE … RETURNING "doc_id"` (3.35+) or the
+    // deep-merge `flattenPatch → compileDataOpsExpr` pipeline shared with
+    // single-row writes.
+    const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
+    expect(backend.capabilities.has('query.dml')).toBe(true);
+  });
+
   it('does not silently declare query.* extensions before they ship', () => {
     const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
     const caps = backend.capabilities;
-    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
+    // query.aggregate ships in Phase 4; query.dml ships in Phase 5 — see the
+    // dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
-    expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('query.select')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
@@ -272,6 +281,15 @@ describe('DORPCBackend capabilities', () => {
     // shared-table SQLite backend, just dispatched over RPC.
     const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
     expect(backend.capabilities.has('query.aggregate')).toBe(true);
+  });
+
+  it('declares query.dml (Phase 5) — server-side bulkDelete/bulkUpdate via DO RPC', () => {
+    // The DO backend forwards DML through `_fgBulkDelete` / `_fgBulkUpdate`,
+    // which run `compileDOBulkDelete` / `compileDOBulkUpdate` against the
+    // per-DO SQLite. Per-DO physical isolation makes the unfiltered
+    // "wipe everything" case bounded by construction.
+    const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
+    expect(backend.capabilities.has('query.dml')).toBe(true);
   });
 });
 

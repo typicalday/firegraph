@@ -32,6 +32,7 @@
  * | Cascade (DO-local)           | ✅                                                       |
  * | Cross-subgraph cascade       | ✅ via registry `getSubgraphTopology` fan-out            |
  * | Bulk-remove-edges (DO-local) | ✅                                                       |
+ * | Bulk DML (`bulkDelete/Update`) | ✅ DO-local, `query.dml` capability                    |
  * | `.subgraph()` routing        | ✅ (auto-provisioned via `namespace.idFromName`)         |
  * | Static registry              | ✅ (validation + migrations)                             |
  * | Dynamic registry             | ✅ `registryMode: { mode: 'dynamic' }`; merged mode too  |
@@ -79,5 +80,7 @@ export type {
   AggregateOp,
   AggregateResult,
   AggregateSpec,
+  BulkUpdatePatch,
   Capability,
+  DmlExtension,
 } from '../types.js';

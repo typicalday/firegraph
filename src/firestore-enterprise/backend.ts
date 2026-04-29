@@ -67,14 +67,36 @@ import { createPipelineQueryAdapter } from './pipeline-adapter.js';
  * `core.transactions` is included because transactions are still supported
  * via the classic Query API (pipelines themselves are not transactionally
  * bound; the GA notes call this out explicitly). The pipeline-only
- * extension capabilities (`query.aggregate`, `query.join`, `query.dml`,
- * `search.*`) are NOT declared yet — Phases 4-10 wire them in once the
- * matching backend methods exist, at which point this union grows in
- * lockstep with the cap-set literal below.
+ * extension capabilities (`query.join`, `search.*`) are NOT declared yet —
+ * subsequent phases wire them in once the matching backend methods exist,
+ * at which point this union grows in lockstep with the cap-set literal
+ * below.
  *
  * Conservative declaration matters here: declaring a capability we don't
  * implement turns the type-level gate (Phase 3) into a lie that throws at
  * runtime instead of failing to compile.
+ *
+ * **`query.dml` is intentionally omitted.** The Firestore SDK shipped at
+ * `@google-cloud/firestore@8.3.0` does not expose pipeline DML stages —
+ * the `Pipeline` class has read stages (`where`, `select`, `aggregate`,
+ * `sort`, etc.) but no `remove` / `update` / `replace` mutations. The only
+ * way to delete or update many docs today is the existing
+ * `bulkRemoveEdges` fetch-then-write loop (driven by `BulkWriter`), which
+ * is a client-side fan-out, not a server-side DML statement. Declaring
+ * `query.dml` here without a real server-side path would defeat the point
+ * of the capability — its consumers (e.g. `bulk.ts` cascade rewrite)
+ * branch on the cap to skip the fetch-then-write loop entirely. SQLite
+ * and Cloudflare DO declare `query.dml` because they really do execute a
+ * single `DELETE … WHERE …` / `UPDATE … SET …` statement; Firestore
+ * doesn't, so it stays on the `bulkRemoveEdges` path.
+ *
+ * When pipeline DML lands in a future SDK release, the wiring is
+ * straightforward: build a `pipeline-dml.ts` stage builder, add the
+ * capability here and to `ENTERPRISE_CAPS`, and implement
+ * `bulkDelete` / `bulkUpdate` methods that dispatch through the new
+ * stages. The `DmlExtension` type and `GraphClient.bulkDelete` /
+ * `bulkUpdate` shims are already in place — Phase 5 made them backend-
+ * agnostic precisely so this future change is additive.
  */
 export type FirestoreEnterpriseCapability =
   | 'core.read'

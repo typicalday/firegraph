@@ -64,6 +64,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -209,6 +210,19 @@ class RoutingStorageBackend implements StorageBackend {
    * through routing wrappers (Phase 4 audit C1).
    */
   aggregate?: StorageBackend['aggregate'];
+  /**
+   * DML pass-throughs. Same conditional-install pattern as `aggregate`:
+   * gated on BOTH the base method's existence AND `this.capabilities`
+   * advertising `query.dml`. If `routedCapabilities` intersected
+   * `query.dml` away (e.g. one routed peer is Firestore Standard which
+   * has no pipeline-DML support), the methods are *not* installed even
+   * though `base.bulkDelete` exists — otherwise the router would silently
+   * outperform what the declared cap set promises across hops. This
+   * preserves the "declared capability ⇒ method exists" invariant in
+   * both directions (Phase 5).
+   */
+  bulkDelete?: StorageBackend['bulkDelete'];
+  bulkUpdate?: StorageBackend['bulkUpdate'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -254,6 +268,17 @@ class RoutingStorageBackend implements StorageBackend {
       // The post-Phase-4 audit (M-C) calls this out explicitly.
       this.aggregate = (spec: AggregateSpec, filters: QueryFilter[]) =>
         base.aggregate!(spec, filters);
+    }
+    if (base.bulkDelete && this.capabilities.has('query.dml')) {
+      // Same scope rationale as `aggregate`: bulk DML runs against the base
+      // backend only. A routed child's own DML support is reached through
+      // `.subgraph().bulkDelete()` against the routed handle.
+      this.bulkDelete = (filters: QueryFilter[], options?: BulkOptions) =>
+        base.bulkDelete!(filters, options);
+    }
+    if (base.bulkUpdate && this.capabilities.has('query.dml')) {
+      this.bulkUpdate = (filters: QueryFilter[], patch: BulkUpdatePatch, options?: BulkOptions) =>
+        base.bulkUpdate!(filters, patch, options);
     }
   }
 

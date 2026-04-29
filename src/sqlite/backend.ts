@@ -29,6 +29,7 @@ import type {
   BulkBatchError,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
   FindEdgesParams,
   GraphReader,
@@ -39,6 +40,8 @@ import type {
 import type { CompiledStatement } from './sql.js';
 import {
   compileAggregate,
+  compileBulkDelete,
+  compileBulkUpdate,
   compileCountScopePrefix,
   compileDelete,
   compileDeleteScopePrefix,
@@ -234,6 +237,7 @@ export type SqliteCapability =
   | 'core.batch'
   | 'core.subgraph'
   | 'query.aggregate'
+  | 'query.dml'
   | 'raw.sql';
 
 const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
@@ -242,6 +246,7 @@ const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
   'core.batch',
   'core.subgraph',
   'query.aggregate',
+  'query.dml',
   'raw.sql',
 ];
 
@@ -655,6 +660,106 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
       }
     }
     return out;
+  }
+
+  // --- Server-side DML ---
+
+  /**
+   * Delete every row matching `filters` in a single SQL DELETE statement.
+   *
+   * Uses `RETURNING "doc_id"` to count rows touched — the SQLite executor's
+   * `run` returns void, so RETURNING + `all()` is the portable way to learn
+   * how many rows the engine actually deleted. SQLite ≥ 3.35 supports
+   * `DELETE … RETURNING`; better-sqlite3, D1, and DO SQLite all run on a
+   * recent enough engine.
+   *
+   * Single-statement DML doesn't chunk: the engine handles N rows in one
+   * shot, so `BulkOptions.batchSize` is intentionally ignored. The retry
+   * loop here exists only for transient driver errors (e.g. D1 surface
+   * congestion); a permanent failure is surfaced via the `errors` array
+   * with `batchIndex: 0` so callers see the same shape as `bulkRemoveEdges`.
+   *
+   * Subgraph scoping is enforced inside `compileBulkDelete` (the leading
+   * `"scope" = ?` predicate) so this method, like every other backend
+   * surface, naturally honours subgraph isolation.
+   */
+  async bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+    const stmt = compileBulkDelete(this.collectionPath, this.storageScope, filters);
+    return this.executeDmlWithReturning(stmt, options);
+  }
+
+  /**
+   * Update every row matching `filters` with `patch.data` in a single SQL
+   * UPDATE statement. The patch is deep-merged into each row's `data`
+   * column via the same `flattenPatch` → `compileDataOpsExpr` pipeline that
+   * `compileUpdate` (single-row) uses.
+   *
+   * Same contract notes as `bulkDelete` apply: single-statement, no
+   * chunking, `RETURNING "doc_id"` for the affected count, retry loop for
+   * transient driver errors.
+   */
+  async bulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    const stmt = compileBulkUpdate(
+      this.collectionPath,
+      this.storageScope,
+      filters,
+      patch.data,
+      Date.now(),
+    );
+    return this.executeDmlWithReturning(stmt, options);
+  }
+
+  /**
+   * Run a DML statement with `RETURNING "doc_id"` so we can count the
+   * rows the engine touched, with the same retry/backoff contract as
+   * `executeChunkedBatches`. Single statement, single batch.
+   */
+  private async executeDmlWithReturning(
+    stmt: CompiledStatement,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
+    const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const rows = await this.executor.all(sqlWithReturning, stmt.params);
+        const deleted = rows.length;
+        if (options?.onProgress) {
+          options.onProgress({
+            completedBatches: 1,
+            totalBatches: 1,
+            deletedSoFar: deleted,
+          });
+        }
+        return { deleted, batches: 1, errors: [] };
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt), MAX_RETRY_DELAY_MS);
+          await sleep(delay);
+        }
+      }
+    }
+    // `operationCount` is genuinely unknown for a server-side DML — we
+    // don't know how many rows the failed statement would have touched.
+    // Report 0 as the lower bound; callers concerned about partial state
+    // should re-query and reconcile.
+    return {
+      deleted: 0,
+      batches: 0,
+      errors: [
+        {
+          batchIndex: 0,
+          error: lastError ?? new Error('bulk DML failed for unknown reason'),
+          operationCount: 0,
+        },
+      ],
+    };
   }
 }
 

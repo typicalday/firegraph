@@ -465,6 +465,85 @@ export function compileDODelete(table: string, docId: string): CompiledStatement
 }
 
 /**
+ * Compile a server-side bulk DELETE for the per-DO single-subgraph table.
+ *
+ * Mirrors `compileBulkDelete` in `src/sqlite/sql.ts` minus the scope
+ * predicate — every row in a `FiregraphDO`'s SQLite belongs to the same
+ * subgraph. An empty filter list is allowed (drops every row in the
+ * table); the client-layer scan-protection check is the gate, not the SQL
+ * itself.
+ */
+export function compileDOBulkDelete(table: string, filters: QueryFilter[]): CompiledStatement {
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+  return {
+    sql: `DELETE FROM ${quoteDOIdent(table)}${where}`,
+    params,
+  };
+}
+
+/**
+ * Compile a server-side bulk UPDATE for the per-DO single-subgraph table.
+ *
+ * The `patch.data` payload is deep-merged into each matching row's `data`
+ * field via the same `flattenPatch` → `compileDataOpsExpr` pipeline that
+ * `compileDOUpdate` (single-row) uses. Identifying columns are read-only.
+ *
+ * Empty patches are rejected — see `compileBulkUpdate` in shared SQLite
+ * for the rationale.
+ */
+export function compileDOBulkUpdate(
+  table: string,
+  filters: QueryFilter[],
+  patchData: Record<string, unknown>,
+  nowMillis: number,
+): CompiledStatement {
+  const dataOps = flattenPatch(patchData);
+  if (dataOps.length === 0) {
+    throw new FiregraphError(
+      'bulkUpdate() patch.data must contain at least one leaf — an empty patch ' +
+        'would only rewrite `updated_at`, which is almost certainly a bug. ' +
+        'Use `setDoc` with merge mode if you want to stamp without editing data.',
+      'INVALID_QUERY',
+    );
+  }
+  for (const op of dataOps) {
+    if (!op.delete) assertJsonSafePayload(op.value, DO_BACKEND_LABEL);
+  }
+  const setParams: unknown[] = [];
+  const expr = compileDataOpsExpr(
+    dataOps,
+    `COALESCE("data", '{}')`,
+    setParams,
+    DO_BACKEND_ERR_LABEL,
+  );
+  if (expr === null) {
+    throw new FiregraphError(
+      'bulkUpdate() patch produced no SQL operations — internal invariant violated.',
+      'INVALID_ARGUMENT',
+    );
+  }
+  const setClauses: string[] = [`"data" = ${expr}`, `"updated_at" = ?`];
+  setParams.push(nowMillis);
+
+  const whereParams: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, whereParams));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+  return {
+    sql: `UPDATE ${quoteDOIdent(table)} SET ${setClauses.join(', ')}${where}`,
+    params: [...setParams, ...whereParams],
+  };
+}
+
+/**
  * DELETE every row in the table. Used when tearing down an entire subgraph
  * DO as part of cascade — the caller discovers the set of DOs to wipe via
  * registry topology (phase 2) and instructs each DO to clear itself.

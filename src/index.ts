@@ -96,6 +96,7 @@ export type {
   BulkOptions,
   BulkProgress,
   BulkResult,
+  BulkUpdatePatch,
   Capability,
   CascadeResult,
   CoreGraphClient,
