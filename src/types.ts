@@ -962,27 +962,33 @@ export interface FullTextSearchParams {
 /**
  * Native full-text search.
  *
- * **Status: deferred.** The Phase 9 design calls for translating
- * `search()` calls into a Firestore Pipeline with the `.search()` stage
- * as the first stage, scoped per-type. As of `@google-cloud/firestore@8.x`,
- * the public `Pipeline` class does NOT expose a `search()` method — the
- * available stages are `addFields`, `aggregate`, `distinct`, `findNearest`,
- * `limit`, `offset`, `removeFields`, `replaceWith`, `sample`, `select`,
- * `where`, `sort`, `union`, `unnest`, and `rawStage`. The `search()` stage
- * is not in the released SDK surface.
+ * **Status: deferred on Firestore Enterprise; not applicable elsewhere.**
  *
- * Declaring a capability without a runtime implementation would turn the
- * type-level gate into a lie that throws at runtime, so no backend
- * declares `'search.fullText'` today. The interface and
- * `FullTextSearchParams` exist so the contract is recorded; wiring lands
- * when either:
+ *   - **Firestore Standard** does not support full-text search at all —
+ *     it is an Enterprise-only product feature. This row will never
+ *     become "✓".
+ *   - **Firestore Enterprise** supports FTS in production, but
+ *     `@google-cloud/firestore@8.3.0` does not expose a typed
+ *     `Pipeline.search(...)` method. The released `Pipeline` surface is
+ *     `addFields`, `aggregate`, `distinct`, `execute`, `findNearest`,
+ *     `limit`, `offset`, `rawStage`, `removeFields`, `replaceWith`,
+ *     `sample`, `select`, `sort`, `stream`, `union`, `unnest`, `where`.
+ *     Reaching FTS today requires the `rawStage(...)` escape hatch
+ *     against a real Enterprise database — a typed-API gap, not a
+ *     feature gap. We have not declared `'search.fullText'` because
+ *     doing so without a runtime path would break the routing
+ *     invariant ("declared capability ⇒ method exists").
+ *   - **SQLite / Cloudflare DO** have no native FTS index. Emulating
+ *     it over `json_extract` is not viable; the row will never become
+ *     "✓" on these editions.
  *
- *   1. The SDK exposes a typed `Pipeline.search(...)` method, or
- *   2. We commit to a `rawStage('search', { … })` implementation against
- *      a real Enterprise project (gated behind `FIREGRAPH_ENTERPRISE=1`).
+ * The interface and `FullTextSearchParams` exist so the contract is
+ * recorded on the type surface and so wiring is additive when the SDK
+ * exposes a typed stage or when we commit to a `rawStage('search', { … })`
+ * implementation gated behind `FIREGRAPH_ENTERPRISE=1`.
  */
 export interface FullTextSearchExtension {
-  // No runtime methods — see the JSDoc above for the SDK-gap rationale.
+  // No runtime methods — see the JSDoc above for the typed-API-gap rationale.
 }
 
 /**
@@ -1025,20 +1031,27 @@ export interface GeoSearchParams {
 /**
  * Native geospatial distance search.
  *
- * **Status: deferred.** The Phase 10 design calls for a Firestore
- * Pipeline with a geospatial stage. As of `@google-cloud/firestore@8.x`,
- * no geo-specific pipeline stage is exposed by the SDK (Pipeline methods:
- * see `FullTextSearchExtension` for the full list). For the same
- * "declared capability ⇒ method exists" reason, `'search.geo'` is not
- * declared on any backend today.
+ * **Status: deferred on Firestore Enterprise; not applicable elsewhere.**
  *
- * The interface and `GeoSearchParams` type are recorded so the API
- * contract exists; wiring lands when the SDK exposes a geo pipeline
- * stage or we commit to a `rawStage(…)` implementation gated behind a
- * real Enterprise project.
+ *   - **Firestore Standard** does not support geospatial queries at all
+ *     — it is an Enterprise-only product feature. This row will never
+ *     become "✓".
+ *   - **Firestore Enterprise** supports geo queries in production, but
+ *     `@google-cloud/firestore@8.3.0` does not expose a typed
+ *     geo-distance pipeline stage. The released `Pipeline` surface is
+ *     listed in `FullTextSearchExtension`'s JSDoc; reaching geo today
+ *     requires `rawStage(...)` against a real Enterprise database — a
+ *     typed-API gap, not a feature gap.
+ *   - **SQLite / Cloudflare DO** have no native geo index, so the row
+ *     will never become "✓" on these editions either.
+ *
+ * The interface, `GeoSearchParams`, and `GeoPointLiteral` are recorded
+ * so the API contract exists on the type surface; wiring is additive
+ * when the SDK exposes a typed stage or we commit to a `rawStage(...)`
+ * implementation gated behind `FIREGRAPH_ENTERPRISE=1`.
  */
 export interface GeoExtension {
-  // No runtime methods — see the JSDoc above for the SDK-gap rationale.
+  // No runtime methods — see the JSDoc above for the typed-API-gap rationale.
 }
 
 /**

@@ -5,34 +5,50 @@ paths:
 
 # Core Library Patterns
 
+## Capability-Gated Backends
+
+Every backend implements `StorageBackend` from `src/internal/backend.ts` and exposes a phantom-typed `BackendCapabilities<C>` descriptor. `GraphClient<C>` is conditionally typed against `C`, so methods like `aggregate`, `findNearest`, `select`, `bulkDelete`, `bulkUpdate`, `joinFindEdges` only appear on the surface when the backend's `C` literal includes the matching capability. Routing (`src/internal/routing-backend.ts`) enforces "declared capability ⇒ method exists" both directions: a backend that declares a capability MUST implement it, and a backend that implements it MUST declare it. Tests in `tests/unit/capabilities.test.ts` and `tests/unit/routing-backend.test.ts` pin this invariant.
+
+The four shipped backends declare exactly:
+
+| Capability                                                  | firestore-standard                                  | firestore-enterprise          | sqlite                                                          | cloudflare-do                                     |
+| ----------------------------------------------------------- | --------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- | ------------------------------------------------- |
+| `core.read` / `core.write` / `core.batch` / `core.subgraph` | ✓                                                   | ✓                             | ✓                                                               | ✓                                                 |
+| `core.transactions`                                         | ✓                                                   | ✓                             | ✓ if `executor.transaction` defined (`better-sqlite3`); — on D1 | — (would block the DO's single-threaded executor) |
+| `query.aggregate`                                           | ✓                                                   | ✓                             | ✓                                                               | ✓                                                 |
+| `query.select`                                              | ✓                                                   | ✓                             | ✓                                                               | ✓                                                 |
+| `query.join`                                                | —                                                   | —                             | ✓                                                               | ✓                                                 |
+| `query.dml` (bulk)                                          | —                                                   | —                             | ✓                                                               | ✓                                                 |
+| `search.vector`                                             | ✓                                                   | ✓                             | —                                                               | —                                                 |
+| `search.fullText`                                           | — (Enterprise feature; never available on Standard) | — (typed-API gap — see below) | —                                                               | —                                                 |
+| `search.geo`                                                | — (Enterprise feature; never available on Standard) | — (typed-API gap — see below) | —                                                               | —                                                 |
+| `realtime.listen`                                           | —                                                   | —                             | —                                                               | —                                                 |
+| `raw.firestore`                                             | ✓                                                   | ✓                             | —                                                               | —                                                 |
+| `raw.sql`                                                   | —                                                   | —                             | ✓                                                               | —                                                 |
+
+Standard intentionally rejects `query.aggregate` `min`/`max` at runtime (Standard SDK doesn't expose them) — both Firestore editions declare exactly `'query.aggregate'`; there is no separate sub-capability for the min/max subset. SQLite and DO support the full count/sum/avg/min/max set natively via SQL.
+
+**Why Firestore-edition FTS / geo show "—" but stay on the type surface:** Firestore Enterprise _does_ support full-text search and geospatial queries in production, but `@google-cloud/firestore@8.3.0` does not expose typed `Pipeline.search()` / geo-distance methods on its `Pipeline` class. The typed surface is `addFields, aggregate, distinct, execute, findNearest, limit, offset, rawStage, removeFields, replaceWith, sample, select, sort, stream, union, unnest, where`. Reaching FTS / geo today requires the `rawStage(...)` escape hatch against a real Enterprise database — declaring the capability without that wiring would turn the type-level gate into a runtime lie. `FullTextSearchExtension` / `GeoExtension` / `FullTextSearchParams` / `GeoSearchParams` are recorded on the type surface so the contract is committed; wiring lands when the SDK exposes typed stages or when we commit to a `rawStage(...)`-based implementation gated behind `FIREGRAPH_ENTERPRISE=1`. Firestore Standard never gets these capabilities — they are Enterprise-only product features and will never be added to the Standard backend.
+
+## Firestore Edition Internals
+
+Both Firestore editions delegate writes, doc lookups, and transactionally-bound reads to the **classic** SDK adapter (`src/internal/firestore-classic-adapter.ts`). The Enterprise edition adds a `queryMode` toggle (`'pipeline'` | `'classic'`) for the `findEdges` / `findNodes` query path:
+
+- **`'pipeline'`** (default on Enterprise) — Translates `QueryFilter[]` to Firestore Pipeline expressions and executes via `db.pipeline().collection().where().execute()`. Requires Enterprise Firestore. The `Pipelines` module is lazily loaded via dynamic `import()`.
+- **`'classic'`** — Uses the classic-adapter `query()` which builds `.where().get()` queries. Risky in production: Enterprise does full collection scans for `data.*` filters without composite indexes.
+
+**Auto-fallback rules (Enterprise edition):**
+
+- `FIRESTORE_EMULATOR_HOST` set → always classic (emulator doesn't support pipelines). One-time `console.warn` fires.
+- Transactions → always classic (pipelines aren't transactionally bound).
+- Writes / doc lookups → always classic.
+- Explicit `'classic'` outside the emulator → one-time `console.warn` (production scan risk).
+
+The Standard edition has no pipeline path; its query layer is classic-only by construction.
+
 ## Query Planning
 
-`buildEdgeQueryPlan` checks if all three identifying fields (`aUid`, `axbType`, `bUid`) are present. If so, it returns a `get` strategy (single doc lookup). Otherwise, it builds Firestore `where` filters from whichever fields are provided.
-
-## Adapter Pattern
-
-Three adapters (`FirestoreAdapter`, `TransactionAdapter`, `BatchAdapter`) provide the same interface over different Firestore execution contexts. The client/transaction/batch classes delegate to these adapters.
-
-## Dual-Mode Query Engine
-
-`GraphClientImpl` supports two query backends controlled by `queryMode` in `GraphClientOptions`:
-
-- **`'pipeline'`** (default) -- Uses `PipelineQueryAdapter` from `src/internal/pipeline-adapter.ts`. Translates `QueryFilter[]` to Firestore Pipeline expressions (`Pipelines.equal()`, `Pipelines.greaterThan()`, etc.) and executes via `db.pipeline().collection().where().execute()`. Requires Enterprise Firestore. The `Pipelines` module is lazily loaded via dynamic `import()`.
-- **`'standard'`** -- Uses `FirestoreAdapter.query()` which builds standard `.where().get()` queries. Risky for production: Enterprise Firestore does full collection scans for `data.*` filters; Standard Firestore fails without composite indexes.
-
-**Query execution flow:**
-
-1. `findEdges(params)` / `findNodes(params)` -> `buildEdgeQueryPlan()` / `buildNodeQueryPlan()`
-2. If GET strategy (all 3 identifiers present) -> `adapter.getDoc()` (bypasses query mode)
-3. If QUERY strategy -> `executeQuery(filters, options)` -> dispatches to either `pipelineAdapter.query()` or `adapter.query()` based on `queryMode`
-
-**Key rules:**
-
-- Pipeline is the default. Users must explicitly opt into standard mode.
-- Emulator auto-fallback: `FIRESTORE_EMULATOR_HOST` set -> always standard (emulator doesn't support pipelines).
-- Transactions always use standard queries (`TransactionAdapter`) regardless of `queryMode` -- Pipeline is not transactionally bound.
-- Writes and doc lookups are always standard -- pipeline adapter only handles the `query()` path.
-- A one-time `console.warn` fires when standard mode is explicitly set outside the emulator.
+`buildEdgeQueryPlan` checks if all three identifying fields (`aUid`, `axbType`, `bUid`) are present. If so, it returns a `get` strategy (single doc lookup, bypasses any backend's query layer). Otherwise, it builds a filter list passed through to the backend's `query` capability — Firestore translates to `where(...).get()` or pipeline `where(...).execute()` per `queryMode`; SQLite-shape backends translate to a single `SELECT` with `json_extract` on `data.*` paths.
 
 ## Traversal
 
