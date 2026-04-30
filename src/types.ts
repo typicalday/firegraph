@@ -929,14 +929,116 @@ export interface DmlExtension {
   ): Promise<BulkResult>;
 }
 
-/** Native full-text search. */
-export interface FullTextSearchExtension {
-  // Methods land in Phase 9.
+/**
+ * Parameters for a server-side full-text search query (deferred — see
+ * `FullTextSearchExtension` for the SDK-gap rationale).
+ *
+ * Recorded here so the API contract is committed to the type surface; once
+ * a backend declares `'search.fullText'` and implements the runtime path,
+ * this becomes the input to `FullTextSearchExtension.search`. Field-path
+ * conventions match `FindNearestParams.vectorField` and `WhereClause.field`
+ * — bare names resolve to `data.<name>`, envelope fields are rejected.
+ */
+export interface FullTextSearchParams {
+  /**
+   * Optional filter on `aType`. The implementation is expected to scope
+   * the search to the per-type indexed collection rather than emitting a
+   * follow-up `where(aType==…)`, because the underlying Firestore Pipeline
+   * `search()` stage must be the first stage.
+   */
+  aType?: string;
+  /** Free-form query string. The search index tokenises and ranks. */
+  query: string;
+  /**
+   * Indexed text fields to search across. Bare names resolve to
+   * `data.<name>` per the same convention as `select` / `where`. If
+   * omitted, the search index's default field set is used.
+   */
+  fields?: string[];
+  /** Upper bound on rows returned, sorted by relevance. */
+  limit: number;
 }
 
-/** Native geospatial distance search. */
+/**
+ * Native full-text search.
+ *
+ * **Status: deferred.** The Phase 9 design calls for translating
+ * `search()` calls into a Firestore Pipeline with the `.search()` stage
+ * as the first stage, scoped per-type. As of `@google-cloud/firestore@8.x`,
+ * the public `Pipeline` class does NOT expose a `search()` method — the
+ * available stages are `addFields`, `aggregate`, `distinct`, `findNearest`,
+ * `limit`, `offset`, `removeFields`, `replaceWith`, `sample`, `select`,
+ * `where`, `sort`, `union`, `unnest`, and `rawStage`. The `search()` stage
+ * is not in the released SDK surface.
+ *
+ * Declaring a capability without a runtime implementation would turn the
+ * type-level gate into a lie that throws at runtime, so no backend
+ * declares `'search.fullText'` today. The interface and
+ * `FullTextSearchParams` exist so the contract is recorded; wiring lands
+ * when either:
+ *
+ *   1. The SDK exposes a typed `Pipeline.search(...)` method, or
+ *   2. We commit to a `rawStage('search', { … })` implementation against
+ *      a real Enterprise project (gated behind `FIREGRAPH_ENTERPRISE=1`).
+ */
+export interface FullTextSearchExtension {
+  // No runtime methods — see the JSDoc above for the SDK-gap rationale.
+}
+
+/**
+ * Geographic point — lat/lng in degrees. Mirrors the runtime shape of
+ * Firestore's `GeoPoint` so callers can pass either a literal or a
+ * `GeoPoint` instance once wiring lands.
+ */
+export interface GeoPointLiteral {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Parameters for a server-side geospatial distance query (deferred — see
+ * `GeoExtension` for the SDK-gap rationale).
+ */
+export interface GeoSearchParams {
+  /** Optional filter on `aType` — narrows the per-type collection scope. */
+  aType?: string;
+  /**
+   * Field path of the indexed `GeoPoint`. Bare name → `data.<name>` per
+   * the same convention as `select` / `where`. Built-in envelope fields
+   * are rejected.
+   */
+  geoField: string;
+  /** Centre of the search radius. */
+  point: GeoPointLiteral;
+  /** Search radius in metres. */
+  radiusMeters: number;
+  /** Upper bound on rows returned. */
+  limit: number;
+  /**
+   * If true (default), results are sorted nearest-first; if false,
+   * ordering is unspecified — the backend may return rows in whatever
+   * order the geo index emits.
+   */
+  orderByDistance?: boolean;
+}
+
+/**
+ * Native geospatial distance search.
+ *
+ * **Status: deferred.** The Phase 10 design calls for a Firestore
+ * Pipeline with a geospatial stage. As of `@google-cloud/firestore@8.x`,
+ * no geo-specific pipeline stage is exposed by the SDK (Pipeline methods:
+ * see `FullTextSearchExtension` for the full list). For the same
+ * "declared capability ⇒ method exists" reason, `'search.geo'` is not
+ * declared on any backend today.
+ *
+ * The interface and `GeoSearchParams` type are recorded so the API
+ * contract exists; wiring lands when the SDK exposes a geo pipeline
+ * stage or we commit to a `rawStage(…)` implementation gated behind a
+ * real Enterprise project.
+ */
 export interface GeoExtension {
-  // Methods land in Phase 10.
+  // No runtime methods — see the JSDoc above for the SDK-gap rationale.
 }
 
 /**
