@@ -43,8 +43,8 @@ importers:
         specifier: ^20.5.0
         version: 20.5.0
       '@google-cloud/firestore':
-        specifier: ^8.3.0
-        version: 8.3.0
+        specifier: ^8.5.0
+        version: 8.5.0
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -647,8 +647,8 @@ packages:
     resolution: {integrity: sha512-iH1B076HoAshH1mLpHMgwdGeTs0CYwL0SPMkGuSebZrwBp16v415e9NZXg2jtrqPVQjf6IANe2Vtlr5KswtcZQ==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@google-cloud/firestore@8.3.0':
-    resolution: {integrity: sha512-OYadXaHxx8J5GQtCwDNjaVu2+O9Ozdst4Iqi+vDTI/WmLTO56XX3QBOXp4T+qh3tyQzl9YzDBrmA7o8n1xTouA==}
+  '@google-cloud/firestore@8.5.0':
+    resolution: {integrity: sha512-1sbtj7JQfsfekrxwHR0s2CAz8+hkpBdiuB7+20VEgI4EWvW3+GhEUqYOQPRoZ2spHyITLN4gaOPmBN17J539yQ==}
     engines: {node: '>=18'}
 
   '@grpc/grpc-js@1.14.3':
@@ -3080,7 +3080,7 @@ snapshots:
       '@eslint/core': 1.1.1
       levn: 0.4.1
 
-  '@google-cloud/firestore@8.3.0':
+  '@google-cloud/firestore@8.5.0':
     dependencies:
       '@opentelemetry/api': 1.9.0
       fast-deep-equal: 3.1.3

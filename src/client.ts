@@ -38,6 +38,8 @@ import type {
   FindEdgesProjectedParams,
   FindNearestParams,
   FindNodesParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphBatch,
   GraphClient,
   GraphClientOptions,
@@ -789,6 +791,82 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
     this.checkQuerySafety(filters, params.allowCollectionScan);
 
     return this.backend.findNearest(params);
+  }
+
+  /**
+   * Native full-text search (capability `search.fullText`).
+   *
+   * Returns the top-N records by relevance, ordered by the search
+   * index's score. Only Firestore Enterprise declares this capability
+   * today — the underlying Pipelines `search({ query: documentMatches(...) })`
+   * stage requires Enterprise's FTS index. Standard does not declare
+   * the cap (FTS is an Enterprise-only product feature, not a
+   * typed-API gap), and the SQLite-shaped backends have no native
+   * FTS index. Backends without `search.fullText` throw
+   * `UNSUPPORTED_OPERATION` from this wrapper.
+   *
+   * Scan-protection mirrors `findNearest`: a search with no
+   * identifying filters (`aType` / `axbType` / `bType`) walks every
+   * row the index scored, so the request must opt in via
+   * `allowCollectionScan: true`.
+   *
+   * Migrations are NOT applied. The FTS index walked the raw stored
+   * shape; rehydrating each row through the migration pipeline would
+   * change the candidate set the index already scored. If you need
+   * migrated shape, follow up with `getNode` / `findEdges` on the
+   * returned UIDs.
+   */
+  async fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.fullTextSearch) {
+      throw new FiregraphError(
+        'fullTextSearch() is not supported by the current storage backend. ' +
+          'Full-text search requires a backend that declares `search.fullText` ' +
+          '(currently Firestore Enterprise only — FTS is an Enterprise product ' +
+          'feature). There is no client-side fallback because emulating FTS over ' +
+          'the generic backend surface would not scale beyond toy datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    return this.backend.fullTextSearch(params);
+  }
+
+  /**
+   * Native geospatial distance search (capability `search.geo`).
+   *
+   * Returns rows whose `geoField` lies within `radiusMeters` of
+   * `point`, ordered nearest-first by default. Only Firestore
+   * Enterprise declares this capability — same Enterprise-only
+   * gating as `fullTextSearch`. Backends without `search.geo` throw
+   * `UNSUPPORTED_OPERATION` from this wrapper.
+   *
+   * Scan-protection mirrors `findNearest` and `fullTextSearch`.
+   *
+   * Migrations are NOT applied — same rationale as the other search
+   * extensions.
+   */
+  async geoSearch(params: GeoSearchParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.geoSearch) {
+      throw new FiregraphError(
+        'geoSearch() is not supported by the current storage backend. ' +
+          'Geospatial search requires a backend that declares `search.geo` ' +
+          '(currently Firestore Enterprise only — geo queries are an ' +
+          'Enterprise product feature). There is no client-side fallback ' +
+          'because emulating geo over the generic backend surface (haversine ' +
+          'over `findEdges`) would not scale beyond trivial datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    return this.backend.geoSearch(params);
   }
 
   /**

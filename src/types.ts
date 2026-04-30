@@ -930,65 +930,97 @@ export interface DmlExtension {
 }
 
 /**
- * Parameters for a server-side full-text search query (deferred — see
- * `FullTextSearchExtension` for the SDK-gap rationale).
+ * Parameters for a server-side full-text search query.
  *
- * Recorded here so the API contract is committed to the type surface; once
- * a backend declares `'search.fullText'` and implements the runtime path,
- * this becomes the input to `FullTextSearchExtension.search`. Field-path
- * conventions match `FindNearestParams.vectorField` and `WhereClause.field`
- * — bare names resolve to `data.<name>`, envelope fields are rejected.
+ * Translates on Firestore Enterprise into a Pipeline `search({ query: documentMatches(...) })`
+ * stage. Field-path conventions match `FindNearestParams.vectorField` and
+ * `WhereClause.field` — bare names resolve to `data.<name>`, envelope
+ * fields are rejected.
  */
 export interface FullTextSearchParams {
   /**
-   * Optional filter on `aType`. The implementation is expected to scope
-   * the search to the per-type indexed collection rather than emitting a
-   * follow-up `where(aType==…)`, because the underlying Firestore Pipeline
-   * `search()` stage must be the first stage.
+   * Optional filter on `aType`. Applied as a `where(aType == …)` stage
+   * after the `search()` stage (Firestore requires `search` to be the
+   * first stage of a pipeline, so identifying filters cannot be applied
+   * before the index walk).
    */
   aType?: string;
-  /** Free-form query string. The search index tokenises and ranks. */
+  /** Optional filter on `axbType`. Same post-search-stage application as `aType`. */
+  axbType?: string;
+  /** Optional filter on `bType`. Same post-search-stage application as `aType`. */
+  bType?: string;
+  /**
+   * Free-form query string. The Firestore search index tokenises and
+   * ranks; the string accepts the same DSL as `documentMatches(...)` —
+   * boolean operators (`AND`, `OR`, `NOT`), phrase quoting, etc.
+   */
   query: string;
   /**
-   * Indexed text fields to search across. Bare names resolve to
-   * `data.<name>` per the same convention as `select` / `where`. If
-   * omitted, the search index's default field set is used.
+   * Indexed text fields the caller wants the search restricted to. Bare
+   * names resolve to `data.<name>` per the same convention as `select` /
+   * `where`; envelope fields are rejected with `INVALID_QUERY`.
+   *
+   * **Caveat (current SDK):** `@google-cloud/firestore@8.5.0` does not yet
+   * expose a typed per-field text predicate (the `matches(field, query)`
+   * form is gated on a future backend feature in the SDK's `.d.ts`).
+   * Today the helper validates this list (path normalisation +
+   * envelope-field rejection) but always executes document-wide
+   * `documentMatches(query)` regardless of whether `fields` is set or
+   * omitted. The list is therefore an early-validation surface for the
+   * eventual typed predicate, not a runtime scoping mechanism. For
+   * per-`aType` scoping, rely on Firestore's per-collection FTS indexes;
+   * for per-field scoping, wait on the typed predicate or compose results
+   * client-side.
    */
   fields?: string[];
   /** Upper bound on rows returned, sorted by relevance. */
   limit: number;
+  /**
+   * Bypass scan-protection for unfiltered FTS. A search with no
+   * `aType` / `axbType` / `bType` filter walks every row the index
+   * scored — opt in explicitly when that's intended (analytics dumps,
+   * full-collection rerank).
+   */
+  allowCollectionScan?: boolean;
 }
 
 /**
  * Native full-text search.
  *
- * **Status: deferred on Firestore Enterprise; not applicable elsewhere.**
+ *   - **Firestore Enterprise** ✓ — implemented via Pipeline
+ *     `search({ query: documentMatches(...) })` (typed stage exposed in
+ *     `@google-cloud/firestore@8.5.0`). Identifying filters (`aType` /
+ *     `axbType` / `bType`) are applied as a follow-up `where(...)`
+ *     stage because the `search` stage must be the first stage of a
+ *     pipeline. Requires Enterprise Firestore (the FTS index is an
+ *     Enterprise product feature, not a free-tier feature).
+ *   - **Firestore Standard** — not supported. FTS is an Enterprise-only
+ *     product feature; this row will never become "✓".
+ *   - **SQLite / Cloudflare DO** — not supported. No native FTS index;
+ *     emulating it over `json_extract` is not viable for any realistic
+ *     dataset.
  *
- *   - **Firestore Standard** does not support full-text search at all —
- *     it is an Enterprise-only product feature. This row will never
- *     become "✓".
- *   - **Firestore Enterprise** supports FTS in production, but
- *     `@google-cloud/firestore@8.3.0` does not expose a typed
- *     `Pipeline.search(...)` method. The released `Pipeline` surface is
- *     `addFields`, `aggregate`, `distinct`, `execute`, `findNearest`,
- *     `limit`, `offset`, `rawStage`, `removeFields`, `replaceWith`,
- *     `sample`, `select`, `sort`, `stream`, `union`, `unnest`, `where`.
- *     Reaching FTS today requires the `rawStage(...)` escape hatch
- *     against a real Enterprise database — a typed-API gap, not a
- *     feature gap. We have not declared `'search.fullText'` because
- *     doing so without a runtime path would break the routing
- *     invariant ("declared capability ⇒ method exists").
- *   - **SQLite / Cloudflare DO** have no native FTS index. Emulating
- *     it over `json_extract` is not viable; the row will never become
- *     "✓" on these editions.
- *
- * The interface and `FullTextSearchParams` exist so the contract is
- * recorded on the type surface and so wiring is additive when the SDK
- * exposes a typed stage or when we commit to a `rawStage('search', { … })`
- * implementation gated behind `FIREGRAPH_ENTERPRISE=1`.
+ * Migrations are NOT applied to the result. The search index walked
+ * the raw stored shape; rehydrating each row through the migration
+ * pipeline would change the candidate set the index already scored.
+ * If you need migrated shape, follow up with `getNode` / `findEdges`
+ * on the returned UIDs.
  */
 export interface FullTextSearchExtension {
-  // No runtime methods — see the JSDoc above for the typed-API-gap rationale.
+  /**
+   * Run a full-text search. Returns the top-N records by relevance,
+   * ordered by the search index's score.
+   *
+   * Throws:
+   *
+   *   - `INVALID_QUERY` if `query` is empty, any field path resolves to
+   *     a built-in envelope field, or `limit` is non-positive.
+   *   - `QUERY_SAFETY` if no identifying filters are supplied and
+   *     `allowCollectionScan` is not set.
+   *   - `UNSUPPORTED_OPERATION` if the backend does not declare
+   *     `search.fullText`.
+   */
+  fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]>;
 }
 
 /**
@@ -1002,12 +1034,24 @@ export interface GeoPointLiteral {
 }
 
 /**
- * Parameters for a server-side geospatial distance query (deferred — see
- * `GeoExtension` for the SDK-gap rationale).
+ * Parameters for a server-side geospatial distance query.
+ *
+ * Translates on Firestore Enterprise into a Pipeline
+ * `search({ query: geoDistance(field, point).lessThanOrEqual(radius), sort: geoDistance(...).ascending() })`
+ * stage. The two `geoDistance(...)` expressions are computed identically
+ * server-side; the radius cap goes into the search query and the
+ * nearest-first ordering goes into `sort`.
  */
 export interface GeoSearchParams {
-  /** Optional filter on `aType` — narrows the per-type collection scope. */
+  /**
+   * Optional filter on `aType`. Applied as a `where(aType == …)` stage
+   * after the `search()` stage (search must be the first stage).
+   */
   aType?: string;
+  /** Optional filter on `axbType`. Same post-search-stage application as `aType`. */
+  axbType?: string;
+  /** Optional filter on `bType`. Same post-search-stage application as `aType`. */
+  bType?: string;
   /**
    * Field path of the indexed `GeoPoint`. Bare name → `data.<name>` per
    * the same convention as `select` / `where`. Built-in envelope fields
@@ -1021,37 +1065,60 @@ export interface GeoSearchParams {
   /** Upper bound on rows returned. */
   limit: number;
   /**
-   * If true (default), results are sorted nearest-first; if false,
-   * ordering is unspecified — the backend may return rows in whatever
-   * order the geo index emits.
+   * If true (default), results are sorted nearest-first via a
+   * `geoDistance(...).ascending()` ordering inside the `search` stage;
+   * if false, ordering is unspecified — the backend returns rows in
+   * whatever order the geo index emits.
    */
   orderByDistance?: boolean;
+  /**
+   * Bypass scan-protection for unfiltered geo searches. A geo query
+   * with no `aType` / `axbType` / `bType` filter walks every indexed
+   * row inside the radius — opt in explicitly when that's intended.
+   */
+  allowCollectionScan?: boolean;
 }
 
 /**
  * Native geospatial distance search.
  *
- * **Status: deferred on Firestore Enterprise; not applicable elsewhere.**
+ *   - **Firestore Enterprise** ✓ — implemented via Pipeline
+ *     `search({ query: geoDistance(field, point).lessThanOrEqual(radius), sort: geoDistance(...).ascending() })`
+ *     (typed `geoDistance(...)` function exposed in
+ *     `@google-cloud/firestore@8.5.0`). Identifying filters
+ *     (`aType` / `axbType` / `bType`) are applied as a follow-up
+ *     `where(...)` stage because the `search` stage must be the
+ *     first stage of a pipeline. Requires Enterprise Firestore (the
+ *     geo index is an Enterprise product feature).
+ *   - **Firestore Standard** — not supported. Geospatial queries are
+ *     an Enterprise-only product feature; this row will never become
+ *     "✓".
+ *   - **SQLite / Cloudflare DO** — not supported. No native geo
+ *     index; emulating it over `json_extract` and the haversine
+ *     formula is viable only for trivial dataset sizes and would give
+ *     callers the wrong mental model about cost.
  *
- *   - **Firestore Standard** does not support geospatial queries at all
- *     — it is an Enterprise-only product feature. This row will never
- *     become "✓".
- *   - **Firestore Enterprise** supports geo queries in production, but
- *     `@google-cloud/firestore@8.3.0` does not expose a typed
- *     geo-distance pipeline stage. The released `Pipeline` surface is
- *     listed in `FullTextSearchExtension`'s JSDoc; reaching geo today
- *     requires `rawStage(...)` against a real Enterprise database — a
- *     typed-API gap, not a feature gap.
- *   - **SQLite / Cloudflare DO** have no native geo index, so the row
- *     will never become "✓" on these editions either.
- *
- * The interface, `GeoSearchParams`, and `GeoPointLiteral` are recorded
- * so the API contract exists on the type surface; wiring is additive
- * when the SDK exposes a typed stage or we commit to a `rawStage(...)`
- * implementation gated behind `FIREGRAPH_ENTERPRISE=1`.
+ * Migrations are NOT applied to the result — same rationale as
+ * `findNearest` and `fullTextSearch`. The geo index walked the raw
+ * stored shape.
  */
 export interface GeoExtension {
-  // No runtime methods — see the JSDoc above for the typed-API-gap rationale.
+  /**
+   * Run a geospatial distance search. Returns rows whose
+   * `geoField` lies within `radiusMeters` of `point`, ordered
+   * nearest-first by default.
+   *
+   * Throws:
+   *
+   *   - `INVALID_QUERY` if `geoField` resolves to a built-in envelope
+   *     field, `radiusMeters` is non-positive, `limit` is
+   *     non-positive, or `point.lat` / `point.lng` are out of range.
+   *   - `QUERY_SAFETY` if no identifying filters are supplied and
+   *     `allowCollectionScan` is not set.
+   *   - `UNSUPPORTED_OPERATION` if the backend does not declare
+   *     `search.geo`.
+   */
+  geoSearch(params: GeoSearchParams): Promise<StoredGraphRecord[]>;
 }
 
 /**

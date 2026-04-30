@@ -70,6 +70,8 @@ import type {
   ExpandResult,
   FindEdgesParams,
   FindNearestParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -271,6 +273,36 @@ class RoutingStorageBackend implements StorageBackend {
    * `.subgraph().findNearest()` against the routed handle.
    */
   findNearest?: StorageBackend['findNearest'];
+  /**
+   * Full-text search pass-through. Same conditional-install pattern as
+   * `findNearest`: gated on BOTH the base method's existence AND
+   * `this.capabilities` advertising `search.fullText`. If
+   * `routedCapabilities` intersected `search.fullText` away (e.g. one
+   * routed peer is Firestore Standard or a SQLite-shaped backend that
+   * has no native FTS index), the method is not installed even though
+   * `base.fullTextSearch` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, FTS runs against the base backend only —
+   * a routed child's own `fullTextSearch` is reached through
+   * `.subgraph().fullTextSearch()` against the routed handle.
+   */
+  fullTextSearch?: StorageBackend['fullTextSearch'];
+  /**
+   * Geospatial distance pass-through. Same conditional-install pattern
+   * as `fullTextSearch`: gated on BOTH the base method's existence AND
+   * `this.capabilities` advertising `search.geo`. If `routedCapabilities`
+   * intersected `search.geo` away (e.g. one routed peer is Firestore
+   * Standard or a SQLite-shaped backend that has no native geo index),
+   * the method is not installed even though `base.geoSearch` exists.
+   * This preserves the "declared capability ⇒ method exists" invariant
+   * in both directions.
+   *
+   * Like the other extensions, geo search runs against the base backend
+   * only — a routed child's own `geoSearch` is reached through
+   * `.subgraph().geoSearch()` against the routed handle.
+   */
+  geoSearch?: StorageBackend['geoSearch'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -351,6 +383,20 @@ class RoutingStorageBackend implements StorageBackend {
       // is reached through `.subgraph().findNearest()` against the routed
       // handle.
       this.findNearest = (params: FindNearestParams) => base.findNearest!(params);
+    }
+    if (base.fullTextSearch && this.capabilities.has('search.fullText')) {
+      // Same scope rationale as the other extensions: FTS runs against
+      // the base backend only. A routed child's own `fullTextSearch` is
+      // reached through `.subgraph().fullTextSearch()` against the routed
+      // handle.
+      this.fullTextSearch = (params: FullTextSearchParams) => base.fullTextSearch!(params);
+    }
+    if (base.geoSearch && this.capabilities.has('search.geo')) {
+      // Same scope rationale as the other extensions: geo search runs
+      // against the base backend only. A routed child's own `geoSearch`
+      // is reached through `.subgraph().geoSearch()` against the routed
+      // handle.
+      this.geoSearch = (params: GeoSearchParams) => base.geoSearch!(params);
     }
   }
 

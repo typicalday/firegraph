@@ -220,6 +220,41 @@ describe('FirestoreBackend capabilities', () => {
     expect(backend.capabilities.has('search.vector')).toBe(true);
   });
 
+  it('Enterprise edition declares search.fullText (Phase 12) — Pipelines documentMatches via shared helper', () => {
+    // Enterprise wires FTS through the typed Pipelines surface in
+    // `@google-cloud/firestore@8.5.0`: `db.pipeline().collection(path).search({
+    // query: documentMatches(q), sort: score().descending() }).where(...)
+    // .limit(N).execute()`. Standard never declares this — FTS is an
+    // Enterprise-only product feature.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('search.fullText')).toBe(true);
+  });
+
+  it('Enterprise edition declares search.geo (Phase 12) — Pipelines geoDistance via shared helper', () => {
+    // Enterprise wires geo through the same typed Pipelines surface:
+    // `search({ query: geoDistance(field, point).lessThanOrEqual(radius),
+    // sort: geoDistance(...).ascending() })`. Standard never declares this —
+    // geo is an Enterprise-only product feature.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('search.geo')).toBe(true);
+  });
+
+  it('Enterprise edition installs the FTS / geo methods when the caps are declared', () => {
+    // The "declared capability ⇒ method exists" invariant: caps and
+    // methods cannot drift apart. Both `fullTextSearch` and `geoSearch`
+    // must be present on the backend instance whenever the matching cap
+    // is declared.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(typeof backend.fullTextSearch).toBe('function');
+    expect(typeof backend.geoSearch).toBe('function');
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
@@ -227,11 +262,10 @@ describe('FirestoreBackend capabilities', () => {
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
     // query.aggregate ships in Phase 4; query.select ships in Phase 7;
-    // search.vector ships in Phase 8 — see the dedicated assertions above.
+    // search.vector ships in Phase 8; search.fullText / search.geo ship in
+    // Phase 12 — see the dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
-    expect(caps.has('search.fullText')).toBe(false);
-    expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('realtime.listen')).toBe(false);
   });
 });

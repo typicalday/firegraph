@@ -7,11 +7,17 @@
  * always used for transactions and doc-level operations because pipelines
  * have no transactional binding (per Firestore's GA notes — April 2026).
  *
- * Capability declarations target the full Enterprise surface — pipelines
- * GA features (aggregate, join, DML, full-text search, geo, vector). The
- * actual implementation of those extension methods lands in Phases 4-10
- * of the capability refactor; today this file declares only the core
- * capabilities that match the runtime methods it exposes.
+ * Capability declarations target the full Enterprise surface that the
+ * shipped `@google-cloud/firestore@8.5.0` SDK exposes typed APIs for:
+ * core read/write/transactions/batch/subgraph, `query.aggregate`,
+ * `query.select`, `search.vector` (via the classic `findNearest` API for
+ * parity with Standard), `search.fullText` (via Pipelines
+ * `search({ query: documentMatches(...) })`), `search.geo` (via Pipelines
+ * `search({ query: geoDistance(...).lessThanOrEqual(...) })`), and
+ * `raw.firestore`. Capabilities that are still typed-API-gapped on
+ * 8.5.0 — `query.join`, `query.dml`, `realtime.listen` — stay
+ * undeclared until the typed surface lands. See the comment block above
+ * `FirestoreEnterpriseCapability` for the per-capability rationale.
  */
 
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
@@ -43,6 +49,8 @@ import {
   createFirestoreAdapter,
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
+import { runFirestoreFullTextSearch } from '../internal/firestore-fulltext.js';
+import { runFirestoreGeoSearch } from '../internal/firestore-geo.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
 import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
 import type { DataPathOp } from '../internal/write-plan.js';
@@ -56,6 +64,8 @@ import type {
   CascadeResult,
   FindEdgesParams,
   FindNearestParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -71,27 +81,38 @@ import { createPipelineQueryAdapter } from './pipeline-adapter.js';
  * via the classic Query API (pipelines themselves are not transactionally
  * bound; the GA notes call this out explicitly). `search.vector` (Phase 8)
  * is implemented via the classic `Query.findNearest(...)` API for parity
- * with the Standard edition — see `findNearest()` below. The remaining
- * pipeline-only extension capabilities (`query.join`, `search.fullText`,
- * `search.geo`) are NOT declared yet — subsequent phases wire them in
- * once the matching backend methods exist, at which point this union
- * grows in lockstep with the cap-set literal below.
+ * with the Standard edition — see `findNearest()` below.
+ *
+ * `search.fullText` and `search.geo` (Phase 12) are implemented via the
+ * Pipelines `search(...)` stage exposed in `@google-cloud/firestore@8.5.0`.
+ * The 8.5.0 typed surface adds `documentMatches(...)`, `score()`, and
+ * `geoDistance(...)` as first-class expressions (all `@beta` and gated to
+ * the `Search` stage); the `Pipeline.search(options)` method itself is
+ * also first-class. Standard does NOT declare these caps — full-text
+ * search and geospatial queries are Enterprise-only product features
+ * regardless of SDK shape, so the routing invariant (declared cap ⇒
+ * method exists ⇒ index exists) demands that the cap stay edition-gated.
  *
  * Conservative declaration matters here: declaring a capability we don't
  * implement turns the type-level gate (Phase 3) into a lie that throws at
- * runtime instead of failing to compile.
+ * runtime instead of failing to compile. The inverse also matters:
+ * implementing without declaring leaves the surface accessible only via
+ * `as any` casts, which silently bypasses the capability gate.
  *
  * **`query.dml` is intentionally omitted.** The Firestore SDK shipped at
- * `@google-cloud/firestore@8.3.0` does not expose pipeline DML stages —
- * the `Pipeline` class has read stages (`where`, `select`, `aggregate`,
- * `sort`, etc.) but no `remove` / `update` / `replace` mutations. The only
- * way to delete or update many docs today is the existing
- * `bulkRemoveEdges` fetch-then-write loop (driven by `BulkWriter`), which
- * is a client-side fan-out, not a server-side DML statement. Declaring
- * `query.dml` here without a real server-side path would defeat the point
- * of the capability — its consumers (e.g. `bulk.ts` cascade rewrite)
- * branch on the cap to skip the fetch-then-write loop entirely. SQLite
- * and Cloudflare DO declare `query.dml` because they really do execute a
+ * `@google-cloud/firestore@8.5.0` exposes Pipelines DML adjacents
+ * (`update`, `delete` stages on the protobuf surface) but the typed
+ * `Pipeline` class still does not surface them — the `Pipeline` class
+ * has read stages (`where`, `select`, `aggregate`, `sort`, `search`,
+ * `findNearest`, etc.) but no `remove` / `update` / `replace`
+ * mutations on the public TypeScript API. The only way to delete or
+ * update many docs today is the existing `bulkRemoveEdges` fetch-
+ * then-write loop (driven by `BulkWriter`), which is a client-side
+ * fan-out, not a server-side DML statement. Declaring `query.dml`
+ * here without a real server-side path would defeat the point of the
+ * capability — its consumers (e.g. `bulk.ts` cascade rewrite) branch
+ * on the cap to skip the fetch-then-write loop entirely. SQLite and
+ * Cloudflare DO declare `query.dml` because they really do execute a
  * single `DELETE … WHERE …` / `UPDATE … SET …` statement; Firestore
  * doesn't, so it stays on the `bulkRemoveEdges` path.
  *
@@ -112,6 +133,8 @@ export type FirestoreEnterpriseCapability =
   | 'query.aggregate'
   | 'query.select'
   | 'search.vector'
+  | 'search.fullText'
+  | 'search.geo'
   | 'raw.firestore';
 
 const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
@@ -124,6 +147,8 @@ const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'query.aggregate',
     'query.select',
     'search.vector',
+    'search.fullText',
+    'search.geo',
     'raw.firestore',
   ]);
 
@@ -458,6 +483,47 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
    */
   findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
     return runFirestoreFindNearest(this.db.collection(this.collectionPath), params);
+  }
+
+  // --- Native full-text search (capability: search.fullText) ---
+
+  /**
+   * Run a full-text search via Firestore Pipelines `search(...)` stage.
+   * Translates `documentMatches(query)` against the indexed search
+   * fields, sorts by relevance score (`score().descending()`), and
+   * applies identifying filters as a follow-up `where(...)` stage
+   * because `search` must be the first stage of a pipeline.
+   *
+   * Enterprise-only: full-text search is an Enterprise product feature.
+   * Standard does not declare `search.fullText` regardless of SDK
+   * surface, and the SQLite-shaped backends have no native FTS index.
+   *
+   * Index requirements: an FTS index on the indexed search fields
+   * (configured in Firestore's index config). Without the index the
+   * underlying `search` stage returns no rows; the firegraph layer
+   * cannot detect that case ahead of time.
+   */
+  fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
+    return runFirestoreFullTextSearch(this.db, this.collectionPath, params);
+  }
+
+  // --- Native geospatial distance search (capability: search.geo) ---
+
+  /**
+   * Run a geospatial distance query via Firestore Pipelines
+   * `search(...)` stage. The same `geoDistance(geoField, point)`
+   * expression feeds the radius cap (`<= radiusMeters`) and the
+   * nearest-first sort (when `orderByDistance` is true / unset).
+   * Identifying filters apply as a follow-up `where(...)` stage.
+   *
+   * Enterprise-only: same Enterprise-product-feature gating as FTS.
+   *
+   * Index requirements: a geospatial index on the indexed `geoField`.
+   * Same caveat as FTS — unindexed geo searches return no rows
+   * server-side and the firegraph layer cannot pre-detect that.
+   */
+  geoSearch(params: GeoSearchParams): Promise<StoredGraphRecord[]> {
+    return runFirestoreGeoSearch(this.db, this.collectionPath, params);
   }
 }
 

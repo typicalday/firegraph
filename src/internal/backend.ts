@@ -20,6 +20,8 @@ import type {
   ExpandResult,
   FindEdgesParams,
   FindNearestParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -318,4 +320,43 @@ export interface StorageBackend<C extends Capability = Capability> {
    * returning would change the candidate set the index already chose.
    */
   findNearest?(params: FindNearestParams): Promise<StoredGraphRecord[]>;
+
+  // --- Native full-text search ---
+  /**
+   * Run a full-text search query. Present only on backends that declare
+   * `search.fullText`. There is no client-side fallback — the only
+   * in-tree backend that supports it is Firestore Enterprise (via
+   * Pipeline `search({ query: documentMatches(...) })`); Standard and
+   * the SQLite-shaped backends throw `UNSUPPORTED_OPERATION` from the
+   * client wrapper.
+   *
+   * The backend is responsible for path normalisation (rewriting
+   * bare `fields` entries to `data.<name>`, rejecting envelope fields
+   * with `INVALID_QUERY`), translating to the underlying SDK call,
+   * and decoding the result into `StoredGraphRecord[]`.
+   *
+   * Migrations are not applied to the result. The search index walked
+   * the raw stored shape; rehydrating into the migration pipeline
+   * would change the candidate set the index already scored.
+   */
+  fullTextSearch?(params: FullTextSearchParams): Promise<StoredGraphRecord[]>;
+
+  // --- Native geospatial distance search ---
+  /**
+   * Run a geospatial distance search. Present only on backends that
+   * declare `search.geo`. There is no client-side fallback — only
+   * Firestore Enterprise has a native geo index (translated via
+   * Pipeline `search({ query: geoDistance(...).lessThanOrEqual(...) })`).
+   * Backends without the cap throw `UNSUPPORTED_OPERATION` from the
+   * client wrapper.
+   *
+   * The backend is responsible for `geoField` path normalisation,
+   * translating `point` to a Firestore `GeoPoint`, applying the
+   * radius cap inside the search query, and (when
+   * `orderByDistance` is true / unset) emitting the
+   * `geoDistance(...).ascending()` ordering inside the search stage.
+   *
+   * Migrations are not applied to the result.
+   */
+  geoSearch?(params: GeoSearchParams): Promise<StoredGraphRecord[]>;
 }
