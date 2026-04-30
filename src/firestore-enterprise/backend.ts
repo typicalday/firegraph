@@ -11,15 +11,16 @@
  * shipped `@google-cloud/firestore@8.5.0` SDK exposes typed APIs for:
  * core read/write/transactions/batch/subgraph, `query.aggregate`,
  * `query.select`, `query.join` (via Pipelines `equalAny(field, values)`
- * for single-statement multi-source fan-out), `search.vector` (via the
- * classic `findNearest` API for parity with Standard), `search.fullText`
- * (via Pipelines `search({ query: documentMatches(...) })`),
- * `search.geo` (via Pipelines
- * `search({ query: geoDistance(...).lessThanOrEqual(...) })`), and
- * `raw.firestore`. Capabilities that remain typed-API-gapped or
- * fundamentally absent on 8.5.0 — `query.dml`, `realtime.listen` —
- * stay undeclared until the typed surface lands or the SDK exposes
- * an addressable feature. See the comment block above
+ * for single-statement multi-source fan-out), `query.dml` (gated by
+ * the opt-in `previewDml` flag — Pipeline `delete()` / `update(...)`
+ * stages are `@beta` in 8.5.0; see the per-capability rationale below),
+ * `search.vector` (via the classic `findNearest` API for parity with
+ * Standard), `search.fullText` (via Pipelines
+ * `search({ query: documentMatches(...) })`), `search.geo` (via
+ * Pipelines `search({ query: geoDistance(...).lessThanOrEqual(...) })`),
+ * and `raw.firestore`. Capabilities that remain fundamentally absent on
+ * 8.5.0 — `realtime.listen` — stay undeclared until the SDK exposes an
+ * addressable feature. See the comment block above
  * `FirestoreEnterpriseCapability` for the per-capability rationale.
  */
 
@@ -42,6 +43,10 @@ import type {
 } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
 import { runFirestoreAggregate } from '../internal/firestore-aggregate.js';
+import {
+  runFirestorePipelineDelete,
+  runFirestorePipelineUpdate,
+} from '../internal/firestore-bulk-dml.js';
 import type {
   BatchAdapter,
   FirestoreAdapter,
@@ -66,6 +71,7 @@ import type {
   AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
   ExpandParams,
   ExpandResult,
@@ -117,15 +123,22 @@ import { createPipelineQueryAdapter } from './pipeline-adapter.js';
  * the classic chunked path in `firestore-classic-expand.ts` is used
  * instead — same observable contract, different round-trip profile.
  *
- * **`query.dml` is intentionally omitted from this set today.** Phase
- * 13b will wire `Pipeline.delete()` / `Pipeline.update()` (both `@beta`
- * in 8.5.0) behind an opt-in `previewDml` flag once the test plan
- * confirms the typed surface is stable. Until then, bulk delete /
- * update operations stay on the existing `bulkRemoveEdges` fetch-then-
- * write loop, and consumers (e.g. `bulk.ts` cascade rewrite) branch on
- * the cap to skip the loop only on backends that declare it. SQLite
- * and Cloudflare DO declare `query.dml` because they really do execute
- * a single `DELETE … WHERE …` / `UPDATE … SET …` statement.
+ * **`query.dml` (Phase 13b) is wired through `runFirestorePipelineDelete`
+ * and `runFirestorePipelineUpdate` (`src/internal/firestore-bulk-dml.ts`)
+ * but is gated by an opt-in `FirestoreEnterpriseOptions.previewDml`
+ * flag.** The underlying `Pipeline.delete()` and
+ * `Pipeline.update(transformedFields)` stages are `@beta` in
+ * `@google-cloud/firestore@8.5.0` (`firestore.d.ts:12647` /
+ * `firestore.d.ts:12662`). When `previewDml: true`, the cap is declared
+ * and `bulkDelete` / `bulkUpdate` dispatch to single-statement Pipelines
+ * stages — same observable contract as SQLite/DO, one round trip per
+ * call, no fetch-then-write loop. A one-time `console.warn` fires on
+ * backend construction so the `@beta` status is visible. When
+ * `previewDml: false` (default), the cap is NOT declared; `bulk.ts`
+ * cascade and `client.bulkDelete()` / `client.bulkUpdate()` route
+ * through the existing `bulkRemoveEdges` fetch-then-write fallback.
+ * SQLite and Cloudflare DO declare `query.dml` unconditionally because
+ * their `DELETE … WHERE …` / `UPDATE … SET …` paths are GA, not preview.
  */
 export type FirestoreEnterpriseCapability =
   | 'core.read'
@@ -136,12 +149,19 @@ export type FirestoreEnterpriseCapability =
   | 'query.aggregate'
   | 'query.select'
   | 'query.join'
+  | 'query.dml'
   | 'search.vector'
   | 'search.fullText'
   | 'search.geo'
   | 'raw.firestore';
 
-const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
+/**
+ * Base capability set declared by every Firestore Enterprise backend.
+ * `query.dml` is conditionally added on construction when
+ * `FirestoreEnterpriseOptions.previewDml === true`; see the
+ * `query.dml` rationale comment above and the constructor below.
+ */
+const ENTERPRISE_BASE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
   new Set<FirestoreEnterpriseCapability>([
     'core.read',
     'core.write',
@@ -173,12 +193,39 @@ export interface FirestoreEnterpriseOptions {
    * mode.
    */
   defaultQueryMode?: FirestoreEnterpriseQueryMode;
+  /**
+   * Opt in to Pipelines DML stages (`@beta` in `@google-cloud/firestore@8.5.0`:
+   * `Pipeline.delete()` at `firestore.d.ts:12647`,
+   * `Pipeline.update(transformedFields)` at `firestore.d.ts:12662`).
+   *
+   * When `false` (default), this backend does NOT declare `query.dml` and
+   * `client.bulkDelete()` / `client.bulkUpdate()` throw
+   * `UNSUPPORTED_OPERATION` (or, via `bulk.ts`'s cascade path, fall back
+   * to the read-then-write loop in `bulkRemoveEdges`).
+   *
+   * When `true`, the backend declares `query.dml` and dispatches both
+   * methods to single-statement Pipeline stages via
+   * `runFirestorePipelineDelete` / `runFirestorePipelineUpdate`. A
+   * one-time `console.warn` fires on the first backend created with the
+   * flag so the `@beta` status is visible without disrupting tests or
+   * production traffic. The flag intentionally has no effect on
+   * `defaultQueryMode: 'classic'` — the classic-API path has no DML stage
+   * to fall back to, so opting into preview DML in classic mode is a
+   * misconfiguration; we accept the flag silently rather than throw to
+   * keep the option surface ergonomic across the dual-mode toggle. The
+   * routing layer relies on `query.dml` being a structural cap, not a
+   * runtime promise — so the cap is still declared even in classic mode,
+   * and the methods still dispatch through Pipelines (Pipeline DML works
+   * regardless of the read-path `queryMode`).
+   */
+  previewDml?: boolean;
   /** Internal: the logical scope path inherited from a parent subgraph. */
   scopePath?: string;
 }
 
 let _emulatorFallbackWarned = false;
 let _classicInProductionWarned = false;
+let _previewDmlWarned = false;
 
 /** Build a `data.a.b.c` dotted path for Firestore's `update()` API. */
 function dottedDataPath(op: DataPathOp): string {
@@ -297,8 +344,7 @@ class FirestoreEnterpriseBatchBackend implements BatchBackend {
 }
 
 class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpriseCapability> {
-  readonly capabilities: BackendCapabilities<FirestoreEnterpriseCapability> =
-    createCapabilities(ENTERPRISE_CAPS);
+  readonly capabilities: BackendCapabilities<FirestoreEnterpriseCapability>;
   readonly collectionPath: string;
   readonly scopePath: string;
   private readonly adapter: FirestoreAdapter;
@@ -309,6 +355,7 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     collectionPath: string,
     private readonly queryMode: FirestoreEnterpriseQueryMode,
     scopePath: string,
+    private readonly previewDml: boolean,
   ) {
     this.collectionPath = collectionPath;
     this.scopePath = scopePath;
@@ -316,6 +363,13 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     if (queryMode === 'pipeline') {
       this.pipelineAdapter = createPipelineQueryAdapter(db, collectionPath);
     }
+    // `query.dml` is opt-in because the Pipeline `delete()` / `update(...)`
+    // stages are `@beta` in 8.5.0; declaring it without the flag would
+    // promise behaviour we'd then have to revert if the SDK shape shifts.
+    const caps = previewDml
+      ? new Set<FirestoreEnterpriseCapability>([...ENTERPRISE_BASE_CAPS, 'query.dml'])
+      : ENTERPRISE_BASE_CAPS;
+    this.capabilities = createCapabilities(caps);
   }
 
   // --- Reads ---
@@ -368,7 +422,17 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
   subgraph(parentNodeUid: string, name: string): StorageBackend {
     const subPath = `${this.collectionPath}/${parentNodeUid}/${name}`;
     const newScope = this.scopePath ? `${this.scopePath}/${name}` : name;
-    return new FirestoreEnterpriseBackendImpl(this.db, subPath, this.queryMode, newScope);
+    // Inherit `previewDml` so subgraphs declare the same cap as the parent
+    // — otherwise `client.subgraph(uid).bulkDelete(...)` would silently
+    // route through the read-then-write fallback while the parent client
+    // dispatched through Pipelines, breaking parity.
+    return new FirestoreEnterpriseBackendImpl(
+      this.db,
+      subPath,
+      this.queryMode,
+      newScope,
+      this.previewDml,
+    );
   }
 
   // --- Cascade & bulk ---
@@ -558,6 +622,44 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     }
     return runFirestoreClassicExpand(this.adapter, params);
   }
+
+  // --- Server-side DML (capability: query.dml, gated by previewDml) ---
+
+  /**
+   * Single-statement bulk DELETE via Pipeline `delete()` stage. Wired only
+   * when the backend was created with `previewDml: true`; otherwise the
+   * cap isn't declared and `client.bulkDelete()` throws
+   * `UNSUPPORTED_OPERATION` (or `bulk.ts` cascade falls back to
+   * `bulkRemoveEdges`).
+   *
+   * Empty filter lists are rejected at the helper boundary —
+   * see `runFirestorePipelineDelete`'s `assertNonEmptyFilters`.
+   *
+   * Subgraph isolation comes from `this.collectionPath`: the pipeline's
+   * `collection(path)` source IS the subgraph, so there's no separate
+   * `scope` predicate to enforce (unlike SQLite's leading-`scope`-`?`
+   * filter).
+   */
+  bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+    return runFirestorePipelineDelete(this.db, this.collectionPath, filters, options);
+  }
+
+  /**
+   * Single-statement bulk UPDATE via Pipeline
+   * `update(transformedFields)` stage. Same gating and scoping as
+   * `bulkDelete` above. The patch is flattened into one
+   * `AliasedExpression` per terminal leaf via the shared `flattenPatch`
+   * pipeline; `deleteField()` sentinels are rejected at the helper
+   * boundary (the typed `update(AliasedExpression[])` surface in 8.5.0
+   * has no field-deletion transform — see `runFirestorePipelineUpdate`).
+   */
+  bulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    return runFirestorePipelineUpdate(this.db, this.collectionPath, filters, patch, options);
+  }
 }
 
 /**
@@ -603,6 +705,24 @@ export function createFirestoreEnterpriseBackend(
     );
   }
 
+  const previewDml = options.previewDml ?? false;
+  if (previewDml && !_previewDmlWarned) {
+    _previewDmlWarned = true;
+    console.warn(
+      '[firegraph] Firestore Enterprise backend created with `previewDml: true`. ' +
+        'bulkDelete()/bulkUpdate() will dispatch through Pipeline.delete() / ' +
+        'Pipeline.update(transformedFields), both `@beta` in @google-cloud/firestore@8.5.0. ' +
+        'The typed surface may shift before GA — pin your firestore SDK or be ready to ' +
+        'set `previewDml: false` and route through the read-then-write fallback if needed.',
+    );
+  }
+
   const scopePath = options.scopePath ?? '';
-  return new FirestoreEnterpriseBackendImpl(db, collectionPath, effectiveMode, scopePath);
+  return new FirestoreEnterpriseBackendImpl(
+    db,
+    collectionPath,
+    effectiveMode,
+    scopePath,
+    previewDml,
+  );
 }

@@ -300,6 +300,52 @@ describe('FirestoreBackend capabilities', () => {
     expect(typeof classicBackend.expand).toBe('function');
   });
 
+  it('Enterprise edition does NOT declare query.dml without previewDml (Phase 13b is opt-in)', () => {
+    // Phase 13b wires `bulkDelete` / `bulkUpdate` through Pipeline DML
+    // stages, but those stages are `@beta` in
+    // `@google-cloud/firestore@8.5.0`. The backend gates the cap on the
+    // explicit `previewDml: true` opt-in so callers don't accidentally
+    // depend on a `@beta` SDK surface. Without the flag, the cap stays
+    // off — and the routing-backend wrapper / `client.ts` use that cap
+    // to decide whether to surface `bulkDelete` / `bulkUpdate` on the
+    // public client, falling back to the read-then-write `bulkRemoveEdges`
+    // path. Method presence on the raw backend instance is an
+    // implementation detail; the capability declaration is the contract.
+    const defaulted = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(defaulted.capabilities.has('query.dml')).toBe(false);
+
+    const explicitOff = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+      previewDml: false,
+    });
+    expect(explicitOff.capabilities.has('query.dml')).toBe(false);
+  });
+
+  it('Enterprise edition declares query.dml (Phase 13b) when previewDml: true', () => {
+    // Opt-in flag flips the cap on. `bulkDelete` / `bulkUpdate` get
+    // installed and dispatch through the shared
+    // `runFirestorePipelineDelete` / `runFirestorePipelineUpdate`
+    // helpers, which compose `Pipeline.delete()` /
+    // `Pipeline.update(transformedFields)` stages. A one-time
+    // `console.warn` fires on first construction with the flag — the
+    // warn-once gate isn't asserted here (its lifecycle leaks across
+    // tests; covered in the helper test).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+        defaultQueryMode: 'classic',
+        previewDml: true,
+      });
+      expect(backend.capabilities.has('query.dml')).toBe(true);
+      expect(typeof backend.bulkDelete).toBe('function');
+      expect(typeof backend.bulkUpdate).toBe('function');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
@@ -308,9 +354,8 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('raw.sql')).toBe(false);
     // query.aggregate ships in Phase 4; query.select ships in Phase 7;
     // search.vector ships in Phase 8; search.fullText / search.geo ship in
-    // Phase 12; query.join ships in Phase 13a — see the dedicated
-    // assertions above. query.dml is gated on Phase 13b.
-    expect(caps.has('query.dml')).toBe(false);
+    // Phase 12; query.join ships in Phase 13a; query.dml ships in Phase 13b
+    // (opt-in via `previewDml: true` — see dedicated assertion above).
     expect(caps.has('realtime.listen')).toBe(false);
   });
 });
