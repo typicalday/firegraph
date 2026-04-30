@@ -35,6 +35,7 @@ import type {
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
+  FindEdgesProjectedParams,
   FindNodesParams,
   GraphBatch,
   GraphClient,
@@ -45,6 +46,7 @@ import type {
   MigrationExecutor,
   MigrationFn,
   MigrationWriteBack,
+  ProjectedRow,
   QueryFilter,
   QueryOptions,
   ScanProtection,
@@ -640,6 +642,93 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
       return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
     }
     return this.backend.expand(params);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Server-side projection (capability: query.select)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Server-side projection — fetch only the requested fields from each
+   * matching edge. The backend translates the call into a projecting query
+   * (`SELECT json_extract(...)` on SQLite/DO, `Query.select(...)` on
+   * Firestore Standard, classic projection on Enterprise) so the wire
+   * payload is reduced to just the requested fields.
+   *
+   * Resolution rules for `select` (mirrored across all backends):
+   *
+   *   - Built-in envelope fields (`aType`, `aUid`, `axbType`, `bType`,
+   *     `bUid`, `createdAt`, `updatedAt`, `v`) → resolve to the typed
+   *     column / Firestore field directly.
+   *   - `'data'` literal → returns the whole user payload.
+   *   - `'data.<x>'` → explicit nested path, returned at the same shape.
+   *   - bare name → rewritten to `data.<name>` (the canonical "give me a
+   *     few keys out of the JSON payload" shape).
+   *
+   * Empty `select: []` is rejected with `INVALID_QUERY`. Duplicate entries
+   * are de-duped (first-occurrence order preserved); the result row carries
+   * one slot per unique field.
+   *
+   * Migrations are *not* applied to the result. The caller asked for a
+   * partial shape, and rehydrating it through the migration pipeline would
+   * require synthesising every absent field — see
+   * `StorageBackend.findEdgesProjected` for the rationale.
+   *
+   * Scan protection follows the `findEdges` rules: a query with no
+   * identifying fields requires `allowCollectionScan: true` to pass. The
+   * cap-less fallback would be `findEdges` + JS-side projection, but that
+   * defeats the wire-payload reduction; backends without `query.select`
+   * throw `UNSUPPORTED_OPERATION` rather than silently materialising full
+   * rows.
+   */
+  async findEdgesProjected<F extends ReadonlyArray<string>>(
+    params: FindEdgesProjectedParams<F>,
+  ): Promise<Array<ProjectedRow<F>>> {
+    if (!this.backend.findEdgesProjected) {
+      throw new FiregraphError(
+        'findEdgesProjected() is not supported by the current storage backend. ' +
+          'There is no client-side fallback because the wire-payload reduction ' +
+          'is the entire point of the API — use findEdges() and project in JS ' +
+          'if the backend does not declare `query.select`.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.select.length === 0) {
+      throw new FiregraphError(
+        'findEdgesProjected() requires a non-empty `select` list.',
+        'INVALID_QUERY',
+      );
+    }
+
+    // Reuse the same plan + scan-safety pipeline as `findEdges` so the
+    // identifier-vs-where rules and `allowCollectionScan` semantics behave
+    // identically. A GET-shape (all three identifiers, no `where`) is also
+    // allowed here — projection over a single edge is a meaningful shape.
+    // We translate it to the equivalent equality filter list because the
+    // backend `findEdgesProjected` contract takes filters, not a docId.
+    const plan = buildEdgeQueryPlan(params);
+    let filters: QueryFilter[];
+    let options: QueryOptions | undefined;
+    if (plan.strategy === 'get') {
+      // GET means `aUid`, `axbType`, `bUid` are all set and there are no
+      // `where` clauses. Synthesize the equivalent equality filters so the
+      // backend can issue a single projecting query whose WHERE clause
+      // resolves to the same row the docId would have looked up.
+      filters = [
+        { field: 'aUid', op: '==', value: params.aUid! },
+        { field: 'axbType', op: '==', value: params.axbType! },
+        { field: 'bUid', op: '==', value: params.bUid! },
+      ];
+      if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+      if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+      options = undefined;
+    } else {
+      filters = plan.filters;
+      options = plan.options;
+    }
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    const rows = await this.backend.findEdgesProjected(params.select, filters, options);
+    return rows as Array<ProjectedRow<F>>;
   }
 
   /**

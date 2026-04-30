@@ -89,7 +89,7 @@ import type {
 } from '../types.js';
 import type { ExpandResultWire } from './backend.js';
 import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
-import type { CompiledStatement, DORecordWire } from './sql.js';
+import type { CompiledStatement, DOProjectedColumnSpec, DORecordWire } from './sql.js';
 import {
   compileDOAggregate,
   compileDOBulkDelete,
@@ -98,6 +98,7 @@ import {
   compileDODeleteAll,
   compileDOExpand,
   compileDOExpandHydrate,
+  compileDOFindEdgesProjected,
   compileDOSelect,
   compileDOSelectByDocId,
   compileDOSet,
@@ -554,6 +555,30 @@ export class FiregraphDO extends DurableObject<unknown> {
     }
     const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
     return { edges, targets };
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: server-side projection (`query.select`)
+  //
+  // One `SELECT json_extract(data, '$.f1'), …` returns the projected fields.
+  // The DO leaves decoding to the client because timestamp values need to
+  // rewrap as `GraphTimestampImpl` (a class instance, lost by structured
+  // clone) — instead of inventing per-field timestamp sentinels, we send the
+  // raw rows and the column spec, and let `DORPCBackend.findEdgesProjected`
+  // call `decodeDOProjectedRow` once. The spec is small (≤ ~100 bytes for
+  // a typical projection); structured clone copes happily.
+  // ---------------------------------------------------------------------------
+
+  async _fgFindEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<{ rows: Array<Record<string, unknown>>; columns: DOProjectedColumnSpec[] }> {
+    const { stmt, columns } = compileDOFindEdgesProjected(this.table, select, filters, options);
+    const rows = this.state.storage.sql
+      .exec<Record<string, unknown>>(stmt.sql, ...stmt.params)
+      .toArray();
+    return { rows, columns };
   }
 
   /**

@@ -61,8 +61,8 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type { BatchOp } from './do.js';
-import type { DORecordWire } from './sql.js';
-import { hydrateDORecord } from './sql.js';
+import type { DOProjectedColumnSpec, DORecordWire } from './sql.js';
+import { decodeDOProjectedRow, hydrateDORecord } from './sql.js';
 
 // ---------------------------------------------------------------------------
 // Minimal DO namespace / stub types
@@ -136,6 +136,28 @@ export interface FiregraphStub {
    * `query()` and `_fgBulkRemoveEdges` paths.
    */
   _fgExpand?(params: ExpandParams): Promise<ExpandResultWire>;
+  /**
+   * Optional — added in Phase 7 (`query.select`). Same back-compat rationale
+   * as `_fgAggregate` / `_fgBulkDelete` / `_fgExpand`: external worker code
+   * that hand-rolls a stub wrapper keeps compiling without modification.
+   * `FiregraphDO` always implements this method; callers of
+   * `DORPCBackend.findEdgesProjected` either assert the stub supports it or
+   * accept `UNSUPPORTED_OPERATION` at runtime.
+   *
+   * The wire shape returns `{ rows, columns }` — raw row objects from the
+   * SQLite executor plus the per-column metadata produced by
+   * `compileDOFindEdgesProjected`. Decoding (BigInt → number, timestamp
+   * rehydration, paired `__t` resolution for `data.*` paths) happens on
+   * the client side via `decodeDOProjectedRow`. We deliberately do NOT
+   * decode inside the DO because `GraphTimestampImpl` instances do not
+   * survive workerd's structured-clone boundary as class instances —
+   * decoding must happen on the side that owns the prototype.
+   */
+  _fgFindEdgesProjected?(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<{ rows: Array<Record<string, unknown>>; columns: DOProjectedColumnSpec[] }>;
   _fgDestroy(): Promise<void>;
 }
 
@@ -294,7 +316,8 @@ export type CloudflareCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.dml'
-  | 'query.join';
+  | 'query.join'
+  | 'query.select';
 
 const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>([
   'core.read',
@@ -304,6 +327,7 @@ const DO_CAPS: ReadonlySet<CloudflareCapability> = new Set<CloudflareCapability>
   'query.aggregate',
   'query.dml',
   'query.join',
+  'query.select',
 ]);
 
 export class DORPCBackend implements StorageBackend<CloudflareCapability> {
@@ -561,6 +585,45 @@ export class DORPCBackend implements StorageBackend<CloudflareCapability> {
     }
     const targets = (wire.targets ?? []).map((row) => (row ? hydrateDORecord(row) : null));
     return { edges, targets };
+  }
+
+  // --- Server-side projection (capability: query.select) ---
+
+  /**
+   * Server-side projection — `query.select` capability. Forwards the call to
+   * the DO's `_fgFindEdgesProjected` RPC, which compiles to a single
+   * `SELECT json_extract(...) AS …, json_type(...) AS …__t FROM <table>
+   * WHERE …` statement. The DO returns raw rows + per-column metadata; this
+   * method decodes each row locally via `decodeDOProjectedRow`.
+   *
+   * Decoding lives on this side (not inside the DO) because
+   * `GraphTimestampImpl` is a class — its prototype does not survive
+   * workerd's structured-clone boundary — so timestamp rehydration must
+   * happen wherever the rows are consumed by the GraphClient.
+   *
+   * Defensive `_fgFindEdgesProjected` presence check matches the `expand` /
+   * bulk-DML / aggregate pattern: the RPC method is optional on
+   * `FiregraphStub` so external worker code with a hand-rolled stub wrapper
+   * still type-checks. Surface a clear `UNSUPPORTED_OPERATION` rather than
+   * `TypeError: stub._fgFindEdgesProjected is not a function` if the
+   * wrapper hasn't forwarded the method.
+   */
+  async findEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>> {
+    const stub = this.stub;
+    if (!stub._fgFindEdgesProjected) {
+      throw new FiregraphError(
+        'findEdgesProjected() not supported by this Durable Object stub. The wrapped ' +
+          'stub does not implement `_fgFindEdgesProjected`. If you control the stub ' +
+          'wrapper, forward `_fgFindEdgesProjected` to the underlying DO.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const { rows, columns } = await stub._fgFindEdgesProjected(select, filters, options);
+    return rows.map((row) => decodeDOProjectedRow(row, columns));
   }
 
   // --- Cross-scope queries ---

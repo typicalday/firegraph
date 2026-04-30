@@ -708,9 +708,85 @@ export interface AggregateExtension {
   ): Promise<AggregateResult<A>>;
 }
 
-/** Server-side projection — return only the requested data fields. */
+/**
+ * One row in the result of a `findEdgesProjected()` call.
+ *
+ * The shape is `{ [F]: unknown }` over the caller-supplied field list `F`.
+ * Each value is whatever the backend extracted from the underlying record:
+ *
+ *   - Top-level firegraph fields (`aType`, `aUid`, `axbType`, `bType`,
+ *     `bUid`, `createdAt`, `updatedAt`, `v`) come back as the same JS shape
+ *     `findEdges` produces — strings for the identifying fields, `number |
+ *     null` for `v` (`null` when the record predates schema versioning),
+ *     and the backend's native timestamp instance (Firestore's `Timestamp`
+ *     or `GraphTimestampImpl`) for `createdAt` / `updatedAt`.
+ *   - A bare name (e.g. `'title'`) is interpreted as `data.<name>`. SQL
+ *     backends extract via `json_extract` and the value comes back as the
+ *     JSON-decoded primitive / object. Firestore returns the field's stored
+ *     type unchanged.
+ *   - A dotted `data.x.y` path is the explicit form for nested fields.
+ *   - Absent paths surface as `null` (not `undefined`) across all backends
+ *     so that `JSON.stringify(row)` round-trips the requested shape.
+ *
+ * Why `unknown` rather than a stricter type: per-entity codegen integration
+ * (Phase 7 plan note) is the right place to surface concrete value types.
+ * Until that lands, the projection layer doesn't know whether `data.title`
+ * is a string, a number, or an object — a stricter type would lie. Use
+ * a registry-aware wrapper (or a per-call cast) to narrow.
+ */
+export type ProjectedRow<F extends ReadonlyArray<string>> = {
+  [K in F[number]]: unknown;
+};
+
+/**
+ * Parameters for `findEdgesProjected` — `FindEdgesParams` plus a `select`
+ * field list. Field names follow the same rules as `WhereClause.field`:
+ *
+ *   - Built-in record fields (`aType`, `aUid`, etc.) resolve to their typed
+ *     column / Firestore field directly.
+ *   - A bare name resolves to `data.<name>` (the most common shape — most
+ *     callers project a few keys out of the JSON payload).
+ *   - A dotted `data.x.y` path is explicit.
+ *
+ * Empty `select: []` is rejected at the client level. The backend never
+ * sees an empty projection list because `SELECT FROM …` (no projection
+ * clause) is a syntactically different query and `SELECT * FROM …` is what
+ * `findEdges` already does.
+ *
+ * Duplicate entries in `select` are collapsed at compile time — the
+ * resulting row carries one slot per unique field. This keeps the
+ * SQL projection list minimal and matches Firestore's `Query.select(...)`
+ * de-duplication behaviour.
+ */
+export interface FindEdgesProjectedParams<F extends ReadonlyArray<string>> extends FindEdgesParams {
+  /** Non-empty list of field paths to return. See type-level docs for the
+   * dotted-path convention. */
+  select: F;
+}
+
+/**
+ * Server-side field projection — return only the requested fields.
+ *
+ * Backends declaring `query.select` translate the call into a projecting
+ * server-side query (`SELECT json_extract(data, '$.f1'), …` on SQLite,
+ * `Query.select(...)` on Firestore Standard, pipeline `select()` on
+ * Firestore Enterprise). Backends without the cap throw
+ * `UNSUPPORTED_OPERATION` from the client wrapper — there is no
+ * client-side fallback that materialises full rows and then drops fields,
+ * because the wire-payload reduction is the entire point of the API.
+ */
 export interface SelectExtension {
-  // Methods land in Phase 7.
+  /** Fetch only the requested field paths from each matching edge.
+   *
+   * Returns one `ProjectedRow<F>` per matching edge, in the same order
+   * `findEdges` would have produced. Migrations are not applied — the
+   * projection bypasses the read-path migration pipeline because the
+   * caller asked for a specific shape, not a full record. If you need the
+   * migrated shape, use `findEdges` and project in JS.
+   */
+  findEdgesProjected<F extends ReadonlyArray<string>>(
+    params: FindEdgesProjectedParams<F>,
+  ): Promise<Array<ProjectedRow<F>>>;
 }
 
 /**

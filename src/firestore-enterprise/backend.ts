@@ -43,6 +43,7 @@ import {
   createFirestoreAdapter,
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
+import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
 import type { DataPathOp } from '../internal/write-plan.js';
 import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
@@ -105,6 +106,7 @@ export type FirestoreEnterpriseCapability =
   | 'core.batch'
   | 'core.subgraph'
   | 'query.aggregate'
+  | 'query.select'
   | 'raw.firestore';
 
 const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
@@ -115,6 +117,7 @@ const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'core.batch',
     'core.subgraph',
     'query.aggregate',
+    'query.select',
     'raw.firestore',
   ]);
 
@@ -395,6 +398,35 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     return runFirestoreAggregate(this.db.collection(this.collectionPath), spec, filters, {
       edition: 'enterprise',
     });
+  }
+
+  // --- Server-side projection (capability: query.select) ---
+
+  /**
+   * Run a projecting query via the shared classic-API helper. Enterprise and
+   * Standard delegate to the same implementation so the projection contract
+   * stays consistent.
+   *
+   * Why classic and not the pipeline `select()` stage: the byte-savings
+   * deliverable (the only reason `findEdgesProjected` exists) is achieved
+   * by either path; the classic API works on both editions today and
+   * sidesteps the pipeline-vs-emulator forking the rest of this backend has
+   * to manage. When pipeline `select()` becomes preferable for some other
+   * reason — e.g. composing with a future pipeline-only stage — swap the
+   * implementation behind `runFirestoreFindEdgesProjected`; callers and
+   * the capability declaration stay put.
+   */
+  findEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>> {
+    return runFirestoreFindEdgesProjected(
+      this.db.collection(this.collectionPath),
+      select,
+      filters,
+      options,
+    );
   }
 }
 

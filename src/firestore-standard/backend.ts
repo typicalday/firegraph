@@ -8,8 +8,9 @@
  *
  * Capability declarations follow the conservative invariant established in
  * Phase 1: only declare what the file actually implements at runtime.
- * Phases 4-10 will add `query.aggregate`, `query.select`, `search.vector`,
- * and `realtime.listen` once the matching backend methods exist.
+ * `query.aggregate` (Phase 6) and `query.select` (Phase 7) are wired;
+ * `search.vector` and `realtime.listen` will be added in later phases once
+ * the matching backend methods exist.
  */
 
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
@@ -41,6 +42,7 @@ import {
   createFirestoreAdapter,
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
+import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
 import type { DataPathOp } from '../internal/write-plan.js';
 import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
@@ -61,10 +63,10 @@ import type {
  * Capability union declared by the Firestore Standard backend.
  *
  * Conservative declaration: only capabilities backed by an actual runtime
- * method are listed. Phases 4-10 layer in `query.aggregate`,
- * `query.select`, `search.vector`, and `realtime.listen` as their
- * corresponding methods land — this union and the matching cap-set
- * literal are updated in lockstep.
+ * method are listed. `query.aggregate` (Phase 6) and `query.select`
+ * (Phase 7) are now wired; `search.vector` and `realtime.listen` will be
+ * layered in by their respective phases — this union and the matching
+ * cap-set literal are updated in lockstep.
  */
 export type FirestoreStandardCapability =
   | 'core.read'
@@ -73,6 +75,7 @@ export type FirestoreStandardCapability =
   | 'core.batch'
   | 'core.subgraph'
   | 'query.aggregate'
+  | 'query.select'
   | 'raw.firestore';
 
 const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
@@ -83,6 +86,7 @@ const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
     'core.batch',
     'core.subgraph',
     'query.aggregate',
+    'query.select',
     'raw.firestore',
   ]);
 
@@ -313,6 +317,28 @@ class FirestoreStandardBackendImpl implements StorageBackend<FirestoreStandardCa
     return runFirestoreAggregate(this.db.collection(this.collectionPath), spec, filters, {
       edition: 'standard',
     });
+  }
+
+  // --- Server-side projection (capability: query.select) ---
+
+  /**
+   * Run a projecting query via the shared classic-API helper. Both Firestore
+   * editions delegate to one implementation so the projection contract
+   * (bare-name normalization, builtin / `data.*` resolution, dedup,
+   * original-key preservation) stays consistent across editions. See
+   * `runFirestoreFindEdgesProjected` for the resolution rules.
+   */
+  findEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>> {
+    return runFirestoreFindEdgesProjected(
+      this.db.collection(this.collectionPath),
+      select,
+      filters,
+      options,
+    );
   }
 }
 

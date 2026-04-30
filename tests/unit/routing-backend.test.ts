@@ -117,6 +117,7 @@ function createMockBackend(
         'query.aggregate',
         'query.dml',
         'query.join',
+        'query.select',
       ]),
     ),
     collectionPath,
@@ -208,6 +209,16 @@ function createMockBackend(
       // Return the canonical empty-result shape — the routing wrapper
       // never inspects the payload, so a structural empty is enough.
       return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    },
+    async findEdgesProjected(
+      select: ReadonlyArray<string>,
+      filters: QueryFilter[],
+      options?: QueryOptions,
+    ): Promise<Array<Record<string, unknown>>> {
+      calls.push({ method: 'findEdgesProjected', args: [select, filters, options] });
+      // Canonical empty-result shape — the routing wrapper never inspects
+      // the payload, so a structural empty is enough.
+      return [];
     },
   };
   return backend;
@@ -694,6 +705,71 @@ describe('createRoutingBackend — pass-through delegation', () => {
 
     expect(router.capabilities.has('query.join')).toBe(false);
     expect(router.expand).toBeUndefined();
+  });
+
+  it('delegates findEdgesProjected to the base backend when the base declares query.select', async () => {
+    // Phase 7 query.select pass-through: identical install/omit pair to
+    // aggregate/DML/expand. The base ships `findEdgesProjected(...)` and
+    // declares `query.select`; the router must surface a callable method
+    // that forwards `(select, filters, options)` unchanged. The "declared
+    // capability ⇒ method exists" invariant is what makes the GraphClient
+    // feature-detection guard sound.
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.findEdgesProjected).toBe('function');
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const out = await router.findEdgesProjected!(['title', 'date'], filters, { limit: 5 });
+    expect(out).toEqual([]);
+    const projCall = base.calls.find((c) => c.method === 'findEdgesProjected');
+    expect(projCall).toBeDefined();
+    expect(projCall!.args[0]).toEqual(['title', 'date']);
+    expect(projCall!.args[1]).toEqual(filters);
+    expect(projCall!.args[2]).toEqual({ limit: 5 });
+  });
+
+  it('omits findEdgesProjected on the router when the base backend omits it', () => {
+    // Drivers without query.select (Firestore today, before Phase 7 wiring)
+    // propagate through the router as an undefined method. The
+    // `typeof router.findEdgesProjected` feature check is the documented
+    // contract; without this gate, type-narrowing on
+    // `capabilities.has('query.select')` would lie to consumers.
+    const base = createMockBackend('base');
+    (base as { findEdgesProjected?: unknown }).findEdgesProjected = undefined;
+    (base as { capabilities: typeof base.capabilities }).capabilities = createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(router.findEdgesProjected).toBeUndefined();
+    expect(typeof router.findEdgesProjected).toBe('undefined');
+  });
+
+  it('omits findEdgesProjected on the router when routedCapabilities intersects query.select away', () => {
+    // Cap-gate isolation test (mirror of aggregate/DML/expand). A routed
+    // peer that lacks query.select drops the cap from the intersection, so
+    // the router must omit `findEdgesProjected` even though the underlying
+    // base method is callable. Otherwise the wrapper would advertise "no
+    // query.select" via its capability descriptor while still exposing a
+    // working `findEdgesProjected`, violating the inverse "declared-absent
+    // ⇒ runtime-absent" direction of the cap-method invariant.
+    const base = createMockBackend('base');
+    expect(base.findEdgesProjected).toBeDefined();
+    expect(base.capabilities.has('query.select')).toBe(true);
+
+    const routedNoSelect = createCapabilities(
+      // Mixed-backend scenario: a routed peer (e.g. a Firestore-backed
+      // shard before Phase 7 lands there) that lacks query.select. The
+      // intersection drops the cap.
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, {
+      route: () => null,
+      routedCapabilities: [routedNoSelect],
+    });
+
+    expect(router.capabilities.has('query.select')).toBe(false);
+    expect(router.findEdgesProjected).toBeUndefined();
   });
 
   it('exposes the base backend collectionPath and scopePath', () => {

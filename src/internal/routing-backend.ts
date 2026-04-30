@@ -241,6 +241,20 @@ class RoutingStorageBackend implements StorageBackend {
    * `expand` by `traverse.ts`; the same constraint applies here, naturally.
    */
   expand?: StorageBackend['expand'];
+  /**
+   * Server-side projection pass-through. Same conditional-install pattern as
+   * `aggregate`, bulk DML, and `expand`: gated on BOTH the base method's
+   * existence AND `this.capabilities` advertising `query.select`. If
+   * `routedCapabilities` intersected `query.select` away (e.g. one routed
+   * peer doesn't implement projection), the method is not installed even
+   * though `base.findEdgesProjected` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like `aggregate` and `expand`, projection runs against the base backend
+   * only — a routed child's own projection is reached through
+   * `.subgraph().findEdgesProjected()` against the routed handle.
+   */
+  findEdgesProjected?: StorageBackend['findEdgesProjected'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -303,6 +317,17 @@ class RoutingStorageBackend implements StorageBackend {
       // against the base backend only. A routed child's own `expand` is
       // reached through `.subgraph().expand()` against the routed handle.
       this.expand = (params: ExpandParams): Promise<ExpandResult> => base.expand!(params);
+    }
+    if (base.findEdgesProjected && this.capabilities.has('query.select')) {
+      // Same scope rationale as `aggregate`, bulk DML, and `expand`:
+      // server-side projection runs against the base backend only. A routed
+      // child's own projection is reached through
+      // `.subgraph().findEdgesProjected()` against the routed handle.
+      this.findEdgesProjected = (
+        select: ReadonlyArray<string>,
+        filters: QueryFilter[],
+        options?: QueryOptions,
+      ) => base.findEdgesProjected!(select, filters, options);
     }
   }
 

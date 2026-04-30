@@ -258,4 +258,29 @@ export interface StorageBackend<C extends Capability = Capability> {
    * boundary; `expand` itself does not need to inspect `targetGraph`.
    */
   expand?(params: ExpandParams): Promise<ExpandResult>;
+
+  // --- Server-side projection ---
+  /**
+   * Run a projecting query — return only the listed fields per row. Present
+   * only on backends that declare `query.select`. The cap-less fallback is
+   * `findEdges` followed by a JS-side projection in user code; firegraph
+   * does not auto-fall-back because the wire-payload reduction is the only
+   * reason to call this method.
+   *
+   * `select` is the explicit field list; `filters` and `options` mirror the
+   * `query()` shape. The returned rows have one slot per unique entry in
+   * `select`. Field-name interpretation is the backend's responsibility:
+   * built-in fields resolve to columns / Firestore field names, bare names
+   * resolve to `data.<name>`, and dotted paths resolve verbatim. See
+   * `FindEdgesProjectedParams` for the user-facing contract.
+   *
+   * Migrations are not applied to the result — the caller asked for a
+   * specific projection shape, and rehydrating a partial record into the
+   * migration pipeline would require synthesising every absent field.
+   */
+  findEdgesProjected?(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>>;
 }

@@ -16,7 +16,7 @@ import {
   validateJsonPathKey,
 } from '../internal/sqlite-data-ops.js';
 import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
-import { FIELD_TO_COLUMN, quoteIdent } from '../internal/sqlite-schema.js';
+import { FIELD_TO_COLUMN, quoteColumnAlias, quoteIdent } from '../internal/sqlite-schema.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
@@ -352,6 +352,254 @@ export function compileSelectByDocId(
     sql: `SELECT * FROM ${quoteIdent(table)} WHERE "scope" = ? AND "doc_id" = ? LIMIT 1`,
     params: [scope, docId],
   };
+}
+
+/**
+ * Discriminator for one projected column. The decoder uses this to recover
+ * the JS-shape of the requested field from the SQL row.
+ */
+export type ProjectedColumnKind =
+  /** Top-level TEXT column: `a_type`, `a_uid`, `axb_type`, `b_type`, `b_uid`. */
+  | 'builtin-text'
+  /** Top-level INTEGER column: `v`. */
+  | 'builtin-int'
+  /** Top-level INTEGER millis column: `created_at`, `updated_at`.
+   *  Decoder wraps the millisecond value in `GraphTimestampImpl` so the
+   *  output matches `findEdges` / `findNodes`. */
+  | 'builtin-timestamp'
+  /** Whole `data` JSON payload — emitted when the caller projects `'data'`
+   *  literally. Decoder JSON.parses the column. */
+  | 'data'
+  /** Any `data.<path>` projection. The compiler emits a paired
+   *  `json_extract(...)` value column and `json_type(...)` type column;
+   *  the decoder uses the type to recover JSON-encoded objects/arrays as
+   *  native JS while passing primitives through verbatim. */
+  | 'json';
+
+/** Per-column metadata returned alongside the compiled statement. The
+ *  backend uses this to translate row -> projected JS object. */
+export interface ProjectedColumnSpec {
+  /** Original caller-supplied field name. Used as the alias in the SQL
+   *  projection list AND as the key in the returned JS row. */
+  field: string;
+  /** Kind discriminator — see `ProjectedColumnKind`. */
+  kind: ProjectedColumnKind;
+  /** Alias of the paired `json_type(...)` column when `kind === 'json'`,
+   *  otherwise undefined. Stored explicitly (rather than derived from
+   *  `field`) so the compiler can use a guaranteed-unique sentinel that
+   *  cannot collide with any caller-supplied select entry. */
+  typeAlias?: string;
+}
+
+/**
+ * Normalize a projection field name to the canonical form `compileFieldRef`
+ * understands: built-ins stay as-is, `data` and `data.*` stay as-is, and a
+ * bare `name` (with no dot and not in the built-in map) is rewritten to
+ * `data.name`.
+ *
+ * Why bare names: the documented use case for `findEdgesProjected` is
+ * "give me titles and dates for a list view", and the canonical example
+ * (`select: ['title', 'date']`) reads naturally as bare names. Requiring
+ * `'data.title'` would be portable to `WhereClause.field` but uglier in the
+ * common case. The result row keys preserve the original form (`title`,
+ * not `data.title`) so callers see what they asked for.
+ */
+function normalizeProjectionField(field: string): string {
+  if (field in FIELD_TO_COLUMN) return field;
+  if (field === 'data' || field.startsWith('data.')) return field;
+  return `data.${field}`;
+}
+
+/**
+ * Compile a `findEdgesProjected({ select })` call into a single SELECT
+ * statement that returns only the requested fields.
+ *
+ * Shape:
+ *
+ *   SELECT
+ *     <expr-1> AS "<field-1>", [json_type(...) AS "__fg_t_<idx>",]
+ *     <expr-2> AS "<field-2>", [json_type(...) AS "__fg_t_<idx>",]
+ *     ...
+ *   FROM <table>
+ *   WHERE "scope" = ? AND <filters>
+ *   [ORDER BY ...]
+ *   [LIMIT ?]
+ *
+ * For `data.*` fields the compiler also projects `json_type` so the
+ * decoder can distinguish a stored string from a serialized object/array
+ * (`json_extract` returns both as TEXT; `json_type` is the only reliable
+ * disambiguator). The cost is one extra column per `data.*` field — all in
+ * the same row, no extra round trip. The companion alias uses a positional
+ * sentinel `__fg_t_<idx>` rather than `<field>__t` so it cannot collide
+ * with a user-provided field literally named `<x>__t`.
+ *
+ * Duplicate entries in `select` are de-duped at compile time so the SQL
+ * projection list carries one column per unique field. Order in the input
+ * `select` is preserved (first occurrence wins).
+ *
+ * The compiler rejects an empty `select` (the client wrapper enforces this
+ * too — both layers reject so a misuse caught by either surfaces a clean
+ * `INVALID_QUERY`).
+ */
+export function compileFindEdgesProjected(
+  table: string,
+  scope: string,
+  select: ReadonlyArray<string>,
+  filters: QueryFilter[],
+  options?: QueryOptions,
+): { stmt: CompiledStatement; columns: ProjectedColumnSpec[] } {
+  if (select.length === 0) {
+    throw new FiregraphError(
+      'compileFindEdgesProjected requires a non-empty select list — ' +
+        'an empty projection has no SQL representation distinct from `findEdges`.',
+      'INVALID_QUERY',
+    );
+  }
+
+  // De-dupe while preserving first-occurrence order. Two entries that
+  // differ only by normalization (e.g. `'title'` and `'data.title'`)
+  // remain distinct so the result row carries both keys — that's the
+  // caller's choice and we honour it.
+  const seen = new Set<string>();
+  const uniqueFields: string[] = [];
+  for (const f of select) {
+    if (!seen.has(f)) {
+      seen.add(f);
+      uniqueFields.push(f);
+    }
+  }
+
+  const projections: string[] = [];
+  const columns: ProjectedColumnSpec[] = [];
+  for (let idx = 0; idx < uniqueFields.length; idx++) {
+    const field = uniqueFields[idx]!;
+    const canonical = normalizeProjectionField(field);
+    const { expr } = compileFieldRef(canonical);
+    // Alias is the caller-supplied field name verbatim — this is the key
+    // the decoder reads back from each result row, and the contract is
+    // "projection result is keyed by what the caller passed in". Use the
+    // relaxed alias quoter so dotted paths like `data.detail.region` are
+    // accepted (the strict `quoteIdent` is for table/column names only).
+    const alias = quoteColumnAlias(field);
+    projections.push(`${expr} AS ${alias}`);
+
+    let kind: ProjectedColumnKind;
+    let typeAliasName: string | undefined;
+    if (canonical === 'data') {
+      kind = 'data';
+    } else if (canonical.startsWith('data.')) {
+      kind = 'json';
+      // Pair every json_extract with a json_type so the decoder can
+      // recover objects/arrays. The paired column needs a guaranteed-
+      // unique alias — `<field>__t` would collide if the caller projects
+      // both `'foo'` and `'foo__t'` (legal user input). Use a positional
+      // sentinel keyed by the field's de-duped index. The decoder reads
+      // the type column off the same name we generated here, so we record
+      // it in the column spec rather than reconstructing from the field.
+      typeAliasName = `__fg_t_${idx}`;
+      const typeAlias = quoteColumnAlias(typeAliasName);
+      projections.push(`json_type("data", '$.${canonical.slice(5)}') AS ${typeAlias}`);
+    } else {
+      // Built-in field. Discriminate by column name so the decoder can
+      // wrap timestamps in `GraphTimestampImpl` and coerce `v` to number.
+      if (canonical === 'v') kind = 'builtin-int';
+      else if (canonical === 'createdAt' || canonical === 'updatedAt') kind = 'builtin-timestamp';
+      else kind = 'builtin-text';
+    }
+    columns.push({ field, kind, typeAlias: typeAliasName });
+  }
+
+  const params: unknown[] = [scope];
+  const conditions: string[] = ['"scope" = ?'];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+
+  let sql =
+    `SELECT ${projections.join(', ')} ` +
+    `FROM ${quoteIdent(table)} ` +
+    `WHERE ${conditions.join(' AND ')}`;
+  sql += compileOrderBy(options, params);
+  sql += compileLimit(options, params);
+
+  return { stmt: { sql, params }, columns };
+}
+
+/**
+ * Decode one SQL row into the projected JS shape described by `columns`.
+ *
+ * Built-in TEXT/INTEGER columns pass through with light coercion (BigInt
+ * to number for `v`); timestamps wrap into `GraphTimestampImpl`. `data.*`
+ * fields use the paired `json_type` column to decide whether to JSON.parse
+ * the value (objects and arrays come back as JSON-encoded TEXT from
+ * `json_extract`; primitives come through with their native SQLite type).
+ *
+ * The function is exported so the SQLite and shared SQLite backends share
+ * one decoder; both call this with the spec returned from
+ * `compileFindEdgesProjected`.
+ */
+export function decodeProjectedRow(
+  row: Record<string, unknown>,
+  columns: ProjectedColumnSpec[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of columns) {
+    const raw = row[c.field];
+    switch (c.kind) {
+      case 'builtin-text':
+        out[c.field] = raw === null || raw === undefined ? null : String(raw);
+        break;
+      case 'builtin-int':
+        if (raw === null || raw === undefined) {
+          // `v` is nullable in the schema; preserve null explicitly so
+          // callers can distinguish "no version" from a numeric 0.
+          out[c.field] = null;
+        } else if (typeof raw === 'bigint') {
+          out[c.field] = Number(raw);
+        } else if (typeof raw === 'number') {
+          out[c.field] = raw;
+        } else {
+          out[c.field] = Number(raw);
+        }
+        break;
+      case 'builtin-timestamp': {
+        const ms = toMillis(raw);
+        out[c.field] = GraphTimestampImpl.fromMillis(ms) as unknown as GraphTimestamp;
+        break;
+      }
+      case 'data':
+        // Whole `data` payload — JSON.parse the column directly. Empty /
+        // null defaults to `{}` for symmetry with `rowToRecord`.
+        if (raw === null || raw === undefined || raw === '') {
+          out[c.field] = {};
+        } else {
+          out[c.field] = JSON.parse(raw as string);
+        }
+        break;
+      case 'json': {
+        // Read the paired `json_type` companion column via the positional
+        // sentinel recorded at compile time — the historical `<field>__t`
+        // suffix would silently collide if the caller projected both
+        // `'foo'` and `'foo__t'`.
+        const t = row[c.typeAlias!] as string | null | undefined;
+        if (raw === null || raw === undefined) {
+          out[c.field] = null;
+        } else if (t === 'object' || t === 'array') {
+          // Stored object/array — `json_extract` returned a JSON-encoded
+          // string. Re-parse to recover native JS shape.
+          out[c.field] = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        } else if (t === 'integer' && typeof raw === 'bigint') {
+          out[c.field] = Number(raw);
+        } else {
+          // text / real / true / false / null — pass through. SQLite's
+          // driver already returns the native JS primitive type.
+          out[c.field] = raw;
+        }
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /**

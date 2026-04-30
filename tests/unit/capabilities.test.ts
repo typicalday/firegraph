@@ -139,14 +139,24 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('query.aggregate')).toBe(true);
   });
 
+  it('Standard edition declares query.select (Phase 7) — server-side projection via Query.select(...)', () => {
+    // Standard exposes server-side projection via the classic
+    // `Query.select(...)` API. Both Firestore editions delegate to one
+    // shared helper (`runFirestoreFindEdgesProjected`) so the projection
+    // contract — bare-name normalization, builtin / `data.*` resolution,
+    // dedup semantics — stays consistent.
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    expect(backend.capabilities.has('query.select')).toBe(true);
+  });
+
   it('Standard edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
+    // query.aggregate ships in Phase 4; query.select ships in Phase 7 —
+    // see the dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
-    expect(caps.has('query.select')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('search.vector')).toBe(false);
@@ -177,16 +187,27 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('query.aggregate')).toBe(true);
   });
 
+  it('Enterprise edition declares query.select (Phase 7) — projection via shared classic-API helper', () => {
+    // Enterprise and Standard delegate to the same projection helper. The
+    // pipeline `select()` stage is a future optimisation that doesn't change
+    // the cap declaration — the byte-savings deliverable is achieved by
+    // either path.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('query.select')).toBe(true);
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
     });
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    // query.aggregate ships in Phase 4 — see the dedicated assertion above.
+    // query.aggregate ships in Phase 4; query.select ships in Phase 7 —
+    // see the dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
-    expect(caps.has('query.select')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('search.vector')).toBe(false);
@@ -237,12 +258,21 @@ describe('SqliteBackendImpl capabilities', () => {
     expect(backend.capabilities.has('query.join')).toBe(true);
   });
 
-  it('does not silently declare query.* extensions before they ship', () => {
+  it('declares query.select (Phase 7) — server-side projection via json_extract(...)', () => {
+    // SQLite implements projection via `compileFindEdgesProjected`, which emits
+    // `SELECT json_extract("data", '$.x') AS "x", json_type(...) AS "x__t" …`.
+    // The paired `json_type` companion column lets the decoder recover JSON-
+    // encoded objects/arrays as native JS while passing primitives through.
+    const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
+    expect(backend.capabilities.has('query.select')).toBe(true);
+  });
+
+  it('does not silently declare search.* extensions before they ship', () => {
     const backend = createSqliteBackend(makeStubExecutorWithTransaction(), 'firegraph');
     const caps = backend.capabilities;
     // query.aggregate ships in Phase 4; query.dml ships in Phase 5; query.join
-    // ships in Phase 6 — see the dedicated assertions above.
-    expect(caps.has('query.select')).toBe(false);
+    // ships in Phase 6; query.select ships in Phase 7 — see the dedicated
+    // assertions above.
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('search.vector')).toBe(false);
@@ -307,6 +337,16 @@ describe('DORPCBackend capabilities', () => {
     // dispatches once per hop; cross-graph hops still fall back to per-source.
     const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
     expect(backend.capabilities.has('query.join')).toBe(true);
+  });
+
+  it('declares query.select (Phase 7) — server-side projection via DO RPC', () => {
+    // The DO backend forwards projection through `_fgFindEdgesProjected`,
+    // which runs `compileDOFindEdgesProjected` against the per-DO SQLite and
+    // returns `{ rows, columns }`. Decoding is deferred to the client side
+    // because `GraphTimestampImpl` doesn't survive workerd's structured-
+    // clone boundary as a class instance.
+    const backend = new DORPCBackend(makeNamespace(), { storageKey: 'root' });
+    expect(backend.capabilities.has('query.select')).toBe(true);
   });
 });
 

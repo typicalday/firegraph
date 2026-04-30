@@ -49,11 +49,13 @@ import {
   compileDeleteScopePrefix,
   compileExpand,
   compileExpandHydrate,
+  compileFindEdgesProjected,
   compileSelect,
   compileSelectByDocId,
   compileSelectGlobal,
   compileSet,
   compileUpdate,
+  decodeProjectedRow,
   rowToRecord,
 } from './sql.js';
 
@@ -232,8 +234,9 @@ class SqliteBatchBackendImpl implements BatchBackend {
  * The `query.*` extension capabilities follow the same conservative
  * declaration rule as the cap descriptor itself — only land in the union
  * when the corresponding method is actually wired up. Today that's
- * `query.aggregate` (Phase 4), `query.dml` (Phase 5), and `query.join`
- * (Phase 6 — fan-out via `IN (…)` in one statement).
+ * `query.aggregate` (Phase 4), `query.dml` (Phase 5), `query.join`
+ * (Phase 6 — fan-out via `IN (…)` in one statement), and `query.select`
+ * (Phase 7 — server-side projection via `json_extract`).
  */
 export type SqliteCapability =
   | 'core.read'
@@ -244,6 +247,7 @@ export type SqliteCapability =
   | 'query.aggregate'
   | 'query.dml'
   | 'query.join'
+  | 'query.select'
   | 'raw.sql';
 
 const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
@@ -254,6 +258,7 @@ const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
   'query.aggregate',
   'query.dml',
   'query.join',
+  'query.select',
   'raw.sql',
 ];
 
@@ -768,6 +773,38 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     }
     const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
     return { edges, targets };
+  }
+
+  /**
+   * Server-side projection — `query.select` capability.
+   *
+   * Issues a single `SELECT json_extract(data, '$.f1'), …` statement that
+   * returns only the requested fields. The compiler emits one column per
+   * unique field plus a paired `json_type` column for `data.*` projections
+   * so the decoder can recover JSON-encoded objects/arrays without a
+   * second round trip. Migrations are NOT applied — the caller asked for
+   * a partial shape, and rehydrating that into the migration pipeline
+   * would require synthesising every absent field.
+   *
+   * The wire-payload reduction is the entire reason this method exists:
+   * a list view that only needs `title` / `date` no longer drags the
+   * full `data` JSON across the network. Callers that need the full
+   * record should use `findEdges` (with migration support).
+   */
+  async findEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { stmt, columns } = compileFindEdgesProjected(
+      this.collectionPath,
+      this.storageScope,
+      select,
+      filters,
+      options,
+    );
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    return rows.map((row) => decodeProjectedRow(row, columns));
   }
 
   /**
