@@ -571,10 +571,11 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
    *
    * Scan-protection rules match `findEdges`: a query with no identifying
    * fields requires `allowCollectionScan: true` to pass. A bare-empty
-   * filter set (no `aType`, `aUid`, etc., no `where`) is intentionally
-   * allowed — backends that route `bulkDelete` to a per-subgraph DO need
-   * "wipe this subgraph" as a legitimate shape, and the storage scope
-   * inside the backend already bounds the blast radius.
+   * filter set (no `aType`, `aUid`, etc., no `where`) is allowed at this
+   * layer — shared SQLite bounds the blast radius via its leading `scope`
+   * predicate — but the DO RPC backend rejects empty filters at the wire
+   * boundary as defense-in-depth. To wipe a routed subgraph DO, use
+   * `removeNodeCascade` on the parent node instead.
    */
   async bulkDelete(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
     if (!this.backend.bulkDelete) {

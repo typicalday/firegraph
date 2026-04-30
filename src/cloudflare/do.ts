@@ -497,6 +497,22 @@ export class FiregraphDO extends DurableObject<unknown> {
 
   async _fgBulkDelete(filters: QueryFilter[], _options?: BulkOptions): Promise<BulkResult> {
     void _options;
+    // Defense-in-depth at the wire boundary: an empty filter list compiles
+    // to `DELETE FROM <table>` and would wipe every row in the DO. The
+    // client's `bulkDelete` already gates this through scan protection, but
+    // a hand-rolled stub wrapper or direct RPC caller would bypass that
+    // gate. Reject here so the DO's wire surface is safe regardless of
+    // caller path. Use `_fgRemoveNodeCascade` or `_fgDestroy` to wipe a
+    // routed subgraph DO.
+    if (filters.length === 0) {
+      throw new FiregraphError(
+        'bulkDelete() requires at least one filter when targeting a Durable Object backend. ' +
+          'An empty filter list would wipe every row in the DO. To wipe a routed ' +
+          'subgraph DO, use `removeNodeCascade` on the parent node or `_fgDestroy` ' +
+          'directly on the stub.',
+        'INVALID_ARGUMENT',
+      );
+    }
     const stmt = compileDOBulkDelete(this.table, filters);
     return this.execDmlWithReturning(stmt);
   }

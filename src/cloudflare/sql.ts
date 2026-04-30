@@ -781,9 +781,10 @@ export function compileDODelete(table: string, docId: string): CompiledStatement
  *
  * Mirrors `compileBulkDelete` in `src/sqlite/sql.ts` minus the scope
  * predicate — every row in a `FiregraphDO`'s SQLite belongs to the same
- * subgraph. An empty filter list is allowed (drops every row in the
- * table); the client-layer scan-protection check is the gate, not the SQL
- * itself.
+ * subgraph. The compiler accepts an empty filter list (would emit
+ * `DELETE FROM <table>`), but the `_fgBulkDelete` wire boundary in
+ * `do.ts` rejects that shape as defense-in-depth so a misconfigured stub
+ * can't trigger a full-DO wipe through RPC.
  */
 export function compileDOBulkDelete(table: string, filters: QueryFilter[]): CompiledStatement {
   const params: unknown[] = [];

@@ -475,6 +475,9 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     reader: GraphReader,
     options?: BulkOptions,
   ): Promise<BulkResult> {
+    // Override default query limit for bulk deletion — we need all matching edges.
+    // limit: 0 bypasses DEFAULT_QUERY_LIMIT; an explicit user limit is preserved.
+    // allowCollectionScan: true — bulk deletion inherently implies scanning.
     const effectiveParams =
       params.limit !== undefined
         ? { ...params, allowCollectionScan: params.allowCollectionScan ?? true }
