@@ -2,15 +2,19 @@
  * Firestore Standard edition `StorageBackend`.
  *
  * The Standard edition only has the classic Query API — pipelines and
- * Enterprise-only features (full-text search, geo, joins, DML) are not
+ * Enterprise-only product features (full-text search, geo) are not
  * available. This file deliberately does not import the pipeline adapter so
  * a Standard-only deployment never pulls Pipeline code into its bundle.
  *
  * Capability declarations follow the conservative invariant established in
  * Phase 1: only declare what the file actually implements at runtime.
- * `query.aggregate` (Phase 6), `query.select` (Phase 7), and
- * `search.vector` (Phase 8) are wired; `realtime.listen` will be added in
- * a later phase once the matching backend method exists.
+ * `query.aggregate` (Phase 6), `query.select` (Phase 7), `search.vector`
+ * (Phase 8), and `query.join` (Phase 13a — chunked classic-API fan-out)
+ * are wired; `realtime.listen` will be added in a later phase once the
+ * matching backend method exists. `query.dml` stays unwired because the
+ * classic Query API has no server-side DML statement; mass-delete /
+ * mass-update are still routed through the existing `bulkRemoveEdges`
+ * fetch-then-write loop.
  */
 
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
@@ -42,6 +46,7 @@ import {
   createFirestoreAdapter,
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
+import { runFirestoreClassicExpand } from '../internal/firestore-classic-expand.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
 import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
 import type { DataPathOp } from '../internal/write-plan.js';
@@ -53,6 +58,8 @@ import type {
   BulkOptions,
   BulkResult,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   FindNearestParams,
   GraphReader,
@@ -78,6 +85,7 @@ export type FirestoreStandardCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.select'
+  | 'query.join'
   | 'search.vector'
   | 'raw.firestore';
 
@@ -90,6 +98,7 @@ const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
     'core.subgraph',
     'query.aggregate',
     'query.select',
+    'query.join',
     'search.vector',
     'raw.firestore',
   ]);
@@ -362,6 +371,26 @@ class FirestoreStandardBackendImpl implements StorageBackend<FirestoreStandardCa
    */
   findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
     return runFirestoreFindNearest(this.db.collection(this.collectionPath), params);
+  }
+
+  // --- Server-side multi-source fan-out (capability: query.join) ---
+
+  /**
+   * Fan out from `params.sources` over a single edge type via the chunked
+   * classic-API helper. The classic `'in'` operator caps at 30 elements
+   * per call, so the helper splits sources into 30-element chunks and
+   * dispatches them in parallel via `Promise.all`. With 100 sources this
+   * is `ceil(100/30) = 4` round trips; the per-source `findEdges` loop in
+   * `traverse.ts` would have been 100. Enterprise can collapse this
+   * further to a single Pipelines `equalAny(...)` call — Standard cannot,
+   * so chunked classic is the best Standard can do.
+   *
+   * The helper applies a cross-chunk re-sort + total-limit slice so the
+   * observable contract matches the SQL backends'
+   * `WHERE … IN (?,?,…) ORDER BY … LIMIT N` semantics.
+   */
+  expand(params: ExpandParams): Promise<ExpandResult> {
+    return runFirestoreClassicExpand(this.adapter, params);
   }
 }
 

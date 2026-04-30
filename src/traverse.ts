@@ -40,9 +40,7 @@ function isGraphClient(reader: GraphReader): reader is GraphClient {
  * traversal driver enforces that boundary directly (see the `isCrossGraph`
  * branch below).
  */
-function readerSupportsExpand(
-  reader: GraphReader,
-): reader is GraphClient & {
+function readerSupportsExpand(reader: GraphReader): reader is GraphClient & {
   expand(params: ExpandParams): Promise<{ edges: StoredGraphRecord[] }>;
 } {
   if (!isGraphClient(reader)) return false;

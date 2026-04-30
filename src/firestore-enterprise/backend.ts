@@ -10,13 +10,16 @@
  * Capability declarations target the full Enterprise surface that the
  * shipped `@google-cloud/firestore@8.5.0` SDK exposes typed APIs for:
  * core read/write/transactions/batch/subgraph, `query.aggregate`,
- * `query.select`, `search.vector` (via the classic `findNearest` API for
- * parity with Standard), `search.fullText` (via Pipelines
- * `search({ query: documentMatches(...) })`), `search.geo` (via Pipelines
+ * `query.select`, `query.join` (via Pipelines `equalAny(field, values)`
+ * for single-statement multi-source fan-out), `search.vector` (via the
+ * classic `findNearest` API for parity with Standard), `search.fullText`
+ * (via Pipelines `search({ query: documentMatches(...) })`),
+ * `search.geo` (via Pipelines
  * `search({ query: geoDistance(...).lessThanOrEqual(...) })`), and
- * `raw.firestore`. Capabilities that are still typed-API-gapped on
- * 8.5.0 — `query.join`, `query.dml`, `realtime.listen` — stay
- * undeclared until the typed surface lands. See the comment block above
+ * `raw.firestore`. Capabilities that remain typed-API-gapped or
+ * fundamentally absent on 8.5.0 — `query.dml`, `realtime.listen` —
+ * stay undeclared until the typed surface lands or the SDK exposes
+ * an addressable feature. See the comment block above
  * `FirestoreEnterpriseCapability` for the per-capability rationale.
  */
 
@@ -49,6 +52,8 @@ import {
   createFirestoreAdapter,
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
+import { runFirestoreClassicExpand } from '../internal/firestore-classic-expand.js';
+import { runFirestorePipelineExpand } from '../internal/firestore-expand.js';
 import { runFirestoreFullTextSearch } from '../internal/firestore-fulltext.js';
 import { runFirestoreGeoSearch } from '../internal/firestore-geo.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
@@ -62,6 +67,8 @@ import type {
   BulkOptions,
   BulkResult,
   CascadeResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
   FindNearestParams,
   FullTextSearchParams,
@@ -99,30 +106,26 @@ import { createPipelineQueryAdapter } from './pipeline-adapter.js';
  * implementing without declaring leaves the surface accessible only via
  * `as any` casts, which silently bypasses the capability gate.
  *
- * **`query.dml` is intentionally omitted.** The Firestore SDK shipped at
- * `@google-cloud/firestore@8.5.0` exposes Pipelines DML adjacents
- * (`update`, `delete` stages on the protobuf surface) but the typed
- * `Pipeline` class still does not surface them — the `Pipeline` class
- * has read stages (`where`, `select`, `aggregate`, `sort`, `search`,
- * `findNearest`, etc.) but no `remove` / `update` / `replace`
- * mutations on the public TypeScript API. The only way to delete or
- * update many docs today is the existing `bulkRemoveEdges` fetch-
- * then-write loop (driven by `BulkWriter`), which is a client-side
- * fan-out, not a server-side DML statement. Declaring `query.dml`
- * here without a real server-side path would defeat the point of the
- * capability — its consumers (e.g. `bulk.ts` cascade rewrite) branch
- * on the cap to skip the fetch-then-write loop entirely. SQLite and
- * Cloudflare DO declare `query.dml` because they really do execute a
- * single `DELETE … WHERE …` / `UPDATE … SET …` statement; Firestore
- * doesn't, so it stays on the `bulkRemoveEdges` path.
+ * **`query.join` (Phase 13a) is implemented via Pipelines `equalAny`.**
+ * Multi-source fan-out collapses to a single round trip:
+ * `db.pipeline().collection(path).where(equalAny(sourceField, sources))
+ * .execute()`. The shared helper lives at `src/internal/firestore-expand.ts`.
+ * The classic Query API caps `'in'` at 30 elements per call, forcing
+ * `ceil(N/30)` round trips; pipeline `equalAny(field, values)` accepts
+ * an arbitrary list, so a 1k-source fan-out goes from ~34 round trips
+ * to one. When `queryMode === 'classic'` (emulator or explicit override),
+ * the classic chunked path in `firestore-classic-expand.ts` is used
+ * instead — same observable contract, different round-trip profile.
  *
- * When pipeline DML lands in a future SDK release, the wiring is
- * straightforward: build a `pipeline-dml.ts` stage builder, add the
- * capability here and to `ENTERPRISE_CAPS`, and implement
- * `bulkDelete` / `bulkUpdate` methods that dispatch through the new
- * stages. The `DmlExtension` type and `GraphClient.bulkDelete` /
- * `bulkUpdate` shims are already in place — Phase 5 made them backend-
- * agnostic precisely so this future change is additive.
+ * **`query.dml` is intentionally omitted from this set today.** Phase
+ * 13b will wire `Pipeline.delete()` / `Pipeline.update()` (both `@beta`
+ * in 8.5.0) behind an opt-in `previewDml` flag once the test plan
+ * confirms the typed surface is stable. Until then, bulk delete /
+ * update operations stay on the existing `bulkRemoveEdges` fetch-then-
+ * write loop, and consumers (e.g. `bulk.ts` cascade rewrite) branch on
+ * the cap to skip the loop only on backends that declare it. SQLite
+ * and Cloudflare DO declare `query.dml` because they really do execute
+ * a single `DELETE … WHERE …` / `UPDATE … SET …` statement.
  */
 export type FirestoreEnterpriseCapability =
   | 'core.read'
@@ -132,6 +135,7 @@ export type FirestoreEnterpriseCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.select'
+  | 'query.join'
   | 'search.vector'
   | 'search.fullText'
   | 'search.geo'
@@ -146,6 +150,7 @@ const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'core.subgraph',
     'query.aggregate',
     'query.select',
+    'query.join',
     'search.vector',
     'search.fullText',
     'search.geo',
@@ -524,6 +529,34 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
    */
   geoSearch(params: GeoSearchParams): Promise<StoredGraphRecord[]> {
     return runFirestoreGeoSearch(this.db, this.collectionPath, params);
+  }
+
+  // --- Server-side multi-source fan-out (capability: query.join) ---
+
+  /**
+   * Fan out from `params.sources` over a single edge type in one server-
+   * side round trip when running in pipeline mode, or via a chunked
+   * classic-API fan-out when running in classic mode.
+   *
+   * Pipeline mode (default outside the emulator): one call to
+   * `db.pipeline().collection(path).where(equalAny(sourceField, sources))
+   * .execute()`. `equalAny` has no documented cap, so a 1k-source fan-
+   * out is one round trip.
+   *
+   * Classic mode (emulator, or `defaultQueryMode: 'classic'`): chunks
+   * `params.sources` into 30-element groups (the classic `'in'`
+   * operator's documented cap), dispatches one query per chunk in
+   * parallel, concats the results, and applies a cross-chunk re-sort +
+   * total-limit slice. Same observable contract, `ceil(N/30)` round
+   * trips. The chunked path is still a win over the per-source
+   * `findEdges` loop in `traverse.ts` — 100 sources go from 100 round
+   * trips to 4.
+   */
+  expand(params: ExpandParams): Promise<ExpandResult> {
+    if (this.queryMode === 'pipeline') {
+      return runFirestorePipelineExpand(this.db, this.collectionPath, params);
+    }
+    return runFirestoreClassicExpand(this.adapter, params);
   }
 }
 

@@ -160,13 +160,31 @@ describe('FirestoreBackend capabilities', () => {
     expect(backend.capabilities.has('search.vector')).toBe(true);
   });
 
+  it('Standard edition declares query.join (Phase 13a) — chunked classic-API multi-source fan-out', () => {
+    // Standard wires `expand` through the chunked classic-API helper:
+    // sources are split into 30-element chunks (the classic `'in'`
+    // operator's documented cap) and dispatched in parallel via
+    // `Promise.all`. The result is concat'd, post-sorted across chunks,
+    // and capped by `sources.length * limitPerSource` if set. Same
+    // observable contract as Enterprise; different round-trip profile.
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    expect(backend.capabilities.has('query.join')).toBe(true);
+  });
+
+  it('Standard edition installs the expand method when query.join is declared', () => {
+    // Routing invariant: declared cap ⇒ method exists. The `expand`
+    // function must be present whenever the cap is declared.
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    expect(typeof backend.expand).toBe('function');
+  });
+
   it('Standard edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
     // query.aggregate ships in Phase 4; query.select ships in Phase 7;
-    // search.vector ships in Phase 8 — see the dedicated assertions above.
-    expect(caps.has('query.join')).toBe(false);
+    // search.vector ships in Phase 8; query.join ships in Phase 13a — see
+    // the dedicated assertions above.
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
@@ -255,6 +273,33 @@ describe('FirestoreBackend capabilities', () => {
     expect(typeof backend.geoSearch).toBe('function');
   });
 
+  it('Enterprise edition declares query.join (Phase 13a) — Pipelines equalAny multi-source fan-out', () => {
+    // Enterprise wires `expand` through the typed Pipelines surface:
+    // `db.pipeline().collection(path).where(equalAny(sourceField, sources))
+    // .execute()` collapses an N-source fan-out into a single round trip.
+    // `equalAny` accepts an arbitrary list (no 30-element cap like the
+    // classic `'in'` operator), so 1k-source fan-outs are tractable. When
+    // `queryMode === 'classic'` (emulator or explicit override), the
+    // backend falls back to the chunked classic helper — same contract,
+    // different round-trip profile.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('query.join')).toBe(true);
+  });
+
+  it('Enterprise edition installs the expand method when query.join is declared', () => {
+    // Routing invariant: declared cap ⇒ method exists. The `expand`
+    // function must be present whenever the cap is declared, regardless
+    // of `queryMode`.
+    const pipelineBackend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph');
+    expect(typeof pipelineBackend.expand).toBe('function');
+    const classicBackend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(typeof classicBackend.expand).toBe('function');
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
@@ -263,8 +308,8 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('raw.sql')).toBe(false);
     // query.aggregate ships in Phase 4; query.select ships in Phase 7;
     // search.vector ships in Phase 8; search.fullText / search.geo ship in
-    // Phase 12 — see the dedicated assertions above.
-    expect(caps.has('query.join')).toBe(false);
+    // Phase 12; query.join ships in Phase 13a — see the dedicated
+    // assertions above. query.dml is gated on Phase 13b.
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('realtime.listen')).toBe(false);
   });
