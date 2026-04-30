@@ -1,5 +1,9 @@
-import { TraversalError } from './errors.js';
+import { FiregraphError, TraversalError } from './errors.js';
+import { compileEngineTraversal } from './internal/firestore-traverse-compiler.js';
 import type {
+  EngineHopSpec,
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   FindEdgesParams,
   GraphClient,
@@ -59,6 +63,30 @@ function readerSupportsExpand(reader: GraphReader): reader is GraphClient & {
   );
 }
 
+/**
+ * Type guard mirroring `readerSupportsExpand` but for the `traversal.serverSide`
+ * capability. When this returns `true`, the reader can dispatch a multi-hop
+ * spec as one nested-Pipeline round trip via `runEngineTraversal()`.
+ *
+ * Eligibility at the spec level (no cross-graph hops, no JS filter callbacks,
+ * `limitPerSource` set on every hop, depth ≤ `MAX_PIPELINE_DEPTH`,
+ * response-size product ≤ `maxReads`) is checked separately by
+ * `compileEngineTraversal`. This guard only certifies the reader has the
+ * method to call.
+ */
+function readerSupportsEngineTraversal(reader: GraphReader): reader is GraphClient & {
+  runEngineTraversal(params: EngineTraversalParams): Promise<EngineTraversalResult>;
+} {
+  if (!isGraphClient(reader)) return false;
+  const client = reader as GraphClient;
+  return (
+    'capabilities' in client &&
+    typeof client.capabilities?.has === 'function' &&
+    client.capabilities.has('traversal.serverSide') &&
+    typeof (client as { runEngineTraversal?: unknown }).runEngineTraversal === 'function'
+  );
+}
+
 class Semaphore {
   private queue: Array<() => void> = [];
   private active = 0;
@@ -107,7 +135,30 @@ class TraversalBuilderImpl implements TraversalBuilder {
     const maxReads = options?.maxReads ?? DEFAULT_MAX_READS;
     const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
     const returnIntermediates = options?.returnIntermediates ?? false;
+    const engineMode = options?.engineTraversal ?? 'auto';
     const semaphore = new Semaphore(concurrency);
+
+    // Engine-level traversal — try to compile the whole hop chain into one
+    // nested-Pipeline round trip. Eligibility (in order of cheap-first):
+    //
+    //   1. `engineMode !== 'off'`                    → caller didn't opt out
+    //   2. reader declares `traversal.serverSide`    → backend has the path
+    //   3. no hop carries a JS `filter` callback     → can't run JS server-side
+    //   4. no hop is cross-graph                     → distinct collection paths
+    //   5. compiler accepts the spec                 → depth, limits, response size
+    //
+    // `engineMode === 'force'` flips failures from silent fallback to a
+    // thrown `UNSUPPORTED_OPERATION`, which is what tests/benchmarks want.
+    // `engineMode === 'auto'` (the default) silently falls back so existing
+    // callers see the new fast-path on Enterprise without any code change.
+    if (engineMode !== 'off') {
+      const engineResult = await this.tryEngineTraversal({
+        engineMode,
+        maxReads,
+        returnIntermediates,
+      });
+      if (engineResult) return engineResult;
+    }
 
     let totalReads = 0;
     let truncated = false;
@@ -362,6 +413,107 @@ class TraversalBuilderImpl implements TraversalBuilder {
       hops: hopResults,
       totalReads,
       truncated,
+    };
+  }
+
+  /**
+   * Try to dispatch the entire hop chain as one engine-traversal call.
+   * Returns a `TraversalResult` on success, or `undefined` if the spec is
+   * ineligible and the caller should fall through to the per-hop loop.
+   *
+   * `'force'` mode throws on any ineligibility instead of returning
+   * `undefined` — the caller intentionally opted out of fallback.
+   */
+  private async tryEngineTraversal(args: {
+    engineMode: 'auto' | 'force';
+    maxReads: number;
+    returnIntermediates: boolean;
+  }): Promise<TraversalResult | undefined> {
+    const { engineMode, maxReads, returnIntermediates } = args;
+
+    const refuse = (reason: string): TraversalResult | undefined => {
+      if (engineMode === 'force') {
+        throw new FiregraphError(`engineTraversal: 'force' but ${reason}`, 'UNSUPPORTED_OPERATION');
+      }
+      return undefined;
+    };
+
+    if (!readerSupportsEngineTraversal(this.reader)) {
+      return refuse('reader does not declare traversal.serverSide capability');
+    }
+    const client = this.reader;
+
+    // Per-hop eligibility — JS filters and cross-graph hops both prevent
+    // engine compilation. Walk the full chain so the failure reason can
+    // point at the offending hop.
+    const engineHops: EngineHopSpec[] = [];
+    for (let i = 0; i < this.hops.length; i++) {
+      const hop = this.hops[i];
+      if (hop.filter) {
+        return refuse(`hop ${i} (${hop.axbType}) carries a JS filter callback`);
+      }
+      const targetGraph = this.resolveTargetGraph(hop);
+      const direction = hop.direction ?? 'forward';
+      if (targetGraph && direction === 'forward') {
+        return refuse(`hop ${i} (${hop.axbType}) is cross-graph (targetGraph=${targetGraph})`);
+      }
+      const limit = hop.limit ?? DEFAULT_LIMIT;
+      const engineHop: EngineHopSpec = {
+        axbType: hop.axbType,
+        direction,
+        limitPerSource: limit,
+      };
+      if (hop.aType !== undefined) engineHop.aType = hop.aType;
+      if (hop.bType !== undefined) engineHop.bType = hop.bType;
+      if (hop.orderBy) engineHop.orderBy = hop.orderBy;
+      engineHops.push(engineHop);
+    }
+
+    const params: EngineTraversalParams = {
+      sources: [this.startUid],
+      hops: engineHops,
+      maxReads,
+    };
+
+    // Compile-side validation (depth, limits, response-size budget) lives
+    // in `firestore-traverse-compiler.ts`. We invoke it from the traversal
+    // layer (rather than relying on the executor to throw) so 'auto' can
+    // silently fall back without ever entering the SDK.
+    const compiled = compileEngineTraversal(params);
+    if (!compiled.eligible) {
+      return refuse(compiled.reason);
+    }
+
+    const engineResult = await client.runEngineTraversal(params);
+
+    // Translate `EngineTraversalResult` into `TraversalResult` (`HopResult[]`).
+    // Engine traversal counts as ONE round trip but the response can carry
+    // many docs across hops; we mirror the `expand()` fast path's choice to
+    // bill one read per call and surface the truncation flag on the deepest
+    // hop only when the input source set is empty.
+    const hopResults: HopResult[] = [];
+    for (let i = 0; i < this.hops.length; i++) {
+      const definedHop = this.hops[i];
+      const engineHopResult = engineResult.hops[i] ?? { edges: [], sourceCount: 0 };
+      const edges = engineHopResult.edges;
+      hopResults.push({
+        axbType: definedHop.axbType,
+        depth: i,
+        edges: returnIntermediates ? [...edges] : edges,
+        sourceCount: engineHopResult.sourceCount,
+        truncated: false,
+      });
+    }
+
+    const lastHop = hopResults[hopResults.length - 1];
+    return {
+      nodes: lastHop.edges,
+      hops: hopResults,
+      // One server-side round trip — same accounting as the `expand()`
+      // fast path. The tree response can carry up to `estimatedReads`
+      // docs total, but the budget is in round trips, not docs.
+      totalReads: 1,
+      truncated: false,
     };
   }
 

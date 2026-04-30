@@ -189,6 +189,10 @@ describe('FirestoreBackend capabilities', () => {
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('realtime.listen')).toBe(false);
+    // traversal.serverSide is Enterprise-only — the nested-Pipeline
+    // executor requires `define` / `addFields` / `toArrayExpression` /
+    // `variable`, which the classic Standard SDK doesn't expose.
+    expect(caps.has('traversal.serverSide')).toBe(false);
   });
 
   it('Enterprise edition declares the full core surface plus raw.firestore', () => {
@@ -346,6 +350,34 @@ describe('FirestoreBackend capabilities', () => {
     }
   });
 
+  it('Enterprise edition declares traversal.serverSide (Phase 13c) — nested-Pipeline multi-hop traversal', () => {
+    // Enterprise wires server-side traversal through the typed Pipelines
+    // surface in `@google-cloud/firestore@8.5.0`: `define()` /
+    // `addFields(child.toArrayExpression().as(...))` / `variable(name)`
+    // are GA-typed (no `@beta` annotation), so this cap doesn't need a
+    // `previewDml`-style opt-in — unlike `query.dml`. The executor
+    // collapses an N-hop traversal that would have been N round trips
+    // (per-hop fan-out via `expand`) into one server-side call.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('traversal.serverSide')).toBe(true);
+  });
+
+  it('Enterprise edition installs runEngineTraversal when traversal.serverSide is declared', () => {
+    // Routing invariant: declared cap ⇒ method exists. The
+    // `runEngineTraversal` function must be present whenever the cap is
+    // declared, regardless of `queryMode` — engine traversal always
+    // dispatches through Pipelines because join-key binding via
+    // `define`/`variable` has no classic Query API equivalent.
+    const pipelineBackend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph');
+    expect(typeof pipelineBackend.runEngineTraversal).toBe('function');
+    const classicBackend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(typeof classicBackend.runEngineTraversal).toBe('function');
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
@@ -355,7 +387,8 @@ describe('FirestoreBackend capabilities', () => {
     // query.aggregate ships in Phase 4; query.select ships in Phase 7;
     // search.vector ships in Phase 8; search.fullText / search.geo ship in
     // Phase 12; query.join ships in Phase 13a; query.dml ships in Phase 13b
-    // (opt-in via `previewDml: true` — see dedicated assertion above).
+    // (opt-in via `previewDml: true` — see dedicated assertion above);
+    // traversal.serverSide ships in Phase 13c — see dedicated assertion above.
     expect(caps.has('realtime.listen')).toBe(false);
   });
 });
@@ -421,6 +454,11 @@ describe('SqliteBackendImpl capabilities', () => {
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
     expect(caps.has('search.vector')).toBe(false);
+    // traversal.serverSide is Firestore-Enterprise-only — it depends on
+    // the typed Pipelines `define` / `addFields` / `toArrayExpression`
+    // primitives. SQLite would need correlated subqueries with
+    // json_group_array nesting, which we don't model.
+    expect(caps.has('traversal.serverSide')).toBe(false);
   });
 });
 

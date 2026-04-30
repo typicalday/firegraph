@@ -66,6 +66,8 @@ import type {
   BulkResult,
   BulkUpdatePatch,
   CascadeResult,
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
@@ -245,6 +247,27 @@ class RoutingStorageBackend implements StorageBackend {
    */
   expand?: StorageBackend['expand'];
   /**
+   * Engine-level multi-hop traversal pass-through. Same conditional-install
+   * pattern as `aggregate`, bulk DML, and `expand`: gated on BOTH the base
+   * method's existence AND `this.capabilities` advertising
+   * `traversal.serverSide`. If `routedCapabilities` intersected
+   * `traversal.serverSide` away (e.g. one routed peer is a SQLite-shaped
+   * backend that has no nested-pipeline path), the method is not installed
+   * even though `base.runEngineTraversal` exists. This preserves the
+   * "declared capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, engine traversal runs against the base
+   * backend only — a routed child's own `runEngineTraversal` is reached
+   * through `.subgraph().runEngineTraversal()` against the routed handle.
+   * Cross-graph hops never reach this method anyway: the traversal
+   * compiler in `firestore-traverse-compiler.ts` rejects specs whose
+   * hops carry `targetGraph`, falling back to the per-hop loop. Routed
+   * children are physically distinct backends, so even an "in-graph"
+   * traversal across a routed-child boundary is structurally a
+   * cross-backend hop and never compiles for engine dispatch.
+   */
+  runEngineTraversal?: StorageBackend['runEngineTraversal'];
+  /**
    * Server-side projection pass-through. Same conditional-install pattern as
    * `aggregate`, bulk DML, and `expand`: gated on BOTH the base method's
    * existence AND `this.capabilities` advertising `query.select`. If
@@ -365,6 +388,17 @@ class RoutingStorageBackend implements StorageBackend {
       // against the base backend only. A routed child's own `expand` is
       // reached through `.subgraph().expand()` against the routed handle.
       this.expand = (params: ExpandParams): Promise<ExpandResult> => base.expand!(params);
+    }
+    if (base.runEngineTraversal && this.capabilities.has('traversal.serverSide')) {
+      // Same scope rationale as the other extensions: engine traversal
+      // runs against the base backend only. A routed child's own
+      // `runEngineTraversal` is reached through
+      // `.subgraph().runEngineTraversal()` against the routed handle.
+      // Cross-routed-backend traversal is structurally impossible —
+      // the compiler bails on cross-graph hops and the per-hop loop
+      // re-resolves the reader at each carry-forward step.
+      this.runEngineTraversal = (params: EngineTraversalParams): Promise<EngineTraversalResult> =>
+        base.runEngineTraversal!(params);
     }
     if (base.findEdgesProjected && this.capabilities.has('query.select')) {
       // Same scope rationale as `aggregate`, bulk DML, and `expand`:

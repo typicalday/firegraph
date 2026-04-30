@@ -105,6 +105,7 @@ export type Capability =
   | 'query.select'
   | 'query.join'
   | 'query.dml'
+  | 'traversal.serverSide'
   // Edition-specific extensions (Firestore Enterprise only today)
   | 'search.fullText'
   | 'search.geo'
@@ -930,6 +931,99 @@ export interface DmlExtension {
 }
 
 /**
+ * One hop in an engine-level traversal spec.
+ *
+ * Strict subset of `HopDefinition` — engine traversal cannot honour
+ * arbitrary client-side filter callbacks (the predicate runs in JS, not
+ * server-side) and cannot compose across `targetGraph` boundaries (each
+ * subgraph lives at a distinct collection path; nested pipelines need
+ * one root collection). The compiler rejects specs that include either,
+ * falling back to the per-hop loop in `traverse.ts`.
+ *
+ * `limitPerSource` is REQUIRED on every engine hop — without it the
+ * compiler can't bound the response-size product against `maxReads`.
+ * Missing it is a compile-time error.
+ */
+export interface EngineHopSpec {
+  axbType: string;
+  direction?: 'forward' | 'reverse';
+  aType?: string;
+  bType?: string;
+  /** Required for engine traversal — bounds the worst-case response size. */
+  limitPerSource: number;
+  orderBy?: { field: string; direction?: 'asc' | 'desc' };
+}
+
+/**
+ * Parameters for one engine-level traversal call. The traversal layer
+ * compiles a multi-hop spec into a single nested Pipeline and dispatches
+ * one round trip; the executor decodes the tree result into per-hop
+ * `StoredGraphRecord[][]` arrays index-aligned with the source set.
+ *
+ * Cross-graph hops, depth > `MAX_PIPELINE_DEPTH`, or response-size
+ * estimates over `maxReads` are caught at compile time by the compiler
+ * and signal the traversal layer to fall back to the per-hop loop.
+ */
+export interface EngineTraversalParams {
+  /** Initial source UIDs (the "frontier" at depth 0). */
+  sources: string[];
+  /** Hop chain. Length must be ≥ 1 and ≤ `MAX_PIPELINE_DEPTH`. */
+  hops: EngineHopSpec[];
+  /** Optional cap on the worst-case response-size product. The compiler
+   * estimates `Π(limitPerSource_i × N_i)` and refuses to emit (forcing
+   * fallback) if the estimate exceeds this. */
+  maxReads?: number;
+}
+
+/**
+ * Result of one engine-traversal call. `hops[i]` is the edge set
+ * returned at depth `i`, after per-hop dedupe on `bUid` (forward) /
+ * `aUid` (reverse). The arrays are flat — the tree shape is collapsed
+ * by the executor so the traversal layer can splice the result into
+ * the same `HopResult[]` shape `traverse.ts` already produces from the
+ * per-hop loop.
+ */
+export interface EngineTraversalResult {
+  hops: Array<{
+    /** Edges returned at this depth, deduped on the target-side UID. */
+    edges: StoredGraphRecord[];
+    /** Number of distinct source UIDs at this depth. */
+    sourceCount: number;
+  }>;
+  /** Total documents read on the server side (for budget bookkeeping). */
+  totalReads: number;
+}
+
+/**
+ * Engine-level multi-hop traversal — a compiled, single-round-trip
+ * traversal for backends that can express it server-side.
+ *
+ * Backends declaring `traversal.serverSide` translate one
+ * `runEngineTraversal()` call into one server-side query (a nested
+ * Pipeline using `define` / `addFields` / `toArrayExpression` on
+ * Firestore Enterprise). That collapses the per-hop `expand()` loop
+ * in `traverse.ts` into a single round trip, regardless of depth.
+ *
+ * The traversal layer (`src/traverse.ts`) compiles a `TraversalBuilder`
+ * spec to `EngineTraversalParams` when:
+ *
+ *   - the backend declares `traversal.serverSide`;
+ *   - no hop is cross-graph (`targetGraph` unset);
+ *   - no hop carries a JS `filter` callback;
+ *   - depth ≤ `MAX_PIPELINE_DEPTH`;
+ *   - `Π(limitPerSource_i × N_i)` ≤ `maxReads` budget;
+ *   - every hop sets `limitPerSource`.
+ *
+ * Specs that fail any condition fall back to the per-hop loop with
+ * an optional `console.warn` (only when explicitly forced via the
+ * `engineTraversal: 'force'` opt-in in `TraversalOptions`).
+ */
+export interface EngineTraversalExtension {
+  /** Execute one nested-Pipeline traversal in a single round trip. */
+  runEngineTraversal(params: EngineTraversalParams): Promise<EngineTraversalResult>;
+}
+
+/**
  * Parameters for a server-side full-text search query.
  *
  * Translates on Firestore Enterprise into a Pipeline `search({ query: documentMatches(...) })`
@@ -1291,6 +1385,7 @@ export type GraphClient<C extends Capability = Capability> = CoreGraphClient &
   ('query.select' extends C ? SelectExtension : object) &
   ('query.join' extends C ? JoinExtension : object) &
   ('query.dml' extends C ? DmlExtension : object) &
+  ('traversal.serverSide' extends C ? EngineTraversalExtension : object) &
   ('search.fullText' extends C ? FullTextSearchExtension : object) &
   ('search.geo' extends C ? GeoExtension : object) &
   ('search.vector' extends C ? VectorExtension : object) &
@@ -1369,6 +1464,29 @@ export interface TraversalOptions {
   maxReads?: number;
   concurrency?: number;
   returnIntermediates?: boolean;
+  /**
+   * Engine-level traversal mode. Controls whether the traversal layer
+   * tries to compile the hop chain into one server-side nested Pipeline
+   * (Firestore Enterprise only, gated by `traversal.serverSide`).
+   *
+   *   - `'auto'` (default) — use engine traversal when the backend
+   *     declares the capability AND the spec passes the compiler's
+   *     eligibility checks (no cross-graph hops, no JS filters, depth
+   *     ≤ `MAX_PIPELINE_DEPTH`, response-size product ≤ `maxReads`,
+   *     `limitPerSource` set on every hop). Otherwise fall back to
+   *     the per-hop loop. No warning fires on fallback.
+   *
+   *   - `'force'` — engine traversal MUST run. If the backend lacks
+   *     the capability or the spec is ineligible, the traversal throws
+   *     `FiregraphError('UNSUPPORTED_OPERATION')`. Useful for
+   *     benchmarking and tests.
+   *
+   *   - `'off'` — never use engine traversal, even when available.
+   *     The traversal layer always uses the per-hop loop.
+   *
+   * Default: `'auto'`.
+   */
+  engineTraversal?: 'auto' | 'force' | 'off';
 }
 
 export interface HopResult {

@@ -16,6 +16,8 @@ import type {
   BulkUpdatePatch,
   Capability,
   CascadeResult,
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
@@ -261,6 +263,27 @@ export interface StorageBackend<C extends Capability = Capability> {
    * boundary; `expand` itself does not need to inspect `targetGraph`.
    */
   expand?(params: ExpandParams): Promise<ExpandResult>;
+
+  // --- Engine-level multi-hop traversal ---
+  /**
+   * Compile a multi-hop traversal spec into one server-side query and
+   * dispatch a single round trip. Present only on backends that declare
+   * `traversal.serverSide` (Firestore Enterprise today, via nested
+   * Pipelines that combine `define`, `addFields`, and
+   * `toArrayExpression`).
+   *
+   * The traversal layer (`traverse.ts`) compiles a `TraversalBuilder`
+   * spec into `EngineTraversalParams` only when the spec is eligible
+   * (no cross-graph hops, no JS filters, depth ≤ `MAX_PIPELINE_DEPTH`,
+   * `Π(limitPerSource_i × N_i) ≤ maxReads`, `limitPerSource` set on
+   * every hop). Ineligible specs fall back to the per-hop `expand()`
+   * loop without invoking this method.
+   *
+   * The result collapses the nested-pipeline tree into per-hop edge
+   * arrays so the traversal layer can fold the result into the same
+   * `HopResult[]` shape it produces from the per-hop loop.
+   */
+  runEngineTraversal?(params: EngineTraversalParams): Promise<EngineTraversalResult>;
 
   // --- Server-side projection ---
   /**

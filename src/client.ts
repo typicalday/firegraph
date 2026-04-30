@@ -32,6 +32,8 @@ import type {
   DynamicGraphMethods,
   DynamicRegistryConfig,
   EdgeTopology,
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
@@ -646,6 +648,50 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
       return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
     }
     return this.backend.expand(params);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Engine-level multi-hop traversal (capability: traversal.serverSide)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compile a multi-hop traversal spec into one server-side nested
+   * Pipeline and dispatch a single round trip.
+   *
+   * Backends declaring `traversal.serverSide` (Firestore Enterprise
+   * today) install this method; everywhere else, it throws
+   * `UNSUPPORTED_OPERATION`. The capability gate matches the type-level
+   * surface — `GraphClient<C>` only exposes `runEngineTraversal` when
+   * `'traversal.serverSide' extends C`.
+   *
+   * Most callers should not invoke this method directly; the
+   * `createTraversal(...).run()` builder routes through it
+   * automatically when `engineTraversal: 'auto'` (the default) and
+   * the spec is eligible per `firestore-traverse-compiler.ts`. Calling
+   * directly is appropriate for benchmarking or for callers that have
+   * already shaped their hop chain into the strict
+   * `EngineTraversalParams` shape.
+   *
+   * `params.sources.length === 0` short-circuits to empty per-hop
+   * arrays. The backend never sees the call.
+   */
+  async runEngineTraversal(params: EngineTraversalParams): Promise<EngineTraversalResult> {
+    if (!this.backend.runEngineTraversal) {
+      throw new FiregraphError(
+        'runEngineTraversal() is not supported by the current storage backend. ' +
+          'Backends without `traversal.serverSide` can use createTraversal() instead — ' +
+          'the per-hop loop is functionally equivalent for in-graph specs (different ' +
+          'round-trip profile).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.sources.length === 0) {
+      return {
+        hops: params.hops.map(() => ({ edges: [], sourceCount: 0 })),
+        totalReads: 0,
+      };
+    }
+    return this.backend.runEngineTraversal(params);
   }
 
   // ---------------------------------------------------------------------------

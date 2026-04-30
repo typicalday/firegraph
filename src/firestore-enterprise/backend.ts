@@ -62,6 +62,7 @@ import { runFirestorePipelineExpand } from '../internal/firestore-expand.js';
 import { runFirestoreFullTextSearch } from '../internal/firestore-fulltext.js';
 import { runFirestoreGeoSearch } from '../internal/firestore-geo.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
+import { runFirestoreEngineTraversal } from '../internal/firestore-traverse.js';
 import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
 import type { DataPathOp } from '../internal/write-plan.js';
 import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
@@ -73,6 +74,8 @@ import type {
   BulkResult,
   BulkUpdatePatch,
   CascadeResult,
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
@@ -150,6 +153,7 @@ export type FirestoreEnterpriseCapability =
   | 'query.select'
   | 'query.join'
   | 'query.dml'
+  | 'traversal.serverSide'
   | 'search.vector'
   | 'search.fullText'
   | 'search.geo'
@@ -171,6 +175,7 @@ const ENTERPRISE_BASE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'query.aggregate',
     'query.select',
     'query.join',
+    'traversal.serverSide',
     'search.vector',
     'search.fullText',
     'search.geo',
@@ -659,6 +664,32 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
     options?: BulkOptions,
   ): Promise<BulkResult> {
     return runFirestorePipelineUpdate(this.db, this.collectionPath, filters, patch, options);
+  }
+
+  // --- Engine-level multi-hop traversal (capability: traversal.serverSide) ---
+
+  /**
+   * Compile a multi-hop traversal spec into one nested Pipeline and
+   * dispatch a single round trip via `define` + `addFields(child
+   * .toArrayExpression().as(...))`. The compiler in
+   * `firestore-traverse-compiler.ts` validates spec eligibility (depth
+   * ≤ `MAX_PIPELINE_DEPTH`, every hop has `limitPerSource`, response-
+   * size product ≤ `maxReads`) and the executor in
+   * `firestore-traverse.ts` builds + decodes the tree.
+   *
+   * Unlike `bulkDelete` / `bulkUpdate`, this method is GA-typed in 8.5.0
+   * (no `@beta` annotation on `define`, `addFields`, `toArrayExpression`,
+   * or `variable`), so it does NOT need a `previewDml`-style opt-in.
+   *
+   * `defaultQueryMode` is irrelevant here — engine traversal always
+   * dispatches through Pipelines because the join-key binding (`define`
+   * + `variable`) has no classic Query API equivalent. Specs that
+   * arrive on a classic-mode backend still execute via Pipelines; the
+   * `queryMode` toggle only affects the read query path
+   * (`query()` / `expand()`).
+   */
+  runEngineTraversal(params: EngineTraversalParams): Promise<EngineTraversalResult> {
+    return runFirestoreEngineTraversal(this.db, this.collectionPath, params);
   }
 }
 
