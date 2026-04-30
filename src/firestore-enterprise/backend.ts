@@ -44,6 +44,7 @@ import {
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
+import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
 import type { DataPathOp } from '../internal/write-plan.js';
 import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
@@ -54,6 +55,7 @@ import type {
   BulkResult,
   CascadeResult,
   FindEdgesParams,
+  FindNearestParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -67,11 +69,13 @@ import { createPipelineQueryAdapter } from './pipeline-adapter.js';
  *
  * `core.transactions` is included because transactions are still supported
  * via the classic Query API (pipelines themselves are not transactionally
- * bound; the GA notes call this out explicitly). The pipeline-only
- * extension capabilities (`query.join`, `search.*`) are NOT declared yet —
- * subsequent phases wire them in once the matching backend methods exist,
- * at which point this union grows in lockstep with the cap-set literal
- * below.
+ * bound; the GA notes call this out explicitly). `search.vector` (Phase 8)
+ * is implemented via the classic `Query.findNearest(...)` API for parity
+ * with the Standard edition — see `findNearest()` below. The remaining
+ * pipeline-only extension capabilities (`query.join`, `search.fullText`,
+ * `search.geo`) are NOT declared yet — subsequent phases wire them in
+ * once the matching backend methods exist, at which point this union
+ * grows in lockstep with the cap-set literal below.
  *
  * Conservative declaration matters here: declaring a capability we don't
  * implement turns the type-level gate (Phase 3) into a lie that throws at
@@ -107,6 +111,7 @@ export type FirestoreEnterpriseCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.select'
+  | 'search.vector'
   | 'raw.firestore';
 
 const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
@@ -118,6 +123,7 @@ const ENTERPRISE_CAPS: ReadonlySet<FirestoreEnterpriseCapability> =
     'core.subgraph',
     'query.aggregate',
     'query.select',
+    'search.vector',
     'raw.firestore',
   ]);
 
@@ -427,6 +433,31 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
       filters,
       options,
     );
+  }
+
+  // --- Native vector / nearest-neighbour search (capability: search.vector) ---
+
+  /**
+   * Run a vector / nearest-neighbour query via the shared classic-API
+   * helper. Enterprise and Standard delegate to one implementation so the
+   * field-path normalisation, validation surface, and result shape stay
+   * consistent across editions.
+   *
+   * Why classic and not the pipeline `findNearest` stage: the deliverable
+   * (top-K by similarity) is achieved by either path; the classic API
+   * works identically on both editions today and sidesteps the
+   * pipeline-vs-emulator forking the rest of this backend has to manage.
+   * When pipeline `findNearest` becomes preferable for composing with
+   * other pipeline stages, swap the implementation behind
+   * `runFirestoreFindNearest`; callers and the capability declaration
+   * stay put.
+   *
+   * Index requirements are identical to Standard — single-field vector
+   * index on the indexed `vectorField`, plus a composite index whenever
+   * additional `where` filters narrow the candidate set.
+   */
+  findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
+    return runFirestoreFindNearest(this.db.collection(this.collectionPath), params);
   }
 }
 

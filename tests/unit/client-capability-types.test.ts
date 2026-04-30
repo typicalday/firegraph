@@ -37,7 +37,11 @@ import type {
 // ---------------------------------------------------------------------------
 
 describe('Per-backend capability unions', () => {
-  it('FirestoreStandardCapability is the conservative core surface plus raw.firestore + query.aggregate (Phase 4)', () => {
+  it('FirestoreStandardCapability is core + raw.firestore + the wired extension caps through Phase 8', () => {
+    // Phases shipped on Standard so far:
+    //   - Phase 4: query.aggregate
+    //   - Phase 7: query.select
+    //   - Phase 8: search.vector
     type Expected =
       | 'core.read'
       | 'core.write'
@@ -45,24 +49,31 @@ describe('Per-backend capability unions', () => {
       | 'core.batch'
       | 'core.subgraph'
       | 'raw.firestore'
-      | 'query.aggregate';
+      | 'query.aggregate'
+      | 'query.select'
+      | 'search.vector';
     expectTypeOf<FirestoreStandardCapability>().toEqualTypeOf<Expected>();
     // Guard against silent expansion into Enterprise-only territory.
     expectTypeOf<FirestoreStandardCapability>().not.toEqualTypeOf<Capability>();
-    // Phase 4 ships query.aggregate — keep the positive assertion explicit so a
-    // regression that drops it from STANDARD_CAPS shows up here.
+    // Positive assertions on every wired cap — a regression that drops one
+    // from STANDARD_CAPS shows up here as a type error.
     expectTypeOf<FirestoreStandardCapability>().toMatchTypeOf<'query.aggregate'>();
-    // Concrete negative checks — every extension capability that lands in
-    // Phases 5-10 must NOT yet appear in the Standard union. Using
-    // `not.toMatchTypeOf` (per-cap) catches a regression that adds, e.g.,
-    // 'query.dml' to STANDARD_CAPS without the matching method.
+    expectTypeOf<FirestoreStandardCapability>().toMatchTypeOf<'query.select'>();
+    expectTypeOf<FirestoreStandardCapability>().toMatchTypeOf<'search.vector'>();
+    // Concrete negative checks — every extension that has NOT shipped on
+    // Standard must NOT yet appear. Phases 9-10 will move some of these.
     expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'query.dml'>();
-    expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'search.vector'>();
+    expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'query.join'>();
+    expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'search.fullText'>();
+    expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'search.geo'>();
     expectTypeOf<FirestoreStandardCapability>().not.toMatchTypeOf<'realtime.listen'>();
     expect(true).toBe(true);
   });
 
-  it('FirestoreEnterpriseCapability matches Standard plus query.aggregate (Phase 4)', () => {
+  it('FirestoreEnterpriseCapability matches Standard plus the same wired extension caps through Phase 8', () => {
+    // Same surface as Standard for the Phases 4-8 extensions: aggregate,
+    // select, and vector. Pipeline-only caps (query.join, search.fullText,
+    // search.geo) ship in Phases 9-10.
     type Expected =
       | 'core.read'
       | 'core.write'
@@ -70,18 +81,27 @@ describe('Per-backend capability unions', () => {
       | 'core.batch'
       | 'core.subgraph'
       | 'raw.firestore'
-      | 'query.aggregate';
+      | 'query.aggregate'
+      | 'query.select'
+      | 'search.vector';
     expectTypeOf<FirestoreEnterpriseCapability>().toEqualTypeOf<Expected>();
-    // Phase 4 ships query.aggregate on Enterprise too.
     expectTypeOf<FirestoreEnterpriseCapability>().toMatchTypeOf<'query.aggregate'>();
-    // Same negative parity as Standard — remaining extensions arrive in Phases 5-10.
+    expectTypeOf<FirestoreEnterpriseCapability>().toMatchTypeOf<'query.select'>();
+    expectTypeOf<FirestoreEnterpriseCapability>().toMatchTypeOf<'search.vector'>();
     expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'query.dml'>();
-    expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'search.vector'>();
+    expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'query.join'>();
+    expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'search.fullText'>();
+    expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'search.geo'>();
     expectTypeOf<FirestoreEnterpriseCapability>().not.toMatchTypeOf<'realtime.listen'>();
     expect(true).toBe(true);
   });
 
-  it('SqliteCapability declares interactive transactions statically and query.aggregate (Phase 4)', () => {
+  it('SqliteCapability declares interactive transactions and the SQLite-supported extensions through Phase 7', () => {
+    // SQLite supports query.aggregate (Phase 4), query.dml (Phase 5),
+    // query.join (Phase 6), and query.select (Phase 7). It does NOT
+    // declare search.vector (Phase 8) — there is no native vector index
+    // on stock SQLite, and emulating ANN over `json_extract` is a
+    // non-starter for any realistic dataset.
     type Expected =
       | 'core.read'
       | 'core.write'
@@ -89,21 +109,44 @@ describe('Per-backend capability unions', () => {
       | 'core.batch'
       | 'core.subgraph'
       | 'raw.sql'
-      | 'query.aggregate';
+      | 'query.aggregate'
+      | 'query.dml'
+      | 'query.join'
+      | 'query.select';
     expectTypeOf<SqliteCapability>().toEqualTypeOf<Expected>();
     expectTypeOf<SqliteCapability>().toMatchTypeOf<'query.aggregate'>();
+    expectTypeOf<SqliteCapability>().toMatchTypeOf<'query.dml'>();
+    expectTypeOf<SqliteCapability>().toMatchTypeOf<'query.join'>();
+    expectTypeOf<SqliteCapability>().toMatchTypeOf<'query.select'>();
+    expectTypeOf<SqliteCapability>().not.toMatchTypeOf<'search.vector'>();
     expect(true).toBe(true);
   });
 
-  it('CloudflareCapability omits transactions and raw.sql by design but ships query.aggregate (Phase 4)', () => {
-    type Expected = 'core.read' | 'core.write' | 'core.batch' | 'core.subgraph' | 'query.aggregate';
+  it('CloudflareCapability omits transactions, raw.sql, and search.vector by design', () => {
+    // The DO RPC backend deliberately drops `core.transactions` and
+    // `raw.sql` — `transactionsUnsupported` documents the cross-RPC
+    // serialisation reason for the former, and the SQL surface stays
+    // hidden behind RPC for the latter. `search.vector` is also absent:
+    // the per-DO SQLite store has no native vector index. The DO does
+    // ship the same SQL-backed extension caps as the shared SQLite backend.
+    type Expected =
+      | 'core.read'
+      | 'core.write'
+      | 'core.batch'
+      | 'core.subgraph'
+      | 'query.aggregate'
+      | 'query.dml'
+      | 'query.join'
+      | 'query.select';
     expectTypeOf<CloudflareCapability>().toEqualTypeOf<Expected>();
-    // The DO RPC backend deliberately drops these — the type must reflect
-    // that, not just the runtime cap-set.
     expectTypeOf<CloudflareCapability>().not.toMatchTypeOf<'core.transactions'>();
     expectTypeOf<CloudflareCapability>().not.toMatchTypeOf<'raw.sql'>();
-    // Aggregate is supported via the DO RPC `_fgAggregate` call.
+    expectTypeOf<CloudflareCapability>().not.toMatchTypeOf<'search.vector'>();
+    // Wired SQL-backed extensions are supported via the DO RPC surface.
     expectTypeOf<CloudflareCapability>().toMatchTypeOf<'query.aggregate'>();
+    expectTypeOf<CloudflareCapability>().toMatchTypeOf<'query.dml'>();
+    expectTypeOf<CloudflareCapability>().toMatchTypeOf<'query.join'>();
+    expectTypeOf<CloudflareCapability>().toMatchTypeOf<'query.select'>();
     expect(true).toBe(true);
   });
 });

@@ -291,7 +291,9 @@ export interface DORPCBackendOptions {
    * own overload signatures.
    * @internal
    */
-  makeSiblingClient?: (siblingStorageKey: string) => GraphClient | DynamicGraphClient;
+  makeSiblingClient?: (
+    siblingStorageKey: string,
+  ) => GraphClient<CloudflareCapability> | DynamicGraphClient<CloudflareCapability>;
 }
 
 /**
@@ -340,7 +342,9 @@ export class DORPCBackend implements StorageBackend<CloudflareCapability> {
   readonly namespace: FiregraphNamespace;
   private readonly registryAccessor?: () => GraphRegistry | undefined;
   /** @internal — see `DORPCBackendOptions.makeSiblingClient` for the union-type rationale. */
-  readonly makeSiblingClient?: (siblingStorageKey: string) => GraphClient | DynamicGraphClient;
+  readonly makeSiblingClient?: (
+    siblingStorageKey: string,
+  ) => GraphClient<CloudflareCapability> | DynamicGraphClient<CloudflareCapability>;
   private cachedStub: FiregraphStub | null = null;
 
   constructor(namespace: FiregraphNamespace, options: DORPCBackendOptions) {

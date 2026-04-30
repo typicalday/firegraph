@@ -69,6 +69,7 @@ import type {
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
+  FindNearestParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -255,6 +256,21 @@ class RoutingStorageBackend implements StorageBackend {
    * `.subgraph().findEdgesProjected()` against the routed handle.
    */
   findEdgesProjected?: StorageBackend['findEdgesProjected'];
+  /**
+   * Vector / nearest-neighbour pass-through. Same conditional-install
+   * pattern as `aggregate`, bulk DML, `expand`, and `findEdgesProjected`:
+   * gated on BOTH the base method's existence AND `this.capabilities`
+   * advertising `search.vector`. If `routedCapabilities` intersected
+   * `search.vector` away (e.g. one routed peer is a SQLite-shaped backend
+   * that has no native ANN index), the method is not installed even
+   * though `base.findNearest` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, vector search runs against the base
+   * backend only — a routed child's own `findNearest` is reached through
+   * `.subgraph().findNearest()` against the routed handle.
+   */
+  findNearest?: StorageBackend['findNearest'];
 
   constructor(
     private readonly base: StorageBackend,
@@ -328,6 +344,13 @@ class RoutingStorageBackend implements StorageBackend {
         filters: QueryFilter[],
         options?: QueryOptions,
       ) => base.findEdgesProjected!(select, filters, options);
+    }
+    if (base.findNearest && this.capabilities.has('search.vector')) {
+      // Same scope rationale as the other extensions: vector search runs
+      // against the base backend only. A routed child's own `findNearest`
+      // is reached through `.subgraph().findNearest()` against the routed
+      // handle.
+      this.findNearest = (params: FindNearestParams) => base.findNearest!(params);
     }
   }
 

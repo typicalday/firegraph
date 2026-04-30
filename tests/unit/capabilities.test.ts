@@ -149,17 +149,27 @@ describe('FirestoreBackend capabilities', () => {
     expect(backend.capabilities.has('query.select')).toBe(true);
   });
 
+  it('Standard edition declares search.vector (Phase 8) — nearest-neighbour via Query.findNearest(...)', () => {
+    // Standard exposes vector / nearest-neighbour search via the classic
+    // `Query.findNearest(...)` API. Both Firestore editions delegate to
+    // one shared helper (`runFirestoreFindNearest`) so the validation
+    // surface — vectorField path normalisation, envelope-field rejection,
+    // queryVector coercion, limit bounds — stays consistent across
+    // editions.
+    const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
+    expect(backend.capabilities.has('search.vector')).toBe(true);
+  });
+
   it('Standard edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreStandardBackend(makeStubFirestore(), 'firegraph');
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    // query.aggregate ships in Phase 4; query.select ships in Phase 7 —
-    // see the dedicated assertions above.
+    // query.aggregate ships in Phase 4; query.select ships in Phase 7;
+    // search.vector ships in Phase 8 — see the dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
-    expect(caps.has('search.vector')).toBe(false);
     expect(caps.has('realtime.listen')).toBe(false);
   });
 
@@ -198,19 +208,30 @@ describe('FirestoreBackend capabilities', () => {
     expect(backend.capabilities.has('query.select')).toBe(true);
   });
 
+  it('Enterprise edition declares search.vector (Phase 8) — nearest-neighbour via shared classic-API helper', () => {
+    // Enterprise routes through the same `runFirestoreFindNearest` helper
+    // as Standard — the pipeline `findNearest` stage is a future
+    // optimisation that doesn't change the cap declaration. The
+    // top-K-by-similarity deliverable is satisfied by the classic API on
+    // both editions, with identical index requirements.
+    const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
+      defaultQueryMode: 'classic',
+    });
+    expect(backend.capabilities.has('search.vector')).toBe(true);
+  });
+
   it('Enterprise edition does not silently declare unimplemented extension capabilities', () => {
     const backend = createFirestoreEnterpriseBackend(makeStubFirestore(), 'firegraph', {
       defaultQueryMode: 'classic',
     });
     const caps = backend.capabilities;
     expect(caps.has('raw.sql')).toBe(false);
-    // query.aggregate ships in Phase 4; query.select ships in Phase 7 —
-    // see the dedicated assertions above.
+    // query.aggregate ships in Phase 4; query.select ships in Phase 7;
+    // search.vector ships in Phase 8 — see the dedicated assertions above.
     expect(caps.has('query.join')).toBe(false);
     expect(caps.has('query.dml')).toBe(false);
     expect(caps.has('search.fullText')).toBe(false);
     expect(caps.has('search.geo')).toBe(false);
-    expect(caps.has('search.vector')).toBe(false);
     expect(caps.has('realtime.listen')).toBe(false);
   });
 });

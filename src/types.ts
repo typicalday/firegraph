@@ -939,9 +939,131 @@ export interface GeoExtension {
   // Methods land in Phase 10.
 }
 
-/** Native vector / nearest-neighbour search. */
+/**
+ * Distance metric for vector / nearest-neighbour search. Mirrors
+ * Firestore's `VectorQueryOptions.distanceMeasure` enum so the value
+ * passes through to the SDK without translation:
+ *
+ *   - `EUCLIDEAN` — straight-line distance in n-dimensional space; lower
+ *     is more similar.
+ *   - `COSINE` — angle between vectors; lower is more similar (1 −
+ *     cosine_similarity).
+ *   - `DOT_PRODUCT` — inner product; *higher* is more similar. The
+ *     `distanceThreshold` semantics flip accordingly (see
+ *     `FindNearestParams`).
+ */
+export type DistanceMeasure = 'EUCLIDEAN' | 'COSINE' | 'DOT_PRODUCT';
+
+/**
+ * Parameters for a server-side vector / nearest-neighbour query.
+ *
+ * Identifying filters (`aType`, `axbType`, `bType`) and `where` clauses
+ * narrow the candidate set *before* the ANN query runs — Firestore folds
+ * them into the same `Query` the vector index walks. Combining multiple
+ * filters with vector search requires composite indexes on Firestore
+ * Standard; the Enterprise edition lifts the index requirement for some
+ * shapes (see Firestore docs).
+ *
+ * `vectorField` follows the same dotted-path / bare-name convention as
+ * `select` in `FindEdgesProjectedParams` and `field` in `WhereClause`:
+ *
+ *   - A bare name (e.g. `'embedding'`) resolves to `data.embedding`.
+ *   - A literal `'data'` or `'data.<x>'` is taken as-is.
+ *   - Built-in envelope fields are not vector-indexable — passing one
+ *     throws `INVALID_QUERY` at the client surface.
+ *
+ * `queryVector` accepts either a plain `number[]` or a Firestore
+ * `VectorValue`. The dimension must match the indexed `vectorField`'s
+ * dimension; Firestore filters out rows whose vector dimension differs
+ * (rather than throwing) so the result set may be smaller than `limit`.
+ *
+ * `distanceThreshold` semantics depend on `distanceMeasure`:
+ *
+ *   - `EUCLIDEAN` / `COSINE` → return rows with `distance <=` threshold.
+ *   - `DOT_PRODUCT` → return rows with `distance >=` threshold (higher
+ *     dot product = more similar).
+ *
+ * If `distanceResultField` is set, every returned record carries the
+ * computed distance at that field path inside `data`. Pass a built-in
+ * envelope field name (e.g. `'aType'`) and the request fails server-side
+ * — the SDK reserves the envelope.
+ */
+export interface FindNearestParams {
+  /** Optional filter on `aType`. Resolves to `where('aType', '==', …)`. */
+  aType?: string;
+  /** Optional filter on `axbType`. */
+  axbType?: string;
+  /** Optional filter on `bType`. */
+  bType?: string;
+  /**
+   * Field path of the indexed vector. Bare name → `data.<name>`. Built-in
+   * envelope fields are rejected — they are not vector-indexable.
+   */
+  vectorField: string;
+  /** Query vector. `number[]` or `VectorValue`; must match the indexed dimension. */
+  queryVector: number[] | { toArray(): number[] };
+  /** Upper bound on rows returned. Firestore caps at 1000. */
+  limit: number;
+  /** Distance metric — see `DistanceMeasure` for the semantics flip on `DOT_PRODUCT`. */
+  distanceMeasure: DistanceMeasure;
+  /**
+   * Optional similarity cutoff. Interpretation depends on `distanceMeasure`
+   * — see the type-level docs.
+   */
+  distanceThreshold?: number;
+  /**
+   * Optional dotted path that, if set, will be populated on each returned
+   * record with the computed distance. Bare name → `data.<name>`. Use this
+   * when downstream code needs to rank or threshold the results in JS.
+   */
+  distanceResultField?: string;
+  /**
+   * Additional filters applied before the ANN walk. Same shape as
+   * `findEdges({ where })`. Field-path rules match `WhereClause.field`.
+   */
+  where?: WhereClause[];
+  /**
+   * Bypass scan-protection for unfiltered vector searches. A vector query
+   * with no `aType` / `axbType` / `bType` / `where` filters scans every
+   * row in the collection before the ANN narrowing — opt in explicitly.
+   */
+  allowCollectionScan?: boolean;
+}
+
+/**
+ * Native vector / nearest-neighbour search.
+ *
+ * Backends declaring `search.vector` translate the call into a single
+ * server-side `findNearest` query. The SQLite-shaped backends (shared
+ * SQLite, Cloudflare DO) do not declare this capability — they have no
+ * native vector index, and emulating ANN on top of `json_extract` is a
+ * non-starter for any realistic dataset. Firestore Standard and
+ * Enterprise both implement it via the classic `Query.findNearest(...)`
+ * API; the pipeline `findNearest` stage is a future optimisation.
+ *
+ * Migrations are NOT applied to the result. The vector query selects
+ * documents by similarity, not by query plan — applying migrations
+ * inline would change the candidate set the index already walked. If
+ * you need migrated shape, follow up with `getNode` / `findEdges` on the
+ * returned UIDs.
+ */
 export interface VectorExtension {
-  // Methods land in Phase 8.
+  /**
+   * Run a vector / nearest-neighbour search. Returns the top-K records
+   * by similarity, sorted nearest-first (or furthest-first for
+   * `DOT_PRODUCT` where higher = more similar).
+   *
+   * Throws:
+   *
+   *   - `INVALID_QUERY` if `vectorField` resolves to a built-in envelope
+   *     field, `limit` is non-positive or > 1000, `queryVector` is
+   *     empty, or `distanceResultField` collides with a built-in.
+   *   - `QUERY_SAFETY` if no identifying filters / `where` clauses are
+   *     supplied and `allowCollectionScan` is not set.
+   *   - `UNSUPPORTED_OPERATION` if the backend does not declare
+   *     `search.vector`.
+   */
+  findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]>;
 }
 
 /** Escape hatch — expose the underlying Firestore handle. */

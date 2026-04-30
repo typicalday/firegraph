@@ -8,9 +8,9 @@
  *
  * Capability declarations follow the conservative invariant established in
  * Phase 1: only declare what the file actually implements at runtime.
- * `query.aggregate` (Phase 6) and `query.select` (Phase 7) are wired;
- * `search.vector` and `realtime.listen` will be added in later phases once
- * the matching backend methods exist.
+ * `query.aggregate` (Phase 6), `query.select` (Phase 7), and
+ * `search.vector` (Phase 8) are wired; `realtime.listen` will be added in
+ * a later phase once the matching backend method exists.
  */
 
 import type { Firestore, Query, Transaction } from '@google-cloud/firestore';
@@ -43,6 +43,7 @@ import {
   createTransactionAdapter,
 } from '../internal/firestore-classic-adapter.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
+import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
 import type { DataPathOp } from '../internal/write-plan.js';
 import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
@@ -53,6 +54,7 @@ import type {
   BulkResult,
   CascadeResult,
   FindEdgesParams,
+  FindNearestParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -76,6 +78,7 @@ export type FirestoreStandardCapability =
   | 'core.subgraph'
   | 'query.aggregate'
   | 'query.select'
+  | 'search.vector'
   | 'raw.firestore';
 
 const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
@@ -87,6 +90,7 @@ const STANDARD_CAPS: ReadonlySet<FirestoreStandardCapability> =
     'core.subgraph',
     'query.aggregate',
     'query.select',
+    'search.vector',
     'raw.firestore',
   ]);
 
@@ -339,6 +343,25 @@ class FirestoreStandardBackendImpl implements StorageBackend<FirestoreStandardCa
       filters,
       options,
     );
+  }
+
+  // --- Native vector / nearest-neighbour search (capability: search.vector) ---
+
+  /**
+   * Run a vector / nearest-neighbour query via the shared classic-API
+   * helper. Both Firestore editions delegate to one implementation so the
+   * field-path normalisation and result shape stay consistent across
+   * editions. See `runFirestoreFindNearest` for the resolution rules and
+   * the validation surface.
+   *
+   * Standard-edition note: vector search requires a single-field vector
+   * index on the indexed `vectorField`, plus a composite index whenever
+   * additional `where` filters narrow the candidate set before the ANN
+   * walk. Both indexes are configured per project in the Firestore
+   * console — firegraph does not auto-provision them.
+   */
+  findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
+    return runFirestoreFindNearest(this.db.collection(this.collectionPath), params);
   }
 }
 

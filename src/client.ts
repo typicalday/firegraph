@@ -36,6 +36,7 @@ import type {
   ExpandResult,
   FindEdgesParams,
   FindEdgesProjectedParams,
+  FindNearestParams,
   FindNodesParams,
   GraphBatch,
   GraphClient,
@@ -729,6 +730,65 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
     this.checkQuerySafety(filters, params.allowCollectionScan);
     const rows = await this.backend.findEdgesProjected(params.select, filters, options);
     return rows as Array<ProjectedRow<F>>;
+  }
+
+  /**
+   * Native vector / nearest-neighbour search (capability `search.vector`).
+   *
+   * Resolves to the top-K records by similarity, sorted nearest-first
+   * (`EUCLIDEAN` / `COSINE`) or highest-first (`DOT_PRODUCT`). The wrapper
+   * is intentionally thin: capability check, scan-protection, then forward
+   * `params` verbatim to the backend. All field-path normalisation and
+   * SDK-shape validation lives in the shared
+   * `runFirestoreFindNearest` helper that both Firestore editions call —
+   * keeping it there means the validation surface stays in lockstep with
+   * the SDK call site, regardless of which backend is plugged in.
+   *
+   * Migrations are NOT applied. The vector index walked the raw stored
+   * shape; rehydrating each row through the migration pipeline would
+   * change the candidate set the index already chose. If you need
+   * migrated shape, follow up with `getNode` / `findEdges` on the
+   * returned UIDs — those paths apply migrations normally.
+   *
+   * Scan-protection mirrors `findEdges`: if no identifying filters
+   * (`aType` / `axbType` / `bType`) and no `where` clauses are supplied,
+   * the request must opt in via `allowCollectionScan: true`. The ANN
+   * query still walks the candidate set the WHERE clause produces, so
+   * an unfiltered nearest-neighbour search over a million-row collection
+   * is the same scan trap as an unfiltered `findEdges`.
+   *
+   * Backends without `search.vector` throw `UNSUPPORTED_OPERATION` —
+   * there is no client-side fallback because emulating ANN over the
+   * generic backend surface (`findEdges` + JS-side cosine) doesn't scale
+   * past trivial datasets and would give callers the wrong mental model
+   * about cost.
+   */
+  async findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.findNearest) {
+      throw new FiregraphError(
+        'findNearest() is not supported by the current storage backend. ' +
+          'Vector search requires a backend that declares `search.vector` ' +
+          '(currently Firestore Standard and Enterprise). There is no ' +
+          'client-side fallback because emulating ANN on top of the generic ' +
+          'backend surface does not scale beyond toy datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+
+    // Build the same filter list the helper passes to `applyFiltersToQuery`
+    // so scan-protection sees exactly what the index will narrow on.
+    // Identifiers come first (matching `buildVectorFilters` in the helper),
+    // user-supplied `where` follows. We do NOT use `buildEdgeQueryPlan`
+    // here — there is no GET-strategy notion for vector search; the
+    // identifying-field filters are pure narrowing for the ANN walk.
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    if (params.where) filters.push(...params.where);
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+
+    return this.backend.findNearest(params);
   }
 
   /**

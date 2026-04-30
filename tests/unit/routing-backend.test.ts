@@ -42,6 +42,7 @@ import type {
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
+  FindNearestParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -118,6 +119,7 @@ function createMockBackend(
         'query.dml',
         'query.join',
         'query.select',
+        'search.vector',
       ]),
     ),
     collectionPath,
@@ -216,6 +218,12 @@ function createMockBackend(
       options?: QueryOptions,
     ): Promise<Array<Record<string, unknown>>> {
       calls.push({ method: 'findEdgesProjected', args: [select, filters, options] });
+      // Canonical empty-result shape — the routing wrapper never inspects
+      // the payload, so a structural empty is enough.
+      return [];
+    },
+    async findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
+      calls.push({ method: 'findNearest', args: [params] });
       // Canonical empty-result shape — the routing wrapper never inspects
       // the payload, so a structural empty is enough.
       return [];
@@ -770,6 +778,79 @@ describe('createRoutingBackend — pass-through delegation', () => {
 
     expect(router.capabilities.has('query.select')).toBe(false);
     expect(router.findEdgesProjected).toBeUndefined();
+  });
+
+  it('delegates findNearest to the base backend when the base declares search.vector', async () => {
+    // Phase 8 search.vector pass-through: identical install/omit pair to
+    // every other capability-gated method (aggregate / DML / expand /
+    // findEdgesProjected). The base ships `findNearest(...)` and declares
+    // `search.vector`; the router must surface a callable method that
+    // forwards `params` unchanged. The "declared capability ⇒ method
+    // exists" invariant is what makes the GraphClient feature-detection
+    // guard sound, so we pin both directions explicitly.
+    const base = createMockBackend('base');
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(typeof router.findNearest).toBe('function');
+    const params: FindNearestParams = {
+      aType: 'doc',
+      vectorField: 'embedding',
+      queryVector: [0.1, 0.2, 0.3],
+      limit: 5,
+      distanceMeasure: 'COSINE',
+    };
+    const out = await router.findNearest!(params);
+    expect(out).toEqual([]);
+    const nearestCall = base.calls.find((c) => c.method === 'findNearest');
+    expect(nearestCall).toBeDefined();
+    expect(nearestCall!.args[0]).toEqual(params);
+  });
+
+  it('omits findNearest on the router when the base backend omits it', () => {
+    // SQLite-shaped backends (shared SQLite, Cloudflare DO) don't ship a
+    // native vector index, so they don't declare `search.vector` and don't
+    // implement `findNearest`. The router must propagate the absence as an
+    // undefined method — the `typeof router.findNearest` feature check is
+    // the documented contract; without this gate, type-narrowing on
+    // `capabilities.has('search.vector')` would lie to consumers.
+    const base = createMockBackend('base');
+    (base as { findNearest?: unknown }).findNearest = undefined;
+    (base as { capabilities: typeof base.capabilities }).capabilities = createCapabilities(
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, { route: () => null });
+
+    expect(router.findNearest).toBeUndefined();
+    expect(typeof router.findNearest).toBe('undefined');
+  });
+
+  it('omits findNearest on the router when routedCapabilities intersects search.vector away', () => {
+    // Cap-gate isolation test (mirror of every other capability-gated
+    // method). A routed peer that lacks `search.vector` (e.g. a routed
+    // Cloudflare-DO peer alongside a Firestore base) drops the cap from
+    // the intersection, so the router must omit `findNearest` even though
+    // the underlying base method is callable. Otherwise the wrapper would
+    // advertise "no search.vector" via its capability descriptor while
+    // still exposing a working `findNearest`, violating the inverse
+    // "declared-absent ⇒ runtime-absent" direction of the cap-method
+    // invariant.
+    const base = createMockBackend('base');
+    expect(base.findNearest).toBeDefined();
+    expect(base.capabilities.has('search.vector')).toBe(true);
+
+    const routedNoVector = createCapabilities(
+      // Mixed-backend scenario: a routed peer (e.g. a Cloudflare DO shard
+      // alongside a Firestore base) that lacks `search.vector`. The
+      // intersection drops the cap.
+      new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+    );
+    const router = createRoutingBackend(base, {
+      route: () => null,
+      routedCapabilities: [routedNoVector],
+    });
+
+    expect(router.capabilities.has('search.vector')).toBe(false);
+    expect(router.findNearest).toBeUndefined();
   });
 
   it('exposes the base backend collectionPath and scopePath', () => {

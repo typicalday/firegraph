@@ -19,6 +19,7 @@ import type {
   ExpandParams,
   ExpandResult,
   FindEdgesParams,
+  FindNearestParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
@@ -283,4 +284,38 @@ export interface StorageBackend<C extends Capability = Capability> {
     filters: QueryFilter[],
     options?: QueryOptions,
   ): Promise<Array<Record<string, unknown>>>;
+
+  // --- Native vector / nearest-neighbour search ---
+  /**
+   * Run a vector / nearest-neighbour query. Present only on backends that
+   * declare `search.vector`. There is no client-side fallback — the
+   * SQLite-shaped backends (shared SQLite, Cloudflare DO) genuinely have
+   * no native ANN index, and a JS-side k-NN sweep over `findEdges()` would
+   * scale catastrophically. Backends without the cap throw
+   * `UNSUPPORTED_OPERATION` from the client wrapper.
+   *
+   * `params` carries the user-facing shape (vector field path, query
+   * vector, distance metric, optional threshold and result-field). The
+   * client wrapper has already run scan-protection on the identifying
+   * / `where` filter list before dispatching.
+   *
+   * Path normalisation is the backend's responsibility: rewriting bare
+   * `vectorField` / `distanceResultField` names to `data.<name>` and
+   * rejecting envelope fields (`aType`, `axbType`, `bType`, `aUid`,
+   * `bUid`, `v`, etc.) with `INVALID_QUERY` happens inside the
+   * backend, not the client wrapper. The two in-tree Firestore-edition
+   * backends share `runFirestoreFindNearest` (see
+   * `src/internal/firestore-vector.ts`) for this; third-party backends
+   * declaring `search.vector` must apply equivalent normalisation
+   * before calling their underlying SDK.
+   *
+   * The backend is also responsible for translating to the underlying
+   * SDK call (`Query.findNearest` on Firestore today) and decoding the
+   * result snapshot into `StoredGraphRecord[]`.
+   *
+   * Migrations are not applied to the result. The vector index walks the
+   * raw stored shape; rehydrating into the migration pipeline before
+   * returning would change the candidate set the index already chose.
+   */
+  findNearest?(params: FindNearestParams): Promise<StoredGraphRecord[]>;
 }
