@@ -492,8 +492,9 @@ class TraversalBuilderImpl implements TraversalBuilder {
     // Translate `EngineTraversalResult` into `TraversalResult` (`HopResult[]`).
     // Truncation is detected per-hop: if the returned edge count equals the
     // limitPerSource enforced in the pipeline, the server hit its cap and
-    // there may be more edges. Mirrors the classic-path check
-    // `hopEdges.length >= limit`.
+    // there may be more edges. This is conservative — for depth-1+ hops with
+    // multiple parents, deduplication may reduce the count below limitPerSource
+    // per-parent while the aggregate still triggers the check.
     const hopResults: HopResult[] = [];
     for (let i = 0; i < this.hops.length; i++) {
       const definedHop = this.hops[i];
