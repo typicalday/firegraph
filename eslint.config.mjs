@@ -51,5 +51,11 @@ export default [
       'no-console': 'off',
     },
   },
+  {
+    files: ['editor/server/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
   prettier,
 ];
