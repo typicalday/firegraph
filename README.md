@@ -155,25 +155,42 @@ const stats = await (client as AggregateExtension).aggregate({
   aType: 'tour',
   axbType: 'is',
   bType: 'tour',
-  ops: [{ op: 'count', alias: 'total' }, { op: 'avg', field: 'data.price', alias: 'avgPrice' }],
+  ops: [
+    { op: 'count', alias: 'total' },
+    { op: 'avg', field: 'data.price', alias: 'avgPrice' },
+  ],
 });
 
 // query.select — projected edge scan
 const names = await (client as SelectExtension).findEdgesProjected({
-  aType: 'tour', axbType: 'is', bType: 'tour',
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
   fields: ['data.name', 'aUid'],
 });
 
 // query.join — server-side expand (fan-out from a set of sources)
 const legs = await (client as JoinExtension).expand({
-  aType: 'tour', axbType: 'hasDeparture', bType: 'departure',
+  aType: 'tour',
+  axbType: 'hasDeparture',
+  bType: 'departure',
   sources: [{ aUid: tourId }],
 });
 
 // query.dml — bulk delete / update (Enterprise opt-in; SQLite + DO always on)
-await (client as DmlExtension).bulkDelete({ aType: 'tour', axbType: 'hasDeparture', bType: 'departure', aUid: tourId });
+await (client as DmlExtension).bulkDelete({
+  aType: 'tour',
+  axbType: 'hasDeparture',
+  bType: 'departure',
+  aUid: tourId,
+});
 await (client as DmlExtension).bulkUpdate(
-  { aType: 'tour', axbType: 'is', bType: 'tour', filters: [{ field: 'data.status', op: '==', value: 'draft' }] },
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    filters: [{ field: 'data.status', op: '==', value: 'draft' }],
+  },
   { 'data.status': 'archived' },
 );
 
@@ -185,7 +202,9 @@ const tree = await (client as TraversalExtension).runEngineTraversal({
 
 // search.vector — approximate nearest-neighbour (Firestore both editions)
 const similar = await (client as VectorExtension).findNearest({
-  aType: 'tour', axbType: 'is', bType: 'tour',
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
   queryVector: [0.1, 0.2, 0.3],
   vectorField: 'data.embedding',
   limit: 5,
@@ -193,13 +212,17 @@ const similar = await (client as VectorExtension).findNearest({
 
 // search.fullText — full-text search (Enterprise; `fields` throws INVALID_QUERY if non-empty)
 const results = await (client as FullTextExtension).fullTextSearch({
-  aType: 'tour', axbType: 'is', bType: 'tour',
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
   query: 'dolomites',
 });
 
 // search.geo — geospatial radius search (Enterprise)
 const nearby = await (client as GeoExtension).geoSearch({
-  aType: 'tour', axbType: 'is', bType: 'tour',
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
   geoField: 'data.location',
   center: { latitude: 46.4, longitude: 11.9 },
   radiusMeters: 50000,

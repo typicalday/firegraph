@@ -324,6 +324,18 @@ export async function runFirestoreEngineTraversal(
   collectionPath: string,
   params: EngineTraversalParams,
 ): Promise<EngineTraversalResult> {
+  // The Firestore emulator does not support the nested Pipeline primitives
+  // (`define`, `addFields`, `toArrayExpression`, `variable`) — dispatching
+  // would result in an unresolved promise and a test timeout instead of a
+  // clear error. Throw immediately so `tryEngineTraversal`'s auto-mode
+  // catch can fall back to the per-hop loop without hanging.
+  if (process.env.FIRESTORE_EMULATOR_HOST) {
+    throw new FiregraphError(
+      'engine traversal requires Pipelines — not supported on the Firestore emulator',
+      'UNSUPPORTED_OPERATION',
+    );
+  }
+
   const compiled = compileEngineTraversal(params);
   if (!compiled.eligible) {
     throw new FiregraphError(

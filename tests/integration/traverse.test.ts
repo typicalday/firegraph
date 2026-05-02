@@ -105,11 +105,11 @@ describe('traversal integration', () => {
   });
 
   describe('budget enforcement', () => {
-    it('maxReads=2 with fan-out sets truncated=true', async () => {
+    it('maxReads=1 with two-hop traversal sets truncated=true', async () => {
       const result = await createTraversal(g, 'tour1')
         .follow('hasDeparture')
         .follow('hasRider')
-        .run({ maxReads: 2 });
+        .run({ maxReads: 1 });
 
       expect(result.totalReads).toBeLessThanOrEqual(2);
       expect(result.truncated).toBe(true);

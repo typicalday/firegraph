@@ -481,7 +481,13 @@ class TraversalBuilderImpl implements TraversalBuilder {
       return refuse(compiled.reason);
     }
 
-    const engineResult = await client.runEngineTraversal(params);
+    let engineResult: EngineTraversalResult;
+    try {
+      engineResult = await client.runEngineTraversal(params);
+    } catch (err) {
+      if (engineMode === 'force') throw err;
+      return undefined;
+    }
 
     // Translate `EngineTraversalResult` into `TraversalResult` (`HopResult[]`).
     // Engine traversal counts as ONE round trip but the response can carry
