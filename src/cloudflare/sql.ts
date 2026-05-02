@@ -14,6 +14,7 @@
 
 import { FiregraphError } from '../errors.js';
 import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
 import {
   compileDataOpsExpr,
   isFirestoreSpecialType,
@@ -23,8 +24,14 @@ import { assertJsonSafePayload } from '../internal/sqlite-payload-guard.js';
 import { assertUpdatePayloadExclusive, flattenPatch } from '../internal/write-plan.js';
 import type { GraphTimestamp } from '../timestamp.js';
 import { GraphTimestampImpl } from '../timestamp.js';
-import type { QueryFilter, QueryOptions, StoredGraphRecord } from '../types.js';
-import { DO_FIELD_TO_COLUMN, quoteDOIdent } from './schema.js';
+import type {
+  AggregateSpec,
+  ExpandParams,
+  QueryFilter,
+  QueryOptions,
+  StoredGraphRecord,
+} from '../types.js';
+import { DO_FIELD_TO_COLUMN, quoteDOColumnAlias, quoteDOIdent } from './schema.js';
 
 const DO_BACKEND_LABEL = 'DO SQLite';
 const DO_BACKEND_ERR_LABEL = 'DO SQLite backend';
@@ -238,6 +245,110 @@ export function compileDOSelect(
 }
 
 /**
+ * Compile an `expand()` fan-out into one DO-side SELECT statement. Mirrors
+ * `compileExpand` in the shared SQLite module but without a scope predicate
+ * — every row in this DO belongs to the same subgraph.
+ *
+ * Forward direction:
+ *
+ *   SELECT * FROM <table>
+ *   WHERE "axbType" = ? AND "aUid" IN (?, ?, …)
+ *     [AND "aType" = ?] [AND "bType" = ?]
+ *   [ORDER BY …]
+ *   [LIMIT ?]
+ *
+ * Reverse swaps the IN-predicate to `"bUid"`. Per-source LIMIT enforcement
+ * is approximated by `sources.length * limitPerSource` (see
+ * `ExpandParams.limitPerSource`); window-function partitioning is out of
+ * scope for the round-trip-collapse goal.
+ *
+ * Empty `params.sources` is rejected at the compiler — `IN ()` is invalid
+ * SQL. The DO backend short-circuits empty input before reaching here.
+ */
+export function compileDOExpand(table: string, params: ExpandParams): CompiledStatement {
+  if (params.sources.length === 0) {
+    throw new FiregraphError(
+      'compileDOExpand requires a non-empty sources list — empty IN () is invalid SQL.',
+      'INVALID_QUERY',
+    );
+  }
+  const direction = params.direction ?? 'forward';
+  // Resolve every column reference through `compileFieldRef` so the
+  // emitted SQL uses the on-disk snake_case names (`a_uid`, `axb_type`,
+  // `b_uid`, …) defined by `DO_FIELD_TO_COLUMN` in `schema.ts`.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const aTypeCol = compileFieldRef('aType').expr;
+  const bTypeCol = compileFieldRef('bType').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+  const sourceColumn = direction === 'forward' ? aUidCol : bUidCol;
+
+  const sqlParams: unknown[] = [params.axbType];
+  const conditions: string[] = [`${axbTypeCol} = ?`];
+
+  const placeholders = params.sources.map(() => '?').join(', ');
+  conditions.push(`${sourceColumn} IN (${placeholders})`);
+  for (const uid of params.sources) sqlParams.push(uid);
+
+  if (params.aType !== undefined) {
+    conditions.push(`${aTypeCol} = ?`);
+    sqlParams.push(params.aType);
+  }
+  if (params.bType !== undefined) {
+    conditions.push(`${bTypeCol} = ?`);
+    sqlParams.push(params.bType);
+  }
+
+  // Self-loop guard for the corner case where the caller asks for the
+  // node-relation as the hop type. See `compileExpand` for the full story.
+  if (params.axbType === NODE_RELATION) {
+    conditions.push(`${aUidCol} != ${bUidCol}`);
+  }
+
+  let sql = `SELECT * FROM ${quoteDOIdent(table)} WHERE ${conditions.join(' AND ')}`;
+
+  if (params.orderBy) {
+    sql += compileOrderBy({ orderBy: params.orderBy }, sqlParams);
+  }
+  if (params.limitPerSource !== undefined) {
+    const totalLimit = params.sources.length * params.limitPerSource;
+    sql += ` LIMIT ?`;
+    sqlParams.push(totalLimit);
+  }
+  return { sql, params: sqlParams };
+}
+
+/**
+ * Hydration-pass for `expand({ hydrate: true })` on a DO. Pulls every node
+ * row whose `bUid` is in the supplied target list (one statement). The
+ * caller stitches alignment in JS via a `Map<bUid, row>`.
+ */
+export function compileDOExpandHydrate(table: string, targetUids: string[]): CompiledStatement {
+  if (targetUids.length === 0) {
+    throw new FiregraphError(
+      'compileDOExpandHydrate requires a non-empty target list — empty IN () is invalid SQL.',
+      'INVALID_QUERY',
+    );
+  }
+  const placeholders = targetUids.map(() => '?').join(', ');
+  const sqlParams: unknown[] = [NODE_RELATION];
+  for (const uid of targetUids) sqlParams.push(uid);
+
+  // Resolve column refs via `compileFieldRef` — see `compileDOExpand`
+  // for the schema-rename rationale.
+  const aUidCol = compileFieldRef('aUid').expr;
+  const bUidCol = compileFieldRef('bUid').expr;
+  const axbTypeCol = compileFieldRef('axbType').expr;
+
+  return {
+    sql:
+      `SELECT * FROM ${quoteDOIdent(table)} ` +
+      `WHERE ${axbTypeCol} = ? AND ${aUidCol} = ${bUidCol} AND ${bUidCol} IN (${placeholders})`,
+    params: sqlParams,
+  };
+}
+
+/**
  * SELECT a single row by doc_id. `doc_id` is the PK so this is an O(1)
  * index lookup.
  */
@@ -246,6 +357,281 @@ export function compileDOSelectByDocId(table: string, docId: string): CompiledSt
     sql: `SELECT * FROM ${quoteDOIdent(table)} WHERE "doc_id" = ? LIMIT 1`,
     params: [docId],
   };
+}
+
+/**
+ * Discriminator for one projected column on the DO backend. The decoder
+ * uses this to recover the JS-shape of the requested field. Mirrors the
+ * shared-SQLite `ProjectedColumnKind` — same kinds, same decode rules. The
+ * two share no module so the symbol is duplicated; the contract is locked
+ * by the cross-backend test in `tests/unit/cloudflare-sql.test.ts`.
+ */
+export type DOProjectedColumnKind =
+  | 'builtin-text'
+  | 'builtin-int'
+  | 'builtin-timestamp'
+  | 'data'
+  | 'json';
+
+/** Per-column metadata returned alongside the compiled projection statement. */
+export interface DOProjectedColumnSpec {
+  /** Original caller-supplied field name. Used as the alias in the SQL
+   *  projection list AND as the key in the returned JS row. */
+  field: string;
+  /** Kind discriminator — see `DOProjectedColumnKind`. */
+  kind: DOProjectedColumnKind;
+  /**
+   * For `kind === 'json'` only: alias of the paired `json_type` companion
+   * column. Uses a positional sentinel (`__fg_t_<idx>`) keyed by the
+   * field's position in the unique projection list rather than the
+   * historical `<field>__t` suffix, which would collide if the caller
+   * projected both `'foo'` and `'foo__t'` (both legal user input).
+   */
+  typeAlias?: string;
+}
+
+/**
+ * Normalize a projection field name to the canonical form `compileFieldRef`
+ * understands: built-ins stay as-is, `data` and `data.*` stay as-is, and a
+ * bare `name` is rewritten to `data.name`. See the shared-SQLite
+ * `normalizeProjectionField` JSDoc for the rationale.
+ */
+function normalizeDOProjectionField(field: string): string {
+  if (field in DO_FIELD_TO_COLUMN) return field;
+  if (field === 'data' || field.startsWith('data.')) return field;
+  return `data.${field}`;
+}
+
+/**
+ * Compile a `findEdgesProjected({ select })` call into a single DO-side
+ * SELECT. Mirrors `compileFindEdgesProjected` from the shared SQLite module
+ * but without a scope predicate — every row in a `FiregraphDO`'s SQLite
+ * belongs to the same subgraph.
+ *
+ * Shape:
+ *
+ *   SELECT
+ *     <expr-1> AS "<field-1>", [json_type(...) AS "__fg_t_<idx>",]
+ *     ...
+ *   FROM <table>
+ *   [WHERE <filters>]
+ *   [ORDER BY ...]
+ *   [LIMIT ?]
+ *
+ * For `data.*` projections the compiler also emits a paired `json_type`
+ * column so the decoder can recover JSON-encoded objects/arrays without a
+ * second round trip. Built-in field projections are passthrough columns.
+ * The companion alias uses a positional sentinel `__fg_t_<idx>` rather
+ * than `<field>__t` to avoid colliding with a user-projected field
+ * literally named `<x>__t`.
+ *
+ * Empty `select` is rejected at the compiler — the client wrapper enforces
+ * this too. Duplicates collapse at compile time, preserving first-occurrence
+ * order.
+ */
+export function compileDOFindEdgesProjected(
+  table: string,
+  select: ReadonlyArray<string>,
+  filters: QueryFilter[],
+  options?: QueryOptions,
+): { stmt: CompiledStatement; columns: DOProjectedColumnSpec[] } {
+  if (select.length === 0) {
+    throw new FiregraphError(
+      'compileDOFindEdgesProjected requires a non-empty select list — ' +
+        'an empty projection has no SQL representation distinct from `findEdges`.',
+      'INVALID_QUERY',
+    );
+  }
+
+  const seen = new Set<string>();
+  const uniqueFields: string[] = [];
+  for (const f of select) {
+    if (!seen.has(f)) {
+      seen.add(f);
+      uniqueFields.push(f);
+    }
+  }
+
+  const projections: string[] = [];
+  const columns: DOProjectedColumnSpec[] = [];
+  for (let idx = 0; idx < uniqueFields.length; idx++) {
+    const field = uniqueFields[idx]!;
+    const canonical = normalizeDOProjectionField(field);
+    const { expr } = compileFieldRef(canonical);
+    // Alias is the caller-supplied field name verbatim — relaxed quoting
+    // accepts dotted paths like `data.detail.region`, mirroring the
+    // SQLite backend's `compileFindEdgesProjected`. The decoder reads
+    // back via `row[c.field]`, so the alias must equal the original
+    // field string.
+    const alias = quoteDOColumnAlias(field);
+    projections.push(`${expr} AS ${alias}`);
+
+    let kind: DOProjectedColumnKind;
+    let typeAliasName: string | undefined;
+    if (canonical === 'data') {
+      kind = 'data';
+    } else if (canonical.startsWith('data.')) {
+      kind = 'json';
+      // Positional sentinel — `<field>__t` would collide if the caller
+      // projected both `'foo'` and `'foo__t'` (both legal user input).
+      typeAliasName = `__fg_t_${idx}`;
+      const typeAlias = quoteDOColumnAlias(typeAliasName);
+      projections.push(`json_type("data", '$.${canonical.slice(5)}') AS ${typeAlias}`);
+    } else {
+      if (canonical === 'v') kind = 'builtin-int';
+      else if (canonical === 'createdAt' || canonical === 'updatedAt') kind = 'builtin-timestamp';
+      else kind = 'builtin-text';
+    }
+    columns.push({ field, kind, typeAlias: typeAliasName });
+  }
+
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+  let sql = `SELECT ${projections.join(', ')} FROM ${quoteDOIdent(table)}${where}`;
+  sql += compileOrderBy(options, params);
+  sql += compileLimit(options, params);
+
+  return { stmt: { sql, params }, columns };
+}
+
+/**
+ * Decode one DO SQL row into the projected JS shape. Same contract as
+ * `decodeProjectedRow` in the shared SQLite module: built-in TEXT/INTEGER
+ * columns pass through with light coercion, timestamps wrap in
+ * `GraphTimestampImpl`, and `data.*` JSON projections use the paired
+ * `json_type` column to recover JSON-encoded objects/arrays.
+ */
+export function decodeDOProjectedRow(
+  row: Record<string, unknown>,
+  columns: DOProjectedColumnSpec[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of columns) {
+    const raw = row[c.field];
+    switch (c.kind) {
+      case 'builtin-text':
+        out[c.field] = raw === null || raw === undefined ? null : String(raw);
+        break;
+      case 'builtin-int':
+        if (raw === null || raw === undefined) {
+          out[c.field] = null;
+        } else if (typeof raw === 'bigint') {
+          out[c.field] = Number(raw);
+        } else if (typeof raw === 'number') {
+          out[c.field] = raw;
+        } else {
+          out[c.field] = Number(raw);
+        }
+        break;
+      case 'builtin-timestamp': {
+        const ms = toMillis(raw);
+        out[c.field] = GraphTimestampImpl.fromMillis(ms) as unknown as GraphTimestamp;
+        break;
+      }
+      case 'data':
+        if (raw === null || raw === undefined || raw === '') {
+          out[c.field] = {};
+        } else {
+          out[c.field] = JSON.parse(raw as string);
+        }
+        break;
+      case 'json': {
+        // Read the paired `json_type` companion column via the positional
+        // sentinel recorded at compile time — see `DOProjectedColumnSpec.typeAlias`.
+        const t = row[c.typeAlias!] as string | null | undefined;
+        if (raw === null || raw === undefined) {
+          out[c.field] = null;
+        } else if (t === 'object' || t === 'array') {
+          out[c.field] = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        } else if (t === 'integer' && typeof raw === 'bigint') {
+          out[c.field] = Number(raw);
+        } else {
+          out[c.field] = raw;
+        }
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Compile an aggregate query for the per-DO single-subgraph table.
+ *
+ * Mirrors `compileAggregate` from the shared SQLite module but without a
+ * scope predicate — every row in a `FiregraphDO`'s SQLite belongs to the
+ * same subgraph. SUM/AVG/MIN/MAX cast the JSON-extracted value through
+ * `CAST(... AS REAL)` for numeric semantics; without the cast,
+ * comparisons would be lexicographic on the underlying string storage.
+ *
+ * The returned tuple includes the alias list so the JS-side caller can
+ * rehydrate the result columns in spec order without reflecting on the
+ * raw row keys (which the SQL layer doesn't guarantee a stable order for).
+ */
+export function compileDOAggregate(
+  table: string,
+  spec: AggregateSpec,
+  filters: QueryFilter[],
+): { stmt: CompiledStatement; aliases: string[] } {
+  const aliases = Object.keys(spec);
+  if (aliases.length === 0) {
+    throw new FiregraphError(
+      'aggregate() requires at least one aggregation in the `aggregates` map.',
+      'INVALID_QUERY',
+    );
+  }
+
+  const projections: string[] = [];
+  for (const alias of aliases) {
+    const { op, field } = spec[alias];
+    // Aliases are inlined into the SQL (SQL aliases can't be bound
+    // parameters). Validate against the same JSON-path-key charset rule
+    // used everywhere else so caller-supplied aliases can't inject SQL.
+    validateJsonPathKey(alias, DO_BACKEND_ERR_LABEL);
+    if (op === 'count') {
+      // Reject a stray field — see `AggregateField` JSDoc for rationale.
+      if (field !== undefined) {
+        throw new FiregraphError(
+          `Aggregate '${alias}' op 'count' must not specify a field — ` +
+            `count operates on rows, not a column expression.`,
+          'INVALID_QUERY',
+        );
+      }
+      projections.push(`COUNT(*) AS ${quoteDOIdent(alias)}`);
+      continue;
+    }
+    if (!field) {
+      throw new FiregraphError(
+        `Aggregate '${alias}' op '${op}' requires a field.`,
+        'INVALID_QUERY',
+      );
+    }
+    const { expr } = compileFieldRef(field);
+    const numeric = `CAST(${expr} AS REAL)`;
+    if (op === 'sum') projections.push(`SUM(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'avg') projections.push(`AVG(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'min') projections.push(`MIN(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else if (op === 'max') projections.push(`MAX(${numeric}) AS ${quoteDOIdent(alias)}`);
+    else
+      throw new FiregraphError(
+        `DO SQLite backend does not support aggregate op: ${String(op)}`,
+        'INVALID_QUERY',
+      );
+  }
+
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const sql = `SELECT ${projections.join(', ')} FROM ${quoteDOIdent(table)}${where}`;
+  return { stmt: { sql, params }, aliases };
 }
 
 /**
@@ -387,6 +773,86 @@ export function compileDODelete(table: string, docId: string): CompiledStatement
   return {
     sql: `DELETE FROM ${quoteDOIdent(table)} WHERE "doc_id" = ?`,
     params: [docId],
+  };
+}
+
+/**
+ * Compile a server-side bulk DELETE for the per-DO single-subgraph table.
+ *
+ * Mirrors `compileBulkDelete` in `src/sqlite/sql.ts` minus the scope
+ * predicate — every row in a `FiregraphDO`'s SQLite belongs to the same
+ * subgraph. The compiler accepts an empty filter list (would emit
+ * `DELETE FROM <table>`), but the `_fgBulkDelete` wire boundary in
+ * `do.ts` rejects that shape as defense-in-depth so a misconfigured stub
+ * can't trigger a full-DO wipe through RPC.
+ */
+export function compileDOBulkDelete(table: string, filters: QueryFilter[]): CompiledStatement {
+  const params: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, params));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+  return {
+    sql: `DELETE FROM ${quoteDOIdent(table)}${where}`,
+    params,
+  };
+}
+
+/**
+ * Compile a server-side bulk UPDATE for the per-DO single-subgraph table.
+ *
+ * The `patch.data` payload is deep-merged into each matching row's `data`
+ * field via the same `flattenPatch` → `compileDataOpsExpr` pipeline that
+ * `compileDOUpdate` (single-row) uses. Identifying columns are read-only.
+ *
+ * Empty patches are rejected — see `compileBulkUpdate` in shared SQLite
+ * for the rationale.
+ */
+export function compileDOBulkUpdate(
+  table: string,
+  filters: QueryFilter[],
+  patchData: Record<string, unknown>,
+  nowMillis: number,
+): CompiledStatement {
+  const dataOps = flattenPatch(patchData);
+  if (dataOps.length === 0) {
+    throw new FiregraphError(
+      'bulkUpdate() patch.data must contain at least one leaf — an empty patch ' +
+        'would only rewrite `updated_at`, which is almost certainly a bug. ' +
+        'Use `setDoc` with merge mode if you want to stamp without editing data.',
+      'INVALID_QUERY',
+    );
+  }
+  for (const op of dataOps) {
+    if (!op.delete) assertJsonSafePayload(op.value, DO_BACKEND_LABEL);
+  }
+  const setParams: unknown[] = [];
+  const expr = compileDataOpsExpr(
+    dataOps,
+    `COALESCE("data", '{}')`,
+    setParams,
+    DO_BACKEND_ERR_LABEL,
+  );
+  if (expr === null) {
+    throw new FiregraphError(
+      'bulkUpdate() patch produced no SQL operations — internal invariant violated.',
+      'INVALID_ARGUMENT',
+    );
+  }
+  const setClauses: string[] = [`"data" = ${expr}`, `"updated_at" = ?`];
+  setParams.push(nowMillis);
+
+  const whereParams: unknown[] = [];
+  const conditions: string[] = [];
+  for (const f of filters) {
+    conditions.push(compileFilter(f, whereParams));
+  }
+  const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+  return {
+    sql: `UPDATE ${quoteDOIdent(table)} SET ${setClauses.join(', ')}${where}`,
+    params: [...setParams, ...whereParams],
   };
 }
 

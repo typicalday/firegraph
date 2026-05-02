@@ -132,3 +132,26 @@ export function validateTableName(name: string): void {
     throw new Error(`Invalid SQL identifier: ${name}. Must match /^[A-Za-z_][A-Za-z0-9_]*$/.`);
   }
 }
+
+/**
+ * Quote a SQL column-alias label. Unlike `quoteIdent` (which validates the
+ * input as a SQL identifier and is used for table/column names), this helper
+ * accepts arbitrary text — projection aliases are pure labels we read back
+ * out of the result row, never executed as identifiers, so they can carry
+ * dots (e.g. `data.detail.region`) and other characters that
+ * `validateTableName` rejects.
+ *
+ * Embedded double quotes are escaped per the SQL standard (`"` → `""`),
+ * which is sufficient to prevent the alias text from terminating the quoted
+ * label early. This is the only injection vector for an alias — even if
+ * the input contained `";--`, double-quote escaping would render it
+ * `""";--` inside `"..."`, harmless.
+ *
+ * Used by `compileFindEdgesProjected` (and the DO mirror) for the
+ * caller-supplied projection field name; the underlying SQL expression
+ * (`json_extract(...)`, column reference) still goes through the strict
+ * compiler with no caller input.
+ */
+export function quoteColumnAlias(label: string): string {
+  return `"${label.replace(/"/g, '""')}"`;
+}

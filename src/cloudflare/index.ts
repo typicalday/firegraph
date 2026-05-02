@@ -32,6 +32,7 @@
  * | Cascade (DO-local)           | ✅                                                       |
  * | Cross-subgraph cascade       | ✅ via registry `getSubgraphTopology` fan-out            |
  * | Bulk-remove-edges (DO-local) | ✅                                                       |
+ * | Bulk DML (`bulkDelete/Update`) | ✅ DO-local, `query.dml` capability                    |
  * | `.subgraph()` routing        | ✅ (auto-provisioned via `namespace.idFromName`)         |
  * | Static registry              | ✅ (validation + migrations)                             |
  * | Dynamic registry             | ✅ `registryMode: { mode: 'dynamic' }`; merged mode too  |
@@ -40,6 +41,7 @@
  */
 
 export type {
+  CloudflareCapability,
   DORPCBackendOptions,
   DurableObjectIdLike,
   FiregraphNamespace,
@@ -66,6 +68,22 @@ export { buildDOSchemaStatements } from './schema.js';
 // pulls `gcp-metadata` → `google-logging-utils` and crashes at module
 // load on workerd's `--disallow-code-generation-from-strings` runtime).
 export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
+export { CapabilityNotSupportedError } from '../errors.js';
 export { generateId } from '../id.js';
+export type { BackendCapabilities } from '../internal/backend.js';
+export { createCapabilities, intersectCapabilities } from '../internal/backend.js';
 export { deleteField } from '../internal/write-plan.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';
+export type {
+  AggregateExtension,
+  AggregateField,
+  AggregateOp,
+  AggregateResult,
+  AggregateSpec,
+  BulkUpdatePatch,
+  Capability,
+  DmlExtension,
+  ExpandParams,
+  ExpandResult,
+  JoinExtension,
+} from '../types.js';

@@ -75,20 +75,30 @@ import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backe
 import { NODE_RELATION } from '../internal/constants.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
+  ExpandParams,
   FindEdgesParams,
   GraphRegistry,
   IndexSpec,
   QueryFilter,
   QueryOptions,
 } from '../types.js';
+import type { ExpandResultWire } from './backend.js';
 import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
-import type { CompiledStatement, DORecordWire } from './sql.js';
+import type { CompiledStatement, DOProjectedColumnSpec, DORecordWire } from './sql.js';
 import {
+  compileDOAggregate,
+  compileDOBulkDelete,
+  compileDOBulkUpdate,
   compileDODelete,
   compileDODeleteAll,
+  compileDOExpand,
+  compileDOExpandHydrate,
+  compileDOFindEdgesProjected,
   compileDOSelect,
   compileDOSelectByDocId,
   compileDOSet,
@@ -255,6 +265,31 @@ export class FiregraphDO extends DurableObject<unknown> {
     const stmt = compileDOSelect(this.table, filters, options);
     const rows = this.execAll(stmt);
     return rows.map(rowToDORecord);
+  }
+
+  /**
+   * Aggregate query (capability `query.aggregate`). Compiles a single
+   * `SELECT` projecting one column per alias; SQLite handles count, sum,
+   * avg, min, max natively. Empty-set fix-ups (NULL → 0 for sum/min/max,
+   * NaN for avg) happen on the client side in `DORPCBackend.aggregate` so
+   * the wire payload stays a plain row of (alias → number | null).
+   */
+  async _fgAggregate(
+    spec: AggregateSpec,
+    filters: QueryFilter[],
+  ): Promise<Record<string, number | null>> {
+    const { stmt, aliases } = compileDOAggregate(this.table, spec, filters);
+    const rows = this.execAll(stmt);
+    const row = rows[0] ?? {};
+    const out: Record<string, number | null> = {};
+    for (const alias of aliases) {
+      const v = (row as Record<string, unknown>)[alias];
+      if (v === null || v === undefined) out[alias] = null;
+      else if (typeof v === 'bigint') out[alias] = Number(v);
+      else if (typeof v === 'number') out[alias] = v;
+      else out[alias] = Number(v);
+    }
+    return out;
   }
 
   // ---------------------------------------------------------------------------
@@ -435,6 +470,157 @@ export class FiregraphDO extends DurableObject<unknown> {
         deleted: 0,
         batches: 0,
         errors: [{ batchIndex: 0, error, operationCount: deleteStmts.length }],
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: server-side DML (capability `query.dml`)
+  //
+  // Single-statement DELETE/UPDATE WHERE that the SQLite engine handles in
+  // one shot — the cap-less alternative is `_fgBulkRemoveEdges` which fetches
+  // doc IDs first, then deletes them one-by-one inside a transaction. The
+  // DML path skips the round-trip and lets SQLite optimize the WHERE.
+  //
+  // RETURNING "doc_id" gives us an authoritative affected-row count; SQLite
+  // ≥3.35 supports it for both DELETE and UPDATE and DO SQLite is always
+  // recent enough.
+  //
+  // Retry policy: unlike `SqliteBackendImpl.bulkDelete` / `bulkUpdate`, which
+  // wrap a chunked retry/backoff loop around each batch (D1's 1000-statement
+  // cap forces chunking, so a single transient failure shouldn't kill the
+  // whole job), the DO path runs a single un-chunked statement against
+  // `state.storage.sql` synchronously. There's nothing to retry inside the
+  // DO — the engine commits or it doesn't. If a caller wants retry semantics
+  // on the wire, they wrap the `bulkDelete` / `bulkUpdate` call themselves.
+  // ---------------------------------------------------------------------------
+
+  async _fgBulkDelete(filters: QueryFilter[], _options?: BulkOptions): Promise<BulkResult> {
+    void _options;
+    // Defense-in-depth at the wire boundary: an empty filter list compiles
+    // to `DELETE FROM <table>` and would wipe every row in the DO. The
+    // client's `bulkDelete` already gates this through scan protection, but
+    // a hand-rolled stub wrapper or direct RPC caller would bypass that
+    // gate. Reject here so the DO's wire surface is safe regardless of
+    // caller path. Use `_fgRemoveNodeCascade` or `_fgDestroy` to wipe a
+    // routed subgraph DO.
+    if (filters.length === 0) {
+      throw new FiregraphError(
+        'bulkDelete() requires at least one filter when targeting a Durable Object backend. ' +
+          'An empty filter list would wipe every row in the DO. To wipe a routed ' +
+          'subgraph DO, use `removeNodeCascade` on the parent node or `_fgDestroy` ' +
+          'directly on the stub.',
+        'INVALID_ARGUMENT',
+      );
+    }
+    const stmt = compileDOBulkDelete(this.table, filters);
+    return this.execDmlWithReturning(stmt);
+  }
+
+  async _fgBulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    _options?: BulkOptions,
+  ): Promise<BulkResult> {
+    void _options;
+    const stmt = compileDOBulkUpdate(this.table, filters, patch.data, Date.now());
+    return this.execDmlWithReturning(stmt);
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: multi-source fan-out (`query.join`)
+  //
+  // One `SELECT … WHERE "aUid" IN (?, ?, …)` (or `"bUid"` for reverse)
+  // collapses N per-source `findEdges` round trips into one. When the
+  // caller asks for hydration, a second IN-clause statement fetches the
+  // target node rows; the DO does the alignment in JS so the wire payload
+  // is two `DORecordWire[]` arrays instead of a JOIN-shaped row that
+  // would force a custom client-side decoder.
+  // ---------------------------------------------------------------------------
+
+  async _fgExpand(params: ExpandParams): Promise<ExpandResultWire> {
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    const stmt = compileDOExpand(this.table, params);
+    const rows = this.state.storage.sql
+      .exec<Record<string, unknown>>(stmt.sql, ...stmt.params)
+      .toArray();
+    const edges = rows.map((row) => rowToDORecord(row));
+    if (!params.hydrate) {
+      return { edges };
+    }
+    // Same alignment story as `SqliteBackendImpl.expand` — collect distinct
+    // target UIDs, fetch them in one IN-clause statement, build a Map keyed
+    // by node UID (== `bUid` for self-loops), then walk the original edge
+    // list to produce the index-aligned `targets` array.
+    const direction = params.direction ?? 'forward';
+    const targetUids = edges.map((e) => (direction === 'forward' ? e.bUid : e.aUid));
+    const uniqueTargets = [...new Set(targetUids)];
+    if (uniqueTargets.length === 0) {
+      return { edges, targets: [] };
+    }
+    const hydrateStmt = compileDOExpandHydrate(this.table, uniqueTargets);
+    const hydrateRows = this.state.storage.sql
+      .exec<Record<string, unknown>>(hydrateStmt.sql, ...hydrateStmt.params)
+      .toArray();
+    const byUid = new Map<string, DORecordWire>();
+    for (const row of hydrateRows) {
+      const node = rowToDORecord(row);
+      byUid.set(node.bUid, node);
+    }
+    const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
+    return { edges, targets };
+  }
+
+  // ---------------------------------------------------------------------------
+  // RPC: server-side projection (`query.select`)
+  //
+  // One `SELECT json_extract(data, '$.f1'), …` returns the projected fields.
+  // The DO leaves decoding to the client because timestamp values need to
+  // rewrap as `GraphTimestampImpl` (a class instance, lost by structured
+  // clone) — instead of inventing per-field timestamp sentinels, we send the
+  // raw rows and the column spec, and let `DORPCBackend.findEdgesProjected`
+  // call `decodeDOProjectedRow` once. The spec is small (≤ ~100 bytes for
+  // a typical projection); structured clone copes happily.
+  // ---------------------------------------------------------------------------
+
+  async _fgFindEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<{ rows: Array<Record<string, unknown>>; columns: DOProjectedColumnSpec[] }> {
+    const { stmt, columns } = compileDOFindEdgesProjected(this.table, select, filters, options);
+    const rows = this.state.storage.sql
+      .exec<Record<string, unknown>>(stmt.sql, ...stmt.params)
+      .toArray();
+    return { rows, columns };
+  }
+
+  /**
+   * Run a DML statement with `RETURNING "doc_id"` so the affected-row count
+   * comes back authoritatively. Errors are caught and surfaced via the
+   * `BulkResult.errors` array (single batch, batchIndex 0) so the wire
+   * payload stays a regular `BulkResult` and the client doesn't have to
+   * differentiate "RPC threw" from "single-statement failure."
+   */
+  private execDmlWithReturning(stmt: CompiledStatement): BulkResult {
+    const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
+    try {
+      const rows = this.state.storage.sql
+        .exec<Record<string, unknown>>(sqlWithReturning, ...stmt.params)
+        .toArray();
+      return { deleted: rows.length, batches: 1, errors: [] };
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      return {
+        deleted: 0,
+        batches: 0,
+        // Like `_fgBulkRemoveEdges`'s catch arm: a single failed statement
+        // is one batch, and the operationCount is "unknown" for a server-
+        // side DML — we report 0 as the lower bound. Callers that care
+        // about partial state should re-query and reconcile.
+        errors: [{ batchIndex: 0, error, operationCount: 0 }],
       };
     }
   }

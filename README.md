@@ -35,9 +35,11 @@ npm install -D tsup typescript
 ```typescript
 import { Firestore } from '@google-cloud/firestore';
 import { createGraphClient, generateId } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
 const db = new Firestore();
-const g = createGraphClient(db, 'graph');
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend);
 
 // Create nodes
 const tourId = generateId();
@@ -83,18 +85,149 @@ UIDs **must** be generated via `generateId()` (21-char nanoid). Short sequential
 
 ```typescript
 import { createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
+// or for Enterprise Firestore (Pipelines, DML, server-side traversal, FTS, geo):
+import { createFirestoreEnterpriseBackend } from 'firegraph/firestore-enterprise';
 
-const g = createGraphClient(db, 'graph');
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend);
 // or with options:
-const g = createGraphClient(db, 'graph', { registry });
+const g = createGraphClient(backend, { registry });
 ```
+
+For non-Firestore backends (SQLite, Cloudflare DO, routing backend) use `createGraphClientFromBackend`, which accepts any raw `StorageBackend<C>` without requiring a named factory:
+
+```typescript
+import { createGraphClientFromBackend } from 'firegraph';
+const g = createGraphClientFromBackend(backend, opts, metaBackend);
+```
+
+`createGraphClientFromBackend` is a deprecated alias for `createGraphClient` — prefer `createGraphClient` directly. Both accept the same `opts` and `metaBackend` arguments.
 
 **Parameters:**
 
-- `db` — A `Firestore` instance from `@google-cloud/firestore`
-- `collectionPath` — Firestore collection path for all graph data
-- `options.registry` — Optional `GraphRegistry` for schema validation
-- `options.queryMode` — Query backend: `'pipeline'` (default) or `'standard'`
+- `backend` — A `StorageBackend<C>` from `createFirestoreStandardBackend`, `createFirestoreEnterpriseBackend`, or another backend factory
+- `opts.registry` — Optional `GraphRegistry` for schema validation
+- `opts.registryMode` — Optional dynamic registry config (`{ mode: 'dynamic', collection? }`). Pass alongside `opts.registry` for merged mode (static + dynamic).
+- `opts.migrationWriteBack` — Optional global write-back mode (`'off'` | `'eager'` | `'background'`)
+- `opts.migrationSandbox` — Optional custom migration evaluator (overrides the default SES executor)
+- `opts.queryMode` — Optional Firestore query backend (`'pipeline'` | `'standard'`; default `'pipeline'`). Ignored by non-Firestore backends.
+- `opts.scanProtection` — Optional full-collection-scan gate (`'off'` | `'warn'` | `'error'`; default `'error'`)
+- `metaBackend` — Optional separate backend for meta-type storage (dynamic registry)
+
+### Capability System
+
+Every client exposes a `capabilities` property (a `BackendCapabilities` set) that reflects what the underlying backend supports. Use it for portable feature checks at runtime:
+
+```typescript
+if (client.capabilities.has('query.join')) {
+  const result = await (client as JoinExtension).expand({ ... });
+}
+```
+
+`GraphClient<C>` is a generic type — the type parameter `C` is a union of the backend's declared `Capability` strings and controls which extension methods are present on the type. `CoreGraphClient` is the unconditional base (read + write + transactions + batch + subgraph + `capabilities`). Helper functions that should accept any client should be typed to `CoreGraphClient` or `GraphReader`/`GraphWriter`.
+
+**Capability values:**
+
+| Capability                                                  | Methods unlocked                                                 | Backends                                                                                                                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `core.read` / `core.write` / `core.batch` / `core.subgraph` | `getNode`, `putNode`, `findEdges`, `batch()`, `subgraph()`, etc. | All                                                                                                                                      |
+| `core.transactions`                                         | `runTransaction(fn)`                                             | Firestore (both), SQLite (`better-sqlite3` only; absent on D1); **absent on Cloudflare DO**                                              |
+| `query.aggregate`                                           | `aggregate(spec)`                                                | All; `min`/`max` only on SQLite + DO (both Firestore editions reject `min`/`max` — classic `Query.aggregate` exposes only count/sum/avg) |
+| `query.select`                                              | `findEdgesProjected(params)`                                     | All                                                                                                                                      |
+| `query.join`                                                | `expand(params)`                                                 | All                                                                                                                                      |
+| `query.dml`                                                 | `bulkDelete(params)`, `bulkUpdate(params)`                       | Enterprise (requires `previewDml: true`), SQLite, DO                                                                                     |
+| `traversal.serverSide`                                      | `runEngineTraversal(params)`                                     | Enterprise                                                                                                                               |
+| `search.vector`                                             | `findNearest(params)`                                            | Firestore (both)                                                                                                                         |
+| `search.fullText`                                           | `fullTextSearch(params)`                                         | Enterprise. **Note:** the `fields` option is not yet supported — passing a non-empty `fields` array throws `INVALID_QUERY`.              |
+| `search.geo`                                                | `geoSearch(params)`                                              | Enterprise                                                                                                                               |
+| `raw.firestore`                                             | _(reserved — no methods yet)_                                    | Firestore (both)                                                                                                                         |
+| `raw.sql`                                                   | _(reserved — no methods yet)_                                    | SQLite                                                                                                                                   |
+| `realtime.listen`                                           | _(reserved — no methods yet)_                                    | _(none currently)_                                                                                                                       |
+
+### Extension Methods
+
+Methods unlocked by optional capabilities. Cast the client to the extension interface or check `client.capabilities` at runtime.
+
+```typescript
+// query.aggregate — count / sum / avg (all backends); min / max (SQLite + DO only)
+const stats = await (client as AggregateExtension).aggregate({
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
+  ops: [
+    { op: 'count', alias: 'total' },
+    { op: 'avg', field: 'data.price', alias: 'avgPrice' },
+  ],
+});
+
+// query.select — projected edge scan
+const names = await (client as SelectExtension).findEdgesProjected({
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
+  fields: ['data.name', 'aUid'],
+});
+
+// query.join — server-side expand (fan-out from a set of sources)
+const legs = await (client as JoinExtension).expand({
+  aType: 'tour',
+  axbType: 'hasDeparture',
+  bType: 'departure',
+  sources: [{ aUid: tourId }],
+});
+
+// query.dml — bulk delete / update (Enterprise opt-in; SQLite + DO always on)
+await (client as DmlExtension).bulkDelete({
+  aType: 'tour',
+  axbType: 'hasDeparture',
+  bType: 'departure',
+  aUid: tourId,
+});
+await (client as DmlExtension).bulkUpdate(
+  {
+    aType: 'tour',
+    axbType: 'is',
+    bType: 'tour',
+    filters: [{ field: 'data.status', op: '==', value: 'draft' }],
+  },
+  { 'data.status': 'archived' },
+);
+
+// traversal.serverSide — multi-hop traversal in one Pipeline round-trip (Enterprise)
+const tree = await (client as TraversalExtension).runEngineTraversal({
+  sources: [{ aType: 'tour', aUid: tourId }],
+  hops: [{ axbType: 'hasDeparture', bType: 'departure', limitPerSource: 10 }],
+});
+
+// search.vector — approximate nearest-neighbour (Firestore both editions)
+const similar = await (client as VectorExtension).findNearest({
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
+  queryVector: [0.1, 0.2, 0.3],
+  vectorField: 'data.embedding',
+  limit: 5,
+});
+
+// search.fullText — full-text search (Enterprise; `fields` throws INVALID_QUERY if non-empty)
+const results = await (client as FullTextExtension).fullTextSearch({
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
+  query: 'dolomites',
+});
+
+// search.geo — geospatial radius search (Enterprise)
+const nearby = await (client as GeoExtension).geoSearch({
+  aType: 'tour',
+  axbType: 'is',
+  bType: 'tour',
+  geoField: 'data.location',
+  center: { latitude: 46.4, longitude: 11.9 },
+  radiusMeters: 50000,
+});
+```
 
 ### Nodes
 
@@ -151,6 +284,10 @@ await g.replaceEdge('tour', tourId, 'hasDeparture', 'departure', depId, { order:
 
 // Delete an edge
 await g.removeEdge(tourId, 'hasDeparture', depId);
+
+// Bulk delete all edges matching a filter (available on all backends)
+const result = await g.bulkRemoveEdges({ aUid: tourId, axbType: 'hasDeparture' });
+// → BulkResult { deleted: number, errors: BulkBatchError[] }
 ```
 
 ### Field Deletion
@@ -286,11 +423,12 @@ await g.runTransaction(async (tx) => {
 
 #### Run Options
 
-| Option                | Type      | Default | Description                  |
-| --------------------- | --------- | ------- | ---------------------------- |
-| `maxReads`            | `number`  | `100`   | Total Firestore read budget  |
-| `concurrency`         | `number`  | `5`     | Max parallel queries per hop |
-| `returnIntermediates` | `boolean` | `false` | Include edges from all hops  |
+| Option                | Type                         | Default  | Description                                                                                                                                  |
+| --------------------- | ---------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxReads`            | `number`                     | `100`    | Total read budget                                                                                                                            |
+| `concurrency`         | `number`                     | `5`      | Max parallel queries per hop                                                                                                                 |
+| `returnIntermediates` | `boolean`                    | `false`  | Include edges from all hops                                                                                                                  |
+| `engineTraversal`     | `'auto' \| 'force' \| 'off'` | `'auto'` | Engine-level traversal on Enterprise backends. `'auto'` silently falls back if ineligible; `'force'` throws if unavailable; `'off'` disables |
 
 When `filter` is set, the `limit` is applied after filtering (in-memory), so Firestore returns all matching edges and the filter + slice happens client-side.
 
@@ -300,6 +438,7 @@ Optional type validation using Zod (or any object with a `.parse()` method):
 
 ```typescript
 import { createRegistry, createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 import { z } from 'zod';
 
 const registry = createRegistry([
@@ -320,7 +459,8 @@ const registry = createRegistry([
   },
 ]);
 
-const g = createGraphClient(db, 'graph', { registry });
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
 
 // This validates against the registry before writing:
 const id = generateId();
@@ -337,8 +477,10 @@ For agent-driven or runtime-extensible schemas, firegraph supports a **dynamic r
 
 ```typescript
 import { createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
-const g = createGraphClient(db, 'graph', {
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
 });
 
@@ -371,7 +513,7 @@ Key behaviors:
 - **After `reloadRegistry()`**: Domain writes are validated against the compiled registry. Unknown types are always rejected.
 - **Upsert semantics**: Calling `defineNodeType('tour', ...)` twice overwrites the previous definition. After reloading, the latest schema is used.
 - **Separate collection**: Meta-nodes can be stored in a different collection via `registryMode: { mode: 'dynamic', collection: 'meta' }`.
-- **Merged mode**: Provide both `registry` (static) and `registryMode` (dynamic) to get a merged registry where static entries take priority and dynamic definitions can only add new types — not override existing ones.
+- **Merged mode**: Pass both `registry` (the static side, typically built via `createRegistry` or `createMergedRegistry`) and `registryMode: { mode: 'dynamic' }`. Firegraph then merges them — static entries take priority and dynamic definitions can only add new types, never override existing ones. There is no separate `mode: 'merged'` value; merged behavior is implied by supplying both options together.
 
 Dynamic registry returns a `DynamicGraphClient` which extends `GraphClient` with `defineNodeType()`, `defineEdgeType()`, and `reloadRegistry()`. Transactions and batches also validate against the compiled dynamic registry.
 
@@ -381,6 +523,7 @@ Firegraph supports schema versioning with automatic migration of records on read
 
 ```typescript
 import { createRegistry, createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 import type { MigrationStep } from 'firegraph';
 
 const migrations: MigrationStep[] = [
@@ -399,7 +542,8 @@ const registry = createRegistry([
   },
 ]);
 
-const g = createGraphClient(db, 'graph', { registry });
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
 
 // Reading a v0 record automatically migrates it to v2 in memory
 const tour = await g.getNode(tourId);
@@ -427,7 +571,8 @@ Resolution order: `entry.migrationWriteBack > client.migrationWriteBack > 'off'`
 
 ```typescript
 // Global default
-const g = createGraphClient(db, 'graph', {
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, {
   registry,
   migrationWriteBack: 'background',
 });
@@ -461,7 +606,8 @@ Stored migration strings must be self-contained — no `import`, `require`, or e
 For custom sandboxing, pass `migrationSandbox` to `createGraphClient()`:
 
 ```typescript
-const g = createGraphClient(db, 'graph', {
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
     const compartment = new Compartment({
@@ -529,7 +675,8 @@ const registry = createRegistry([
   { aType: 'task', axbType: 'is', bType: 'task', allowedIn: ['workspace', '**/workspace'] },
 ]);
 
-const g = createGraphClient(db, 'graph', { registry });
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
 
 // Agent only at root
 await g.putNode('agent', agentId, {}); // OK
@@ -603,6 +750,7 @@ Edges that connect nodes across different subgraphs. The key rule: **edges live 
 
 ```typescript
 import { createGraphClient, createRegistry, createTraversal, generateId } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
 // Registry declares that 'assignedTo' edges live in the 'workflow' subgraph
 const registry = createRegistry([
@@ -611,7 +759,8 @@ const registry = createRegistry([
   { aType: 'task', axbType: 'assignedTo', bType: 'agent', targetGraph: 'workflow' },
 ]);
 
-const g = createGraphClient(db, 'graph', { registry });
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
 
 // Create a task in the root graph
 const taskId = generateId();
@@ -686,7 +835,7 @@ This uses Firestore collection group queries and requires collection group index
 
 #### Multi-Hop Limitation
 
-Each hop resolves its reader from the root client. If hop 1 crosses into a subgraph, hop 2 does **not** stay in that subgraph — it reverts to the root. To chain hops within a subgraph, create a separate traversal from the subgraph client:
+Each hop carries its reader context forward — if hop 1 crosses into a subgraph, hop 2 stays in that subgraph. To return to the root or traverse a different subgraph, create a separate traversal from the desired client:
 
 ```typescript
 // This traversal finds agents in the workflow subgraph
@@ -722,19 +871,22 @@ const id = generateId(); // 21-char URL-safe nanoid
 
 All errors extend `FiregraphError` with a `code` property:
 
-| Error Class              | Code                     | When                                                            |
-| ------------------------ | ------------------------ | --------------------------------------------------------------- |
-| `FiregraphError`         | varies                   | Base class                                                      |
-| `NodeNotFoundError`      | `NODE_NOT_FOUND`         | Node lookup fails (not thrown by `getNode` — it returns `null`) |
-| `EdgeNotFoundError`      | `EDGE_NOT_FOUND`         | Edge lookup fails                                               |
-| `ValidationError`        | `VALIDATION_ERROR`       | Schema validation fails (registry JSON Schema validation)       |
-| `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                                           |
-| `RegistryScopeError`     | `REGISTRY_SCOPE`         | Type not allowed at this subgraph scope                         |
-| `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete                 |
-| `DynamicRegistryError`   | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse                     |
-| `InvalidQueryError`      | `INVALID_QUERY`          | `findEdges` called with no filters                              |
-| `QuerySafetyError`       | `QUERY_SAFETY`           | Query would cause a full collection scan                        |
-| `TraversalError`         | `TRAVERSAL_ERROR`        | `run()` called with zero hops                                   |
+| Error Class                    | Code                        | When                                                                    |
+| ------------------------------ | --------------------------- | ----------------------------------------------------------------------- |
+| `FiregraphError`               | varies                      | Base class                                                              |
+| `NodeNotFoundError`            | `NODE_NOT_FOUND`            | Node lookup fails (not thrown by `getNode` — it returns `null`)         |
+| `EdgeNotFoundError`            | `EDGE_NOT_FOUND`            | Edge lookup fails (not thrown by `getEdge` — it returns `null`)         |
+| `ValidationError`              | `VALIDATION_ERROR`          | Schema validation fails (registry JSON Schema validation)               |
+| `RegistryViolationError`       | `REGISTRY_VIOLATION`        | Triple not registered                                                   |
+| `RegistryScopeError`           | `REGISTRY_SCOPE`            | Type not allowed at this subgraph scope                                 |
+| `MigrationError`               | `MIGRATION_ERROR`           | Migration function fails or chain is incomplete                         |
+| `DynamicRegistryError`         | `DYNAMIC_REGISTRY_ERROR`    | Dynamic registry misconfiguration or misuse                             |
+| `InvalidQueryError`            | `INVALID_QUERY`             | `findEdges` called with no filters                                      |
+| `QuerySafetyError`             | `QUERY_SAFETY`              | Query would cause a full collection scan                                |
+| `TraversalError`               | `TRAVERSAL_ERROR`           | `run()` called with zero hops                                           |
+| `CapabilityNotSupportedError`  | `CAPABILITY_NOT_SUPPORTED`  | Capability-gated method called on a backend that doesn't declare it     |
+| `CrossBackendTransactionError` | `CROSS_BACKEND_TRANSACTION` | `runTransaction()` attempted across backends with different storage     |
+| `DiscoveryError`               | `DISCOVERY_ERROR`           | Entity discovery fails (missing required files, malformed schema, etc.) |
 
 ```typescript
 import { FiregraphError, ValidationError } from 'firegraph';
@@ -765,14 +917,48 @@ import type {
   QueryPlan,
   QueryFilter,
   QueryOptions,
+  QueryMode,
+  ScanProtection,
+  WhereClause,
+  IndexFieldSpec,
+  IndexSpec,
 
-  // Client interfaces
+  // Client interfaces — CoreGraphClient is the unconditional base
+  Capability,
+  CoreGraphClient,
   GraphReader,
   GraphWriter,
-  GraphClient,
+  GraphClient, // generic GraphClient<C extends Capability>
   GraphTransaction,
   GraphBatch,
   GraphClientOptions,
+
+  // Capability-gated extensions
+  AggregateExtension,
+  AggregateField,
+  AggregateOp,
+  AggregateResult,
+  AggregateSpec,
+  SelectExtension,
+  FindEdgesProjectedParams,
+  ProjectedRow,
+  JoinExtension,
+  ExpandParams,
+  ExpandResult,
+  DmlExtension,
+  BulkUpdatePatch,
+  BulkOptions,
+  BulkResult,
+  BulkBatchError,
+  BulkProgress,
+  VectorExtension,
+  FindNearestParams,
+  DistanceMeasure,
+  FullTextSearchExtension,
+  GeoExtension,
+  RawFirestoreExtension,
+  RawSqlExtension,
+  RealtimeListenExtension,
 
   // Registry
   RegistryEntry, // includes targetGraph, allowedIn
@@ -781,9 +967,12 @@ import type {
 
   // Dynamic Registry
   DynamicGraphClient,
+  DynamicGraphMethods,
   DynamicRegistryConfig,
   NodeTypeData,
   EdgeTypeData,
+  DefineTypeOptions,
+  CascadeResult,
 
   // Migration
   MigrationFn,
@@ -791,6 +980,7 @@ import type {
   StoredMigrationStep,
   MigrationExecutor,
   MigrationWriteBack,
+  MigrationResult,
 
   // Traversal
   HopDefinition, // includes targetGraph
@@ -801,9 +991,13 @@ import type {
 
   // Entity Discovery
   DiscoveredEntity,
-  DiscoveryResult,
+  DiscoverResult, // return type of discoverEntities()
+  DiscoveryResult, // { nodes: Map<...>, edges: Map<...> } — the .result field of DiscoverResult
+  DiscoveryWarning,
 } from 'firegraph';
 ```
+
+> **Note:** Several types are defined in the library but not yet exported from the `'firegraph'` entry point: the parameter and result types for `fullTextSearch()`, `geoSearch()`, and `runEngineTraversal()` (`FullTextSearchParams`, `GeoSearchParams`, `GeoPointLiteral`, `EngineHopSpec`, `EngineTraversalParams`, `EngineTraversalResult`), and the extension interface `EngineTraversalExtension`. Rely on type inference or declare local `Parameters<typeof client.fullTextSearch>[0]`-style helpers until these types are promoted to the public export.
 
 ## How It Works
 
@@ -832,68 +1026,118 @@ When you call `findEdges`, the query planner decides the strategy:
 
 ### Traversal Execution
 
-1. Start with `sourceUids = [startUid]`
-2. For each hop in sequence:
-   - Resolve `targetGraph`: check hop override, then registry, then none
-   - If cross-graph (forward + `targetGraph` + `GraphClient` reader): create a subgraph reader via `reader.subgraph(sourceUid, targetGraph)` for each source
-   - Fan out: query edges for each source UID (parallel, bounded by semaphore)
-   - Each `findEdges` call counts as 1 read against the budget
-   - Apply in-memory `filter` if specified, then apply `limit`
-   - Collect edges, extract next source UIDs (deduplicated)
-   - If budget exceeded, mark `truncated` and stop
-3. Return final hop edges as `nodes`, all hop data in `hops`
+Traversal dispatches through three tiers in order:
+
+1. **Engine-level** (Firestore Enterprise, `traversal.serverSide`): collapses the entire hop chain into one nested-Pipeline server-side round trip. Requires every hop to have a positive `limitPerSource`, no JS `filter` predicates, no cross-graph hops, and depth ≤ 5. Counts as `totalReads: 1`. Controlled by `engineTraversal` option (`'auto'` by default).
+
+2. **Expand fast-path** (`query.join`): one `expand()` call per hop instead of one `findEdges` per source. Counts as 1 read per hop regardless of source-set size.
+
+3. **Per-source loop** (all backends): fan-out over source UIDs in parallel (bounded by semaphore). Each `findEdges` call counts as 1 read against the budget.
+
+For each hop the traversal also: resolves `targetGraph` (hop override → registry → none), creates subgraph readers for cross-graph hops, applies in-memory `filter` + `limit`, deduplicates next source UIDs, and stops with `truncated = true` if the budget is exceeded.
 
 ## Query Modes
 
-Firegraph supports two query backends. The mode is set when creating a client:
+Firegraph ships two Firestore backends that you choose at construction time:
 
 ```typescript
-// Pipeline mode (default) — requires Enterprise Firestore
-const g = createGraphClient(db, 'graph');
+import { createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
+import { createFirestoreEnterpriseBackend } from 'firegraph/firestore-enterprise';
 
-// Standard mode (opt-in) — for emulator or small datasets
-const g = createGraphClient(db, 'graph', { queryMode: 'standard' });
+// Standard — works on any Firestore project, uses classic .where().get() queries
+const backend = createFirestoreStandardBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
+
+// Enterprise — uses Firestore Pipelines by default; requires Enterprise Firestore
+const backend = createFirestoreEnterpriseBackend(db, 'graph');
+const g = createGraphClient(backend, { registry });
+
+// Enterprise with classic query path (e.g. to avoid full-collection scans)
+const backend = createFirestoreEnterpriseBackend(db, 'graph', { defaultQueryMode: 'classic' });
 ```
 
-### Pipeline Mode (Default)
+### Standard Backend (`firegraph/firestore-standard`)
 
-Uses the Firestore Pipeline API (`db.pipeline()`). This is the recommended mode for production.
+Uses classic Firestore queries (`.where().get()`). Works on any Firestore project (no Enterprise edition required). Limitations:
 
-- Enables queries on `data.*` fields without composite indexes
-- Requires **Firestore Enterprise** edition
-- Pipeline API is currently in Preview
+| `data.*` Filters              | Risk                              |
+| ----------------------------- | --------------------------------- |
+| Fails without composite index | Query errors for unindexed fields |
 
-### Standard Mode
+Appropriate for:
 
-Uses standard Firestore queries (`.where().get()`). Use only if you understand the limitations:
-
-| Firestore Edition | With `data.*` Filters                  | Risk                              |
-| ----------------- | -------------------------------------- | --------------------------------- |
-| Enterprise        | Full collection scan (no index needed) | High billing on large collections |
-| Standard          | Fails without composite index          | Query errors for unindexed fields |
-
-Standard mode is appropriate for:
-
-- **Emulator** — the emulator doesn't support pipelines, so firegraph auto-falls back to standard mode when `FIRESTORE_EMULATOR_HOST` is set
-- **Small datasets** where full scans are acceptable
+- Any Firestore project (Standard or Enterprise edition)
+- **Emulator** testing — classic queries work out of the box
 - Projects that manage their own composite indexes
 
-### Emulator Auto-Fallback
+### Enterprise Backend (`firegraph/firestore-enterprise`)
 
-When `FIRESTORE_EMULATOR_HOST` is detected, firegraph automatically uses standard mode regardless of the `queryMode` setting. No configuration needed.
+Uses the Firestore Pipeline API (`db.pipeline()`) by default. Requires **Firestore Enterprise** edition.
 
-### Transactions
+- Enables queries on `data.*` fields without composite indexes
+- Unlocks additional capabilities: `query.dml`, `traversal.serverSide`, `search.fullText`, `search.geo`
 
-Transactions always use standard Firestore queries, even when the client is in pipeline mode. This is because Pipeline queries are not transactionally bound — they see committed state, not the transaction's isolated view.
+**Emulator auto-fallback:** when `FIRESTORE_EMULATOR_HOST` is detected, the Enterprise backend automatically switches to the classic query path (pipelines aren't supported in the emulator). No configuration needed.
+
+**Transactions** always use the classic query path regardless of `defaultQueryMode`, because Pipeline queries are not transactionally bound.
+
+### SQLite Backend (`firegraph/sqlite`)
+
+Shared-table SQLite backend for Node.js (`better-sqlite3`) and Cloudflare D1. Supports all four core capabilities plus `query.aggregate`, `query.select`, `query.join`, and `query.dml`. Does not support `search.*`.
+
+```typescript
+import { createSqliteBackend } from 'firegraph/sqlite';
+import { createGraphClientFromBackend } from 'firegraph';
+
+const backend = createSqliteBackend(executor, 'graph');
+const g = createGraphClientFromBackend(backend, { registry });
+```
+
+Note: `core.transactions` is only declared when `executor.transaction` is defined — `better-sqlite3` provides this, but Cloudflare D1 does not.
+
+### Cloudflare Durable Object Backend (`firegraph/cloudflare`)
+
+Runs inside a Durable Object via `state.storage.sql`. Same capability set as SQLite minus `core.transactions` (the DO's single-threaded executor cannot block on transaction callbacks) and `raw.sql` (the DO SQL surface is hidden behind RPC).
+
+```typescript
+// In your DO class file (workerd bundle):
+import { FiregraphDO } from 'firegraph/cloudflare';
+export class MyGraphDO extends FiregraphDO {}
+
+// In your backend code (Node):
+import { DORPCBackend, createDOClient } from 'firegraph/cloudflare';
+const g = createDOClient(env.MY_GRAPH, 'graph', { registry });
+```
+
+`firegraph/cloudflare` also re-exports `createRegistry`, `createMergedRegistry`, `generateId`, `META_NODE_TYPE`, `META_EDGE_TYPE`, and `deleteField()` so workerd-bundled code can build registries without statically importing `@google-cloud/firestore`.
+
+`createSiblingClient(client, siblingRootKey)` creates a peer root-level `DOGraphClient` for a sibling collection within the same Durable Object — useful when a DO hosts multiple logical graph roots.
+
+### Routing Backend (`firegraph/backend`)
+
+Assembles a single capability-typed backend that routes operations to the appropriate per-subgraph backend. Use when different subgraphs live in different storage systems.
+
+```typescript
+import { createRoutingBackend } from 'firegraph/backend';
+import { createGraphClientFromBackend } from 'firegraph';
+
+const backend = createRoutingBackend(defaultBackend, {
+  'users/*': userBackend,
+});
+const g = createGraphClientFromBackend(backend, { registry });
+```
+
+`firegraph/backend` also exports `StorageBackend`, `BackendCapabilities`, `createCapabilities`, and `intersectCapabilities` for authors implementing custom backends.
 
 ### Config File
 
-Set the query mode in `firegraph.config.ts`:
+Set the default backend in `firegraph.config.ts`:
 
 ```typescript
 export default defineConfig({
   entities: './entities',
-  queryMode: 'pipeline', // or 'standard'
+  queryMode: 'pipeline', // 'pipeline' selects Enterprise, 'standard' selects Standard
 });
 ```
 

@@ -11,7 +11,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { createGraphClient } from '../../src/firestore.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import {
   cleanupCollection,
   getAdminFirestore,

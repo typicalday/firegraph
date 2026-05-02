@@ -98,8 +98,21 @@ import type {
   GraphClientOptions,
   GraphRegistry,
 } from '../types.js';
-import type { FiregraphNamespace } from './backend.js';
+import type { CloudflareCapability, FiregraphNamespace } from './backend.js';
 import { DORPCBackend } from './backend.js';
+
+/**
+ * The DO declares a strict subset of `Capability` (no `search.*`,
+ * `realtime.listen`, or `raw.*`). Local variables and helper closures
+ * that round-trip the client need to use the narrower form so that a
+ * `GraphClient<CloudflareCapability>` (which doesn't promise, e.g.,
+ * `findNearest`) is assignable. Using the unparameterized
+ * `GraphClient` here would require the DO to implement every
+ * extension method, which would defeat the whole point of the
+ * capability gate.
+ */
+type DOGraphClient = GraphClient<CloudflareCapability>;
+type DODynamicGraphClient = DynamicGraphClient<CloudflareCapability>;
 
 /**
  * Options for `createDOClient`. Same shape as `GraphClientOptions`; the DO
@@ -125,17 +138,17 @@ export function createDOClient(
   namespace: FiregraphNamespace,
   rootKey: string,
   options: DOClientOptions & { registryMode: DynamicRegistryConfig },
-): DynamicGraphClient;
+): DODynamicGraphClient;
 export function createDOClient(
   namespace: FiregraphNamespace,
   rootKey: string,
   options?: DOClientOptions,
-): GraphClient;
+): DOGraphClient;
 export function createDOClient(
   namespace: FiregraphNamespace,
   rootKey: string,
   options: DOClientOptions = {},
-): GraphClient | DynamicGraphClient {
+): DOGraphClient | DODynamicGraphClient {
   if (!rootKey || typeof rootKey !== 'string') {
     throw new FiregraphError(
       `createDOClient: rootKey must be a non-empty string, got ${JSON.stringify(rootKey)}.`,
@@ -159,7 +172,7 @@ export function createDOClient(
   // before `client` is assigned is a programming error in this module, not
   // a user-facing scenario — hence the throw rather than a silent
   // `undefined` return.
-  let client: GraphClient | DynamicGraphClient | undefined;
+  let client: DOGraphClient | DODynamicGraphClient | undefined;
   const registryAccessor = (): GraphRegistry | undefined => {
     if (!client) {
       throw new FiregraphError(
@@ -190,7 +203,7 @@ export function createDOClient(
   // cloning isn't needed: `GraphClientOptions` values are either primitives
   // or registries/functions the caller shouldn't mutate in place anyway.
   const siblingOptions: DOClientOptions = { ...options };
-  const makeSiblingClient = (siblingRootKey: string): GraphClient | DynamicGraphClient =>
+  const makeSiblingClient = (siblingRootKey: string): DOGraphClient | DODynamicGraphClient =>
     createDOClient(namespace, siblingRootKey, siblingOptions);
 
   const backend = new DORPCBackend(namespace, {
@@ -265,15 +278,15 @@ export function createDOClient(
  *                         as `createDOClient`'s `rootKey`: non-empty,
  *                         no `/`.
  */
-export function createSiblingClient(client: GraphClient, siblingRootKey: string): GraphClient;
+export function createSiblingClient(client: DOGraphClient, siblingRootKey: string): DOGraphClient;
 export function createSiblingClient(
-  client: DynamicGraphClient,
+  client: DODynamicGraphClient,
   siblingRootKey: string,
-): DynamicGraphClient;
+): DODynamicGraphClient;
 export function createSiblingClient(
-  client: GraphClient | DynamicGraphClient,
+  client: DOGraphClient | DODynamicGraphClient,
   siblingRootKey: string,
-): GraphClient | DynamicGraphClient {
+): DOGraphClient | DODynamicGraphClient {
   if (!siblingRootKey || typeof siblingRootKey !== 'string') {
     throw new FiregraphError(
       `createSiblingClient: siblingRootKey must be a non-empty string, got ${JSON.stringify(siblingRootKey)}.`,
@@ -306,7 +319,7 @@ export function createSiblingClient(
     backend &&
     (
       backend as {
-        makeSiblingClient?: (k: string) => GraphClient | DynamicGraphClient;
+        makeSiblingClient?: (k: string) => DOGraphClient | DODynamicGraphClient;
       }
     ).makeSiblingClient;
   if (typeof maker !== 'function') {

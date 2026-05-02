@@ -1,4 +1,4 @@
-export { createGraphClientFromBackend } from './client.js';
+export { createGraphClient, createGraphClientFromBackend } from './client.js';
 export type { CodegenOptions } from './codegen/index.js';
 export { generateTypes } from './codegen/index.js';
 export type {
@@ -25,6 +25,7 @@ export {
   NODE_TYPE_SCHEMA,
 } from './dynamic-registry.js';
 export {
+  CapabilityNotSupportedError,
   CrossBackendTransactionError,
   DynamicRegistryError,
   EdgeNotFoundError,
@@ -38,7 +39,6 @@ export {
   TraversalError,
   ValidationError,
 } from './errors.js';
-export { createGraphClient } from './firestore.js';
 export { generateId } from './id.js';
 export type {
   FirestoreIndex,
@@ -63,7 +63,6 @@ export type { QueryClientErrorCode, QueryClientOptions } from './query-client/in
 export { QueryClient, QueryClientError } from './query-client/index.js';
 export type { QuerySafetyResult } from './query-safety.js';
 export { analyzeQuerySafety } from './query-safety.js';
-export { buildEdgeRecord, buildNodeRecord } from './record.js';
 export { createMergedRegistry, createRegistry } from './registry.js';
 export {
   compileMigrationFn,
@@ -88,20 +87,37 @@ export {
 } from './serialization.js';
 export { createTraversal } from './traverse.js';
 export type {
+  AggregateExtension,
+  AggregateField,
+  AggregateOp,
+  AggregateResult,
+  AggregateSpec,
   BulkBatchError,
   BulkOptions,
   BulkProgress,
   BulkResult,
+  BulkUpdatePatch,
+  Capability,
   CascadeResult,
+  CoreGraphClient,
   DefineTypeOptions,
   DiscoveredEntity,
   DiscoveryResult,
+  DistanceMeasure,
+  DmlExtension,
   DynamicGraphClient,
+  DynamicGraphMethods,
   DynamicRegistryConfig,
   EdgeTopology,
   EdgeTypeData,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
+  FindEdgesProjectedParams,
+  FindNearestParams,
   FindNodesParams,
+  FullTextSearchExtension,
+  GeoExtension,
   GraphBatch,
   GraphClient,
   GraphClientOptions,
@@ -114,22 +130,29 @@ export type {
   HopResult,
   IndexFieldSpec,
   IndexSpec,
+  JoinExtension,
   MigrationExecutor,
   MigrationFn,
   MigrationStep,
   MigrationWriteBack,
   NodeTypeData,
+  ProjectedRow,
   QueryFilter,
   QueryMode,
   QueryOptions,
   QueryPlan,
+  RawFirestoreExtension,
+  RawSqlExtension,
+  RealtimeListenExtension,
   RegistryEntry,
   ScanProtection,
+  SelectExtension,
   StoredGraphRecord,
   StoredMigrationStep,
   TraversalBuilder,
   TraversalOptions,
   TraversalResult,
+  VectorExtension,
   WhereClause,
 } from './types.js';
 export type {

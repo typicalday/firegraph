@@ -8,7 +8,7 @@ import {
   META_NODE_TYPE,
 } from './dynamic-registry.js';
 import { DynamicRegistryError, FiregraphError, QuerySafetyError } from './errors.js';
-import type { StorageBackend, WritableRecord } from './internal/backend.js';
+import type { BackendCapabilities, StorageBackend, WritableRecord } from './internal/backend.js';
 import { NODE_RELATION } from './internal/constants.js';
 import { assertNoDeleteSentinels, flattenPatch } from './internal/write-plan.js';
 import type { MigrationResult } from './migration.js';
@@ -19,15 +19,29 @@ import { createMergedRegistry } from './registry.js';
 import { precompileSource } from './sandbox.js';
 import { GraphTransactionImpl } from './transaction.js';
 import type {
+  AggregateResult,
+  AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
+  Capability,
   CascadeResult,
+  CoreGraphClient,
   DefineTypeOptions,
   DynamicGraphClient,
+  DynamicGraphMethods,
   DynamicRegistryConfig,
   EdgeTopology,
+  EngineTraversalParams,
+  EngineTraversalResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
+  FindEdgesProjectedParams,
+  FindNearestParams,
   FindNodesParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphBatch,
   GraphClient,
   GraphClientOptions,
@@ -37,6 +51,7 @@ import type {
   MigrationExecutor,
   MigrationFn,
   MigrationWriteBack,
+  ProjectedRow,
   QueryFilter,
   QueryOptions,
   ScanProtection,
@@ -64,8 +79,18 @@ function buildWritableEdgeRecord(
   return { aType, aUid, axbType, bType, bUid, data };
 }
 
-export class GraphClientImpl implements DynamicGraphClient {
+export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
   readonly scanProtection: ScanProtection;
+
+  /**
+   * Capability set of the underlying backend. Mirrors `backend.capabilities`
+   * verbatim so callers can portability-check (`client.capabilities.has(
+   * 'query.join')`) without reaching for the backend handle. Static for the
+   * lifetime of the client.
+   */
+  get capabilities(): BackendCapabilities {
+    return this.backend.capabilities;
+  }
 
   // Static mode
   private readonly staticRegistry?: GraphRegistry;
@@ -479,6 +504,51 @@ export class GraphClientImpl implements DynamicGraphClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Aggregate query (capability: query.aggregate)
+  // ---------------------------------------------------------------------------
+
+  async aggregate<A extends AggregateSpec>(
+    params: FindEdgesParams & { aggregates: A },
+  ): Promise<AggregateResult<A>> {
+    if (!this.backend.aggregate) {
+      throw new FiregraphError(
+        'aggregate() is not supported by the current storage backend.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+
+    // Allow zero-filter aggregates (e.g. count(*) over the whole collection).
+    // findEdges-style buildEdgeQueryPlan rejects empty filter sets because a
+    // bare findEdges with no identifying fields would be a full collection
+    // scan; aggregate() is the legitimate use case for that shape.
+    const hasAnyFilter =
+      params.aType ||
+      params.aUid ||
+      params.axbType ||
+      params.bType ||
+      params.bUid ||
+      (params.where && params.where.length > 0);
+
+    if (!hasAnyFilter) {
+      this.checkQuerySafety([], params.allowCollectionScan);
+      const result = await this.backend.aggregate(params.aggregates, []);
+      return result as AggregateResult<A>;
+    }
+
+    const plan = buildEdgeQueryPlan(params);
+    if (plan.strategy === 'get') {
+      throw new FiregraphError(
+        'aggregate() requires a query, not a direct document lookup. ' +
+          'Omit one of aUid/axbType/bUid to force a query strategy.',
+        'INVALID_QUERY',
+      );
+    }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+    const result = await this.backend.aggregate(params.aggregates, plan.filters);
+    return result as AggregateResult<A>;
+  }
+
+  // ---------------------------------------------------------------------------
   // Bulk operations
   // ---------------------------------------------------------------------------
 
@@ -488,6 +558,398 @@ export class GraphClientImpl implements DynamicGraphClient {
 
   async bulkRemoveEdges(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
     return this.backend.bulkRemoveEdges(params, this, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Server-side DML (capability: query.dml)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Single-statement bulk DELETE. Translates `params` to a filter list via
+   * `buildEdgeQueryPlan` (the same plan `findEdges` uses) and dispatches to
+   * `backend.bulkDelete`. The fetch-then-delete loop in `bulkRemoveEdges`
+   * is the cap-less fallback; this method is the fast path on backends
+   * declaring `query.dml`.
+   *
+   * Scan-protection rules match `findEdges`: a query with no identifying
+   * fields requires `allowCollectionScan: true` to pass. A bare-empty
+   * filter set (no `aType`, `aUid`, etc., no `where`) is allowed at this
+   * layer — shared SQLite bounds the blast radius via its leading `scope`
+   * predicate — but the DO RPC backend rejects empty filters at the wire
+   * boundary as defense-in-depth. To wipe a routed subgraph DO, use
+   * `removeNodeCascade` on the parent node instead.
+   */
+  async bulkDelete(params: FindEdgesParams, options?: BulkOptions): Promise<BulkResult> {
+    if (!this.backend.bulkDelete) {
+      throw new FiregraphError(
+        'bulkDelete() is not supported by the current storage backend. ' +
+          'Fall back to bulkRemoveEdges() for backends without query.dml ' +
+          '(e.g. Firestore Standard).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters = this.buildDmlFilters(params);
+    return this.backend.bulkDelete(filters, options);
+  }
+
+  /**
+   * Single-statement bulk UPDATE. Same translation path as `bulkDelete`,
+   * but the patch is deep-merged into each matching row's `data` via the
+   * shared `flattenPatch` pipeline. Identifying columns are immutable
+   * through this path (see `BulkUpdatePatch` JSDoc).
+   *
+   * Empty-patch rejection happens inside the backend (`compileBulkUpdate`)
+   * — a `data: {}` payload would only rewrite `updated_at`, which is
+   * almost certainly a bug.
+   */
+  async bulkUpdate(
+    params: FindEdgesParams,
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    if (!this.backend.bulkUpdate) {
+      throw new FiregraphError(
+        'bulkUpdate() is not supported by the current storage backend.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters = this.buildDmlFilters(params);
+    return this.backend.bulkUpdate(filters, patch, options);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Multi-source fan-out (capability: query.join)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fan out from `params.sources` over a single edge type in one round trip.
+   * On backends without `query.join`, throws `UNSUPPORTED_OPERATION` — the
+   * cap-less fallback is the per-source `findEdges` loop, which lives in
+   * `traverse.ts` (the higher-level traversal walker) rather than here.
+   *
+   * `expand()` is intentionally edge-type-only — the source set is a flat
+   * UID list and the hop matches one `axbType`. Multi-axbType expansions
+   * become multiple `expand()` calls, one per relation.
+   *
+   * `params.sources.length === 0` short-circuits to an empty result. The
+   * backend never sees the call. (`compileExpand` itself rejects empty
+   * because `IN ()` is not valid SQL.)
+   */
+  async expand(params: ExpandParams): Promise<ExpandResult> {
+    if (!this.backend.expand) {
+      throw new FiregraphError(
+        'expand() is not supported by the current storage backend. ' +
+          'Backends without `query.join` can use createTraversal() instead — ' +
+          'the per-hop loop is functionally equivalent (just slower).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    return this.backend.expand(params);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Engine-level multi-hop traversal (capability: traversal.serverSide)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Compile a multi-hop traversal spec into one server-side nested
+   * Pipeline and dispatch a single round trip.
+   *
+   * Backends declaring `traversal.serverSide` (Firestore Enterprise
+   * today) install this method; everywhere else, it throws
+   * `UNSUPPORTED_OPERATION`. The capability gate matches the type-level
+   * surface — `GraphClient<C>` only exposes `runEngineTraversal` when
+   * `'traversal.serverSide' extends C`.
+   *
+   * Most callers should not invoke this method directly; the
+   * `createTraversal(...).run()` builder routes through it
+   * automatically when `engineTraversal: 'auto'` (the default) and
+   * the spec is eligible per `firestore-traverse-compiler.ts`. Calling
+   * directly is appropriate for benchmarking or for callers that have
+   * already shaped their hop chain into the strict
+   * `EngineTraversalParams` shape.
+   *
+   * `params.sources.length === 0` short-circuits to empty per-hop
+   * arrays. The backend never sees the call.
+   */
+  async runEngineTraversal(params: EngineTraversalParams): Promise<EngineTraversalResult> {
+    if (!this.backend.runEngineTraversal) {
+      throw new FiregraphError(
+        'runEngineTraversal() is not supported by the current storage backend. ' +
+          'Backends without `traversal.serverSide` can use createTraversal() instead — ' +
+          'the per-hop loop is functionally equivalent for in-graph specs (different ' +
+          'round-trip profile).',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.sources.length === 0) {
+      return {
+        hops: params.hops.map(() => ({ edges: [], sourceCount: 0 })),
+        totalReads: 0,
+      };
+    }
+    return this.backend.runEngineTraversal(params);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Server-side projection (capability: query.select)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Server-side projection — fetch only the requested fields from each
+   * matching edge. The backend translates the call into a projecting query
+   * (`SELECT json_extract(...)` on SQLite/DO, `Query.select(...)` on
+   * Firestore Standard, classic projection on Enterprise) so the wire
+   * payload is reduced to just the requested fields.
+   *
+   * Resolution rules for `select` (mirrored across all backends):
+   *
+   *   - Built-in envelope fields (`aType`, `aUid`, `axbType`, `bType`,
+   *     `bUid`, `createdAt`, `updatedAt`, `v`) → resolve to the typed
+   *     column / Firestore field directly.
+   *   - `'data'` literal → returns the whole user payload.
+   *   - `'data.<x>'` → explicit nested path, returned at the same shape.
+   *   - bare name → rewritten to `data.<name>` (the canonical "give me a
+   *     few keys out of the JSON payload" shape).
+   *
+   * Empty `select: []` is rejected with `INVALID_QUERY`. Duplicate entries
+   * are de-duped (first-occurrence order preserved); the result row carries
+   * one slot per unique field.
+   *
+   * Migrations are *not* applied to the result. The caller asked for a
+   * partial shape, and rehydrating it through the migration pipeline would
+   * require synthesising every absent field — see
+   * `StorageBackend.findEdgesProjected` for the rationale.
+   *
+   * Scan protection follows the `findEdges` rules: a query with no
+   * identifying fields requires `allowCollectionScan: true` to pass. The
+   * cap-less fallback would be `findEdges` + JS-side projection, but that
+   * defeats the wire-payload reduction; backends without `query.select`
+   * throw `UNSUPPORTED_OPERATION` rather than silently materialising full
+   * rows.
+   */
+  async findEdgesProjected<F extends ReadonlyArray<string>>(
+    params: FindEdgesProjectedParams<F>,
+  ): Promise<Array<ProjectedRow<F>>> {
+    if (!this.backend.findEdgesProjected) {
+      throw new FiregraphError(
+        'findEdgesProjected() is not supported by the current storage backend. ' +
+          'There is no client-side fallback because the wire-payload reduction ' +
+          'is the entire point of the API — use findEdges() and project in JS ' +
+          'if the backend does not declare `query.select`.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    if (params.select.length === 0) {
+      throw new FiregraphError(
+        'findEdgesProjected() requires a non-empty `select` list.',
+        'INVALID_QUERY',
+      );
+    }
+
+    // Reuse the same plan + scan-safety pipeline as `findEdges` so the
+    // identifier-vs-where rules and `allowCollectionScan` semantics behave
+    // identically. A GET-shape (all three identifiers, no `where`) is also
+    // allowed here — projection over a single edge is a meaningful shape.
+    // We translate it to the equivalent equality filter list because the
+    // backend `findEdgesProjected` contract takes filters, not a docId.
+    const plan = buildEdgeQueryPlan(params);
+    let filters: QueryFilter[];
+    let options: QueryOptions | undefined;
+    if (plan.strategy === 'get') {
+      // GET means `aUid`, `axbType`, `bUid` are all set and there are no
+      // `where` clauses. Synthesize the equivalent equality filters so the
+      // backend can issue a single projecting query whose WHERE clause
+      // resolves to the same row the docId would have looked up.
+      filters = [
+        { field: 'aUid', op: '==', value: params.aUid! },
+        { field: 'axbType', op: '==', value: params.axbType! },
+        { field: 'bUid', op: '==', value: params.bUid! },
+      ];
+      if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+      if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+      options = undefined;
+    } else {
+      filters = plan.filters;
+      options = plan.options;
+    }
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    const rows = await this.backend.findEdgesProjected(params.select, filters, options);
+    return rows as Array<ProjectedRow<F>>;
+  }
+
+  /**
+   * Native vector / nearest-neighbour search (capability `search.vector`).
+   *
+   * Resolves to the top-K records by similarity, sorted nearest-first
+   * (`EUCLIDEAN` / `COSINE`) or highest-first (`DOT_PRODUCT`). The wrapper
+   * is intentionally thin: capability check, scan-protection, then forward
+   * `params` verbatim to the backend. All field-path normalisation and
+   * SDK-shape validation lives in the shared
+   * `runFirestoreFindNearest` helper that both Firestore editions call —
+   * keeping it there means the validation surface stays in lockstep with
+   * the SDK call site, regardless of which backend is plugged in.
+   *
+   * Migrations are NOT applied. The vector index walked the raw stored
+   * shape; rehydrating each row through the migration pipeline would
+   * change the candidate set the index already chose. If you need
+   * migrated shape, follow up with `getNode` / `findEdges` on the
+   * returned UIDs — those paths apply migrations normally.
+   *
+   * Scan-protection mirrors `findEdges`: if no identifying filters
+   * (`aType` / `axbType` / `bType`) and no `where` clauses are supplied,
+   * the request must opt in via `allowCollectionScan: true`. The ANN
+   * query still walks the candidate set the WHERE clause produces, so
+   * an unfiltered nearest-neighbour search over a million-row collection
+   * is the same scan trap as an unfiltered `findEdges`.
+   *
+   * Backends without `search.vector` throw `UNSUPPORTED_OPERATION` —
+   * there is no client-side fallback because emulating ANN over the
+   * generic backend surface (`findEdges` + JS-side cosine) doesn't scale
+   * past trivial datasets and would give callers the wrong mental model
+   * about cost.
+   */
+  async findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.findNearest) {
+      throw new FiregraphError(
+        'findNearest() is not supported by the current storage backend. ' +
+          'Vector search requires a backend that declares `search.vector` ' +
+          '(currently Firestore Standard and Enterprise). There is no ' +
+          'client-side fallback because emulating ANN on top of the generic ' +
+          'backend surface does not scale beyond toy datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+
+    // Build the same filter list the helper passes to `applyFiltersToQuery`
+    // so scan-protection sees exactly what the index will narrow on.
+    // Identifiers come first (matching `buildVectorFilters` in the helper),
+    // user-supplied `where` follows. We do NOT use `buildEdgeQueryPlan`
+    // here — there is no GET-strategy notion for vector search; the
+    // identifying-field filters are pure narrowing for the ANN walk.
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    if (params.where) filters.push(...params.where);
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+
+    return this.backend.findNearest(params);
+  }
+
+  /**
+   * Native full-text search (capability `search.fullText`).
+   *
+   * Returns the top-N records by relevance, ordered by the search
+   * index's score. Only Firestore Enterprise declares this capability
+   * today — the underlying Pipelines `search({ query: documentMatches(...) })`
+   * stage requires Enterprise's FTS index. Standard does not declare
+   * the cap (FTS is an Enterprise-only product feature, not a
+   * typed-API gap), and the SQLite-shaped backends have no native
+   * FTS index. Backends without `search.fullText` throw
+   * `UNSUPPORTED_OPERATION` from this wrapper.
+   *
+   * Scan-protection mirrors `findNearest`: a search with no
+   * identifying filters (`aType` / `axbType` / `bType`) walks every
+   * row the index scored, so the request must opt in via
+   * `allowCollectionScan: true`.
+   *
+   * Migrations are NOT applied. The FTS index walked the raw stored
+   * shape; rehydrating each row through the migration pipeline would
+   * change the candidate set the index already scored. If you need
+   * migrated shape, follow up with `getNode` / `findEdges` on the
+   * returned UIDs.
+   */
+  async fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.fullTextSearch) {
+      throw new FiregraphError(
+        'fullTextSearch() is not supported by the current storage backend. ' +
+          'Full-text search requires a backend that declares `search.fullText` ' +
+          '(currently Firestore Enterprise only — FTS is an Enterprise product ' +
+          'feature). There is no client-side fallback because emulating FTS over ' +
+          'the generic backend surface would not scale beyond toy datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    return this.backend.fullTextSearch(params);
+  }
+
+  /**
+   * Native geospatial distance search (capability `search.geo`).
+   *
+   * Returns rows whose `geoField` lies within `radiusMeters` of
+   * `point`, ordered nearest-first by default. Only Firestore
+   * Enterprise declares this capability — same Enterprise-only
+   * gating as `fullTextSearch`. Backends without `search.geo` throw
+   * `UNSUPPORTED_OPERATION` from this wrapper.
+   *
+   * Scan-protection mirrors `findNearest` and `fullTextSearch`.
+   *
+   * Migrations are NOT applied — same rationale as the other search
+   * extensions.
+   */
+  async geoSearch(params: GeoSearchParams): Promise<StoredGraphRecord[]> {
+    if (!this.backend.geoSearch) {
+      throw new FiregraphError(
+        'geoSearch() is not supported by the current storage backend. ' +
+          'Geospatial search requires a backend that declares `search.geo` ' +
+          '(currently Firestore Enterprise only — geo queries are an ' +
+          'Enterprise product feature). There is no client-side fallback ' +
+          'because emulating geo over the generic backend surface (haversine ' +
+          'over `findEdges`) would not scale beyond trivial datasets.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
+    const filters: QueryFilter[] = [];
+    if (params.aType) filters.push({ field: 'aType', op: '==', value: params.aType });
+    if (params.axbType) filters.push({ field: 'axbType', op: '==', value: params.axbType });
+    if (params.bType) filters.push({ field: 'bType', op: '==', value: params.bType });
+    this.checkQuerySafety(filters, params.allowCollectionScan);
+    return this.backend.geoSearch(params);
+  }
+
+  /**
+   * Translate a `FindEdgesParams` into the `QueryFilter[]` shape the
+   * backend `bulkDelete` / `bulkUpdate` methods expect. Mirrors the
+   * `aggregate()` plan: a bare-empty params object becomes an empty
+   * filter list (after a scan-protection check); a GET-shape (all three
+   * identifiers) is rejected so we never silently turn a single-row
+   * lookup into a server-side DML; otherwise we run `buildEdgeQueryPlan`
+   * and surface its filters.
+   */
+  private buildDmlFilters(params: FindEdgesParams): QueryFilter[] {
+    const hasAnyFilter =
+      params.aType ||
+      params.aUid ||
+      params.axbType ||
+      params.bType ||
+      params.bUid ||
+      (params.where && params.where.length > 0);
+
+    if (!hasAnyFilter) {
+      this.checkQuerySafety([], params.allowCollectionScan);
+      return [];
+    }
+
+    const plan = buildEdgeQueryPlan(params);
+    if (plan.strategy === 'get') {
+      throw new FiregraphError(
+        'bulkDelete() / bulkUpdate() require a query, not a direct document lookup. ' +
+          'Use removeEdge() / updateEdge() for single-row operations, or omit one of ' +
+          'aUid/axbType/bUid to force a query strategy.',
+        'INVALID_QUERY',
+      );
+    }
+    this.checkQuerySafety(plan.filters, params.allowCollectionScan);
+    return plan.filters;
   }
 
   // ---------------------------------------------------------------------------
@@ -673,17 +1135,59 @@ export class GraphClientImpl implements DynamicGraphClient {
 }
 
 /**
- * Create a `GraphClient` backed by an arbitrary `StorageBackend`.
+ * Create a `GraphClient` backed by a `StorageBackend`.
  *
- * Used by backend-specific factories (e.g. `createDOClient` in
- * `firegraph/cloudflare`) — most callers should use the higher-level
- * `createGraphClient(firestore, ...)` overload below for Firestore, or the
- * Cloudflare factory for DO-backed graphs.
+ * Phase 3: the type parameter `C` is inferred from
+ * `StorageBackend<C>.capabilities` and propagates to the returned
+ * `GraphClient<C>`. Extension surfaces (aggregate, search, raw escape
+ * hatches, …) are conditionally intersected — they exist on the returned
+ * type only when `C` declares the matching capability. Calls into
+ * undeclared extensions are TypeScript errors at the call site, not
+ * runtime failures.
+ *
+ * The runtime delegate `GraphClientImpl` carries only the portable core
+ * methods today; extension methods land in Phases 4–10 alongside their
+ * backend implementations. Until then the type-level surface is ahead of
+ * the runtime, but no backend declares any extension capability so the
+ * narrowing is effectively a no-op for current callers.
+ *
+ * `createGraphClientFromBackend` is retained as a deprecated alias for
+ * backward compatibility while the codebase migrates off the old name.
  */
-export function createGraphClientFromBackend(
-  backend: StorageBackend,
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
+  options: GraphClientOptions & { registryMode: DynamicRegistryConfig },
+  metaBackend?: StorageBackend,
+): DynamicGraphClient<C>;
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
   options?: GraphClientOptions,
   metaBackend?: StorageBackend,
-): GraphClient | DynamicGraphClient {
-  return new GraphClientImpl(backend, options, metaBackend) as GraphClient | DynamicGraphClient;
+): GraphClient<C>;
+export function createGraphClient<C extends Capability = Capability>(
+  backend: StorageBackend<C>,
+  options?: GraphClientOptions,
+  metaBackend?: StorageBackend,
+): GraphClient<C> | DynamicGraphClient<C> {
+  // The double cast bridges the gap between the runtime delegate
+  // (`GraphClientImpl`, which structurally implements
+  // `CoreGraphClient & DynamicGraphMethods`) and the conditionally-
+  // intersected return types `GraphClient<C>` / `DynamicGraphClient<C>`.
+  // The implementation signature can't pick between the two overloads
+  // without inspecting `options.registryMode` at the type level, which
+  // requires conditional types over the `options` argument; the cast
+  // collapses that ambiguity. Sound today because every `*Extension`
+  // body is empty and `DynamicGraphMethods` is always present at runtime
+  // (the validation routing inside `GraphClientImpl` no-ops the dynamic
+  // methods when registryMode is absent).
+  return new GraphClientImpl(backend, options, metaBackend) as unknown as
+    | GraphClient<C>
+    | DynamicGraphClient<C>;
 }
+
+/**
+ * @deprecated Use `createGraphClient` instead. Kept temporarily so existing
+ * callers (Cloudflare client, routing backend, tests) continue to compile
+ * during the Phase 2 transition.
+ */
+export const createGraphClientFromBackend = createGraphClient;

@@ -66,6 +66,36 @@
         "types": "./dist/backend.d.cts",
         "default": "./dist/backend.cjs"
       }
+    },
+    "./firestore-standard": {
+      "import": {
+        "types": "./dist/firestore-standard/index.d.ts",
+        "default": "./dist/firestore-standard/index.js"
+      },
+      "require": {
+        "types": "./dist/firestore-standard/index.d.cts",
+        "default": "./dist/firestore-standard/index.cjs"
+      }
+    },
+    "./firestore-enterprise": {
+      "import": {
+        "types": "./dist/firestore-enterprise/index.d.ts",
+        "default": "./dist/firestore-enterprise/index.js"
+      },
+      "require": {
+        "types": "./dist/firestore-enterprise/index.d.cts",
+        "default": "./dist/firestore-enterprise/index.cjs"
+      }
+    },
+    "./sqlite": {
+      "import": {
+        "types": "./dist/sqlite/index.d.ts",
+        "default": "./dist/sqlite/index.js"
+      },
+      "require": {
+        "types": "./dist/sqlite/index.d.cts",
+        "default": "./dist/sqlite/index.cjs"
+      }
     }
   },
   "bin": {
@@ -105,7 +135,7 @@
   },
   "peerDependencies": {
     "@cloudflare/workers-types": "^4.20240419.0",
-    "@google-cloud/firestore": "^8.0.0",
+    "@google-cloud/firestore": "^8.5.0",
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
     "svelte": "^5.0.0"
@@ -135,7 +165,7 @@
     "@cloudflare/workers-types": "^4.20260424.1",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
-    "@google-cloud/firestore": "^8.3.0",
+    "@google-cloud/firestore": "^8.5.0",
     "@types/better-sqlite3": "^7.6.13",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",

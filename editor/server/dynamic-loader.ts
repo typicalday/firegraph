@@ -4,8 +4,9 @@
  */
 import type { Firestore } from '@google-cloud/firestore';
 
+import { createGraphClient } from '../../src/client.js';
 import { META_EDGE_TYPE, META_NODE_TYPE } from '../../src/dynamic-registry.js';
-import { createGraphClient } from '../../src/index.js';
+import { createFirestoreEnterpriseBackend } from '../../src/firestore-enterprise/backend.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
 import type { EdgeTypeData, NodeTypeData, QueryMode, RegistryEntry } from '../../src/types.js';
 
@@ -48,7 +49,11 @@ export async function loadDynamicTypes(
   queryMode?: QueryMode,
 ): Promise<DynamicLoadResult> {
   // Create a lightweight reader for the meta-collection
-  const metaReader = createGraphClient(db, metaCollection, { queryMode });
+  const metaReader = createGraphClient(
+    createFirestoreEnterpriseBackend(db, metaCollection, {
+      defaultQueryMode: queryMode === 'standard' ? 'classic' : 'pipeline',
+    }),
+  );
 
   const [nodeTypeDocs, edgeTypeDocs] = await Promise.all([
     metaReader.findNodes({ aType: META_NODE_TYPE }),

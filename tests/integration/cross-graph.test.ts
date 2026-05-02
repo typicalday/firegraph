@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { isAncestorUid, resolveAncestorCollection } from '../../src/cross-graph.js';
-import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
 import { createRegistry } from '../../src/registry.js';
 import { createTraversal } from '../../src/traverse.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 const taskSchema = {

@@ -23,6 +23,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  BackendCapabilities,
   BatchBackend,
   RoutingBackendOptions,
   RoutingContext,
@@ -35,6 +36,7 @@ import type {
 } from '../../src/backend.js';
 import * as backend from '../../src/backend.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
+import type { Capability } from '../../src/types.js';
 import type {
   BulkOptions,
   BulkResult,
@@ -53,7 +55,10 @@ import type {
  * in an incompatible way, this fixture stops compiling. The point of the
  * `satisfies` is to check the full shape without widening the inferred type.
  */
+const _capabilitiesShape: BackendCapabilities = backend.createCapabilities(new Set<Capability>());
+
 const _storageBackendShape = {
+  capabilities: _capabilitiesShape,
   collectionPath: '' as string,
   scopePath: '' as string,
   getDoc: async (_docId: string): Promise<StoredGraphRecord | null> => null,
@@ -207,12 +212,15 @@ describe('firegraph/backend — public export surface', () => {
     const keys = Object.keys(backend).sort();
     expect(keys).toEqual(
       [
+        'CapabilityNotSupportedError',
         'CrossBackendTransactionError',
         'DELETE_FIELD',
         'appendStorageScope',
+        'createCapabilities',
         'createRoutingBackend',
         'deleteField',
         'flattenPatch',
+        'intersectCapabilities',
         'isAncestorScopeUid',
         'isDeleteSentinel',
         'parseStorageScope',

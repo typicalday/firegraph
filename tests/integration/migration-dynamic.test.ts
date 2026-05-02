@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { createGraphClient } from '../../src/firestore.js';
 import { generateId } from '../../src/id.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import { getTestFirestore, uniqueCollectionPath } from './setup.js';
 
 // ---------------------------------------------------------------------------

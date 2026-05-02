@@ -14,10 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createGraphClientFromBackend } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
 import type { StorageBackend } from '../../src/internal/backend.js';
-import { createSqliteBackend } from '../../src/internal/sqlite-backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
 import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
+import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import type { GraphClient } from '../../src/types.js';
 const TABLE = 'firegraph_test';
 
@@ -472,7 +472,7 @@ describe('SqliteBackend (raw)', () => {
     // The backend's getDoc path uses default integer mode (numbers), but
     // exercising rowToRecord directly with bigint inputs ensures D1's bigint
     // returns are handled.
-    const { rowToRecord } = await import('../../src/internal/sqlite-sql.js');
+    const { rowToRecord } = await import('../../src/sqlite/sql.js');
     const record = rowToRecord(row);
     expect(record.createdAt.toMillis()).toBeGreaterThan(0);
     expect(record.updatedAt.toMillis()).toBeGreaterThan(0);
@@ -1949,4 +1949,802 @@ describe('SqliteBackend retry backoff cap (MAX_RETRY_DELAY_MS)', () => {
     expect(elapsed).toBeLessThan(15_000);
     db.close();
   }, 20_000);
+});
+
+describe('SqliteBackend.aggregate (compileAggregate)', () => {
+  // The shared-table SQLite compiler ALWAYS leads with a `"scope" = ?`
+  // predicate so the `(scope, …)` indexes apply (see compileSelect). Aggregates
+  // must follow the same rule — otherwise a subgraph-scoped aggregate would
+  // accidentally count rows from sibling subgraphs.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- SQL string assertions (compileAggregate output) ---
+
+  it('emits a leading "scope" = ? predicate and inlined JSON paths', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { stmt, aliases } = compileAggregate(
+      TABLE,
+      '', // root scope
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+
+    // Scope predicate is the leading WHERE term and bound (not inlined).
+    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    // The numeric cast applies to all four non-count ops.
+    expect(stmt.sql).toContain(`SUM(CAST(json_extract("data", '$.price') AS REAL)) AS "s"`);
+    expect(stmt.sql).toContain(`MIN(CAST(json_extract("data", '$.price') AS REAL)) AS "lo"`);
+    expect(stmt.sql).toContain(`MAX(CAST(json_extract("data", '$.price') AS REAL)) AS "hi"`);
+    // JSON path is inlined so SQLite's planner can match an expression
+    // index emitted by sqlite-index-ddl.ts. Parametrising the path would
+    // silently fall back to a full scan.
+    expect(stmt.sql).not.toContain(`json_extract("data", ?)`);
+    // Param order is fixed: scope value first (leading "scope" = ?
+    // predicate), followed by column-filter values in the order the caller
+    // supplied them. A regression that re-orders the predicate or starts
+    // parametrising the JSON path would change this exact tuple.
+    expect(stmt.params).toEqual(['', 'tour']);
+    expect(aliases).toEqual(['n', 's', 'a', 'lo', 'hi']);
+  });
+
+  it('preserves alias order in the returned aliases list', async () => {
+    // Spec keys are in iteration order; the alias array must mirror that so
+    // SqliteBackendImpl.aggregate can rehydrate result columns deterministically.
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { aliases } = compileAggregate(
+      TABLE,
+      '',
+      {
+        zCount: { op: 'count' },
+        aSum: { op: 'sum', field: 'data.x' },
+        mAvg: { op: 'avg', field: 'data.x' },
+      },
+      [],
+    );
+    expect(aliases).toEqual(['zCount', 'aSum', 'mAvg']);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', async () => {
+    // Mirror the cloudflare-sql parity test — shared SQLite must apply both
+    // a column-filter and a JSON-path filter side-by-side, with the leading
+    // scope predicate intact.
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { stmt } = compileAggregate(TABLE, '', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'active' },
+    ]);
+    // Scope predicate leads, column-filter next, JSON path last; values in
+    // the same order as conditions: ['', 'tour', 'active']. Built-in
+    // `aType` resolves to column `a_type` via FIELD_TO_COLUMN.
+    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.sql).toContain(`json_extract("data", '$.status') = ?`);
+    expect(stmt.params).toEqual(['', 'tour', 'active']);
+  });
+
+  it('rejects unsafe alias identifiers at compile time', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileAggregate(TABLE, '', { 'bad alias': { op: 'count' } }, [])).toThrow(
+      /not a safe JSON-path identifier/,
+    );
+    expect(() =>
+      compileAggregate(TABLE, '', { 'a"; DROP TABLE foo;--': { op: 'count' } }, []),
+    ).toThrow(/not a safe JSON-path identifier/);
+  });
+
+  it('rejects empty spec and non-count ops missing a field', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileAggregate(TABLE, '', {}, [])).toThrow(/at least one aggregation/);
+    expect(() => compileAggregate(TABLE, '', { s: { op: 'sum' } }, [])).toThrow(
+      /'sum' requires a field/,
+    );
+  });
+
+  it('rejects count with a stray field (catches typo from cribbing a sum spec)', async () => {
+    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    expect(() =>
+      compileAggregate(TABLE, '', { n: { op: 'count', field: 'data.price' } }, []),
+    ).toThrow(/'count' must not specify a field/);
+  });
+
+  // --- Functional integration (in-memory SQLite, full backend.aggregate) ---
+
+  async function seedTours(prices: number[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const price of prices) {
+      const uid = generateId();
+      ids.push(uid);
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { price, status: 'active' },
+        },
+        'replace',
+      );
+    }
+    return ids;
+  }
+
+  it('returns count/sum/avg/min/max over a real row set', async () => {
+    await seedTours([10, 20, 30, 40]);
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.n).toBe(4);
+    expect(out.s).toBe(100);
+    expect(out.a).toBe(25);
+    expect(out.lo).toBe(10);
+    expect(out.hi).toBe(40);
+  });
+
+  it('respects filters when computing aggregates', async () => {
+    await seedTours([10, 20, 30, 40]);
+    const out = await backend.aggregate!(
+      { n: { op: 'count' }, s: { op: 'sum', field: 'data.price' } },
+      [
+        { field: 'aType', op: '==', value: 'tour' },
+        { field: 'data.price', op: '>=', value: 25 },
+      ],
+    );
+    expect(out.n).toBe(2);
+    expect(out.s).toBe(70);
+  });
+
+  it('treats SUM/MIN/MAX of empty set as 0 and AVG as NaN', async () => {
+    // No rows seeded — every aggregate sees the empty set.
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.n).toBe(0);
+    expect(out.s).toBe(0);
+    expect(Number.isNaN(out.a)).toBe(true);
+    expect(out.lo).toBe(0);
+    expect(out.hi).toBe(0);
+  });
+
+  it('uses numeric (not lexicographic) comparison for MIN/MAX', async () => {
+    // Without CAST(... AS REAL), SQLite would compare json_extract output
+    // lexicographically and return "100" as min (since "100" < "20").
+    await seedTours([20, 100, 30]);
+    const out = await backend.aggregate!(
+      {
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out.lo).toBe(20);
+    expect(out.hi).toBe(100);
+  });
+
+  it('coerces bigint result columns to numbers (D1 SELECT shape)', async () => {
+    // D1 / better-sqlite3 with safeIntegers may return COUNT and SUM as
+    // bigint. The backend coerces those at the JS boundary so the contract
+    // stays `Record<string, number>`. Wrap the executor so the SELECT
+    // emitted by compileAggregate routes through `safeIntegers(true)`
+    // — that flips better-sqlite3's INTEGER columns from `number` to
+    // `bigint`, exercising the bigint branch in `SqliteBackendImpl.aggregate`.
+    // Without this stub the `typeof` check would pass even if the bigint
+    // branch were deleted (better-sqlite3's default is `number`).
+    const realExecutor = makeExecutor(db);
+    const bigintExecutor: SqliteExecutor = {
+      ...realExecutor,
+      async all(sql: string, params: unknown[]) {
+        // Route only the SELECT (aggregates use SELECT, not run/batch); other
+        // calls go through the real executor unchanged.
+        if (sql.startsWith('SELECT ')) {
+          const stmt = db.prepare(sql).safeIntegers(true);
+          return stmt.all(...(params as unknown[])) as Record<string, unknown>[];
+        }
+        return realExecutor.all(sql, params);
+      },
+    };
+    const bigintBackend = createSqliteBackend(bigintExecutor, TABLE);
+
+    await seedTours([1, 2, 3]);
+    const out = await bigintBackend.aggregate!(
+      { n: { op: 'count' }, s: { op: 'sum', field: 'data.price' } },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    // The backend MUST coerce bigint → number at the boundary. Without the
+    // bigint branch, COUNT(*) would surface as a bigint and fail this check.
+    expect(typeof out.n).toBe('number');
+    expect(out.n).toBe(3);
+    // SUM over JSON-extracted REAL stays a JS number even with safeIntegers
+    // (the CAST AS REAL produces a floating-point column). We still assert
+    // it's a number to pin the contract.
+    expect(typeof out.s).toBe('number');
+    expect(out.s).toBe(6);
+  });
+});
+
+describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () => {
+  // Phase 5 query.dml: server-side DELETE / UPDATE that bypasses the
+  // O(n) read-then-write loop bulkRemoveEdges uses. Both compilers must
+  // ALWAYS lead with a `"scope" = ?` predicate so a routed-subgraph DML
+  // call cannot leak across siblings — same invariant as compileSelect /
+  // compileAggregate.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- SQL string assertions (compiler output) ---
+
+  it('compileBulkDelete emits a leading "scope" = ? predicate', async () => {
+    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkDelete(TABLE, 'memories', [
+      { field: 'aType', op: '==', value: 'tour' },
+    ]);
+    // Scope predicate leads, column-filter follows. Param order must match.
+    expect(stmt.sql).toContain(`DELETE FROM ${'"' + TABLE + '"'} WHERE "scope" = ? AND `);
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.params).toEqual(['memories', 'tour']);
+  });
+
+  it('compileBulkDelete with no filters still leads with the scope predicate (delete-everything-in-scope)', async () => {
+    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkDelete(TABLE, 'memories', []);
+    // Even the unfiltered case is scope-bound — wiping a subgraph wholesale
+    // must not touch sibling subgraphs. The client-level scan-protection
+    // gate in `bulkDelete()` forces `allowCollectionScan: true` to reach
+    // this path.
+    expect(stmt.sql).toContain('WHERE "scope" = ?');
+    expect(stmt.params).toEqual(['memories']);
+  });
+
+  it('compileBulkUpdate emits SET "data" = json_patch(...) and a leading scope predicate', async () => {
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    const stmt = compileBulkUpdate(
+      TABLE,
+      'memories',
+      [{ field: 'aType', op: '==', value: 'tour' }],
+      { status: 'archived' },
+      1700000000000,
+    );
+    // Deep-merge expression on the data column.
+    expect(stmt.sql).toMatch(/UPDATE\s+"firegraph_test"\s+SET\s+"data"\s*=/);
+    // updated_at is bumped.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    // Scope predicate leads in the WHERE.
+    expect(stmt.sql).toContain(`WHERE "scope" = ? AND `);
+    // Params: SET-clause params first (patch value + nowMillis), then
+    // WHERE params (scope value + filter value). The exact ordering
+    // matters because the same convention is shared with compileUpdate.
+    expect(stmt.params[stmt.params.length - 2]).toBe('memories');
+    expect(stmt.params[stmt.params.length - 1]).toBe('tour');
+    expect(stmt.params).toContain(1700000000000);
+  });
+
+  it('compileBulkUpdate rejects an empty patch with INVALID_QUERY', async () => {
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileBulkUpdate(TABLE, 'memories', [], {}, Date.now())).toThrow(
+      /at least one leaf|INVALID_QUERY/,
+    );
+  });
+
+  it('compileBulkUpdate rejects Firestore special types in the patch', async () => {
+    // Mirror of the assertJsonSafePayload guard on single-row replaceData
+    // writes. SQLite rows can't store Firestore Timestamp/GeoPoint/etc.
+    // The DML path hits the same guard.
+    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    // Construct a tagged Firestore-shaped payload — the guard fires on the
+    // tagged sentinel, so we don't need a real Firestore SDK in this test.
+    const tagged = { __firegraph_ser__: 'Timestamp', seconds: 1, nanoseconds: 0 };
+    expect(() =>
+      compileBulkUpdate(TABLE, 'memories', [], { stamped: tagged }, Date.now()),
+    ).toThrow();
+  });
+
+  // --- Functional integration (in-memory SQLite, full backend.bulkDelete/Update) ---
+
+  async function seedTours(prices: number[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const price of prices) {
+      const uid = generateId();
+      ids.push(uid);
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'tour',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'tour',
+          bUid: uid,
+          data: { price, status: 'active' },
+        },
+        'replace',
+      );
+    }
+    return ids;
+  }
+
+  it('bulkDelete removes only matching rows and reports the row count', async () => {
+    const ids = await seedTours([10, 20, 30, 40]);
+    expect(ids).toHaveLength(4);
+
+    const out = await backend.bulkDelete!([
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.price', op: '>=', value: 25 },
+    ]);
+    // Two of the four rows have price >= 25.
+    expect(out.deleted).toBe(2);
+    expect(out.batches).toBe(1);
+    expect(out.errors).toEqual([]);
+
+    // Surviving rows are still readable.
+    const remaining = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(remaining).toHaveLength(2);
+    const remainingPrices = remaining
+      .map((r) => (r.data as { price: number }).price)
+      .sort((a, b) => a - b);
+    expect(remainingPrices).toEqual([10, 20]);
+  });
+
+  it('bulkDelete with zero filters deletes every row in the current scope', async () => {
+    await seedTours([1, 2, 3]);
+    const out = await backend.bulkDelete!([]);
+    expect(out.deleted).toBe(3);
+    const remaining = await backend.query([]);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it('bulkUpdate deep-merges the patch and reports the row count', async () => {
+    const ids = await seedTours([10, 20, 30]);
+    expect(ids).toHaveLength(3);
+
+    const out = await backend.bulkUpdate!([{ field: 'aType', op: '==', value: 'tour' }], {
+      data: { status: 'archived', tags: ['legacy'] },
+    });
+    expect(out.deleted).toBe(3);
+    expect(out.batches).toBe(1);
+    expect(out.errors).toEqual([]);
+
+    // Every row reflects the merged status; the existing `price` field
+    // survives the deep-merge.
+    const rows = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const data = row.data as { status: string; price: number; tags: string[] };
+      expect(data.status).toBe('archived');
+      expect(data.tags).toEqual(['legacy']);
+      // Price wasn't in the patch — must be preserved.
+      expect(typeof data.price).toBe('number');
+    }
+  });
+
+  it('bulkUpdate respects filters when computing affected rows', async () => {
+    await seedTours([10, 20, 30, 40]);
+
+    const out = await backend.bulkUpdate!(
+      [
+        { field: 'aType', op: '==', value: 'tour' },
+        { field: 'data.price', op: '>=', value: 25 },
+      ],
+      { data: { status: 'archived' } },
+    );
+    expect(out.deleted).toBe(2);
+
+    const rows = await backend.query([{ field: 'aType', op: '==', value: 'tour' }]);
+    const archived = rows.filter((r) => (r.data as { status?: string }).status === 'archived');
+    const active = rows.filter((r) => (r.data as { status?: string }).status === 'active');
+    expect(archived).toHaveLength(2);
+    expect(active).toHaveLength(2);
+  });
+
+  it('bulkDelete in a subgraph does not touch rows in sibling scopes', async () => {
+    // Cross-scope safety. A bulkDelete on the `memories` subgraph must
+    // leave the parent scope's rows untouched. The leading `"scope" = ?`
+    // predicate is what enforces this; if a future regression dropped it,
+    // this test would fail loudly.
+    const parentUid = generateId();
+    await backend.setDoc(
+      parentUid,
+      {
+        aType: 'agent',
+        aUid: parentUid,
+        axbType: 'is',
+        bType: 'agent',
+        bUid: parentUid,
+        data: { name: 'parent' },
+      },
+      'replace',
+    );
+
+    const sub = backend.subgraph(parentUid, 'memories');
+    const memUid = generateId();
+    await sub.setDoc(
+      memUid,
+      {
+        aType: 'memory',
+        aUid: memUid,
+        axbType: 'is',
+        bType: 'memory',
+        bUid: memUid,
+        data: { topic: 'thing' },
+      },
+      'replace',
+    );
+
+    const out = await sub.bulkDelete!([{ field: 'aType', op: '==', value: 'memory' }]);
+    expect(out.deleted).toBe(1);
+
+    // Parent scope's row is intact.
+    const parentRows = await backend.query([{ field: 'aType', op: '==', value: 'agent' }]);
+    expect(parentRows).toHaveLength(1);
+    // Subgraph is empty.
+    const subRows = await sub.query([]);
+    expect(subRows).toHaveLength(0);
+  });
+});
+
+describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
+  // Phase 6 query.join: server-side multi-source fan-out via SQL `IN (?, ?, …)`.
+  // Mirrors the bulk-DML compiler asserts above — leading `"scope" = ?`,
+  // parameter ordering, axbType-specific self-loop guard.
+
+  let db: BetterSqliteDb;
+  let backend: StorageBackend;
+
+  beforeEach(() => {
+    ({ db, backend } = setupBackend());
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // --- Compiler shape ---
+
+  it('compileExpand emits leading scope + axbType + IN (?, ?, …) predicates in that order', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, 'memories', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+    });
+    // Column refs use the on-disk snake_case names (`a_uid`, `axb_type`,
+    // …) — see `FIELD_TO_COLUMN` in `src/internal/sqlite-schema.ts`.
+    expect(stmt.sql).toContain(`SELECT * FROM "${TABLE}"`);
+    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" IN (?, ?, ?)');
+    // Param order: scope, axbType, then each source UID in order.
+    expect(stmt.params).toEqual(['memories', 'wrote', 'a', 'b', 'c']);
+  });
+
+  it('compileExpand reverse direction filters on bUid', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['x', 'y'],
+      axbType: 'wrote',
+      direction: 'reverse',
+    });
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.sql).not.toContain('"a_uid" IN (');
+    expect(stmt.params).toEqual(['', 'wrote', 'x', 'y']);
+  });
+
+  it('compileExpand with axbType "is" adds the self-loop guard', async () => {
+    // Forward expand on the node relation could otherwise pull node-as-self-loop
+    // rows. The `"a_uid" != "b_uid"` predicate excludes them.
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'is',
+    });
+    expect(stmt.sql).toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileExpand without axbType "is" omits the self-loop guard', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'wrote',
+    });
+    expect(stmt.sql).not.toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileExpand multiplies limitPerSource by sources.length to produce a soft cap', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+      limitPerSource: 5,
+    });
+    // Total cap = 3 sources * 5 per-source = 15.
+    expect(stmt.sql).toMatch(/LIMIT \?/);
+    expect(stmt.params[stmt.params.length - 1]).toBe(15);
+  });
+
+  it('compileExpand with no limitPerSource omits LIMIT entirely', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a'],
+      axbType: 'wrote',
+    });
+    expect(stmt.sql).not.toContain('LIMIT');
+  });
+
+  it('compileExpand rejects empty sources list', async () => {
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    expect(() => compileExpand(TABLE, '', { sources: [], axbType: 'wrote' })).toThrow(
+      /INVALID_QUERY|empty/,
+    );
+  });
+
+  it('compileExpandHydrate scopes the lookup and includes the self-loop predicate', async () => {
+    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpandHydrate(TABLE, 'memories', ['x', 'y']);
+    // Hydration pulls node rows: scope-bound, axbType = 'is', self-loop, IN list.
+    // Column refs use snake_case (`a_uid`, `b_uid`, `axb_type`).
+    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" = "b_uid"');
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.params).toEqual(['memories', 'is', 'x', 'y']);
+  });
+
+  it('compileExpandHydrate rejects empty target list', async () => {
+    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
+    expect(() => compileExpandHydrate(TABLE, '', [])).toThrow(/INVALID_QUERY|empty/);
+  });
+
+  // --- Functional integration: backend.expand() against in-memory SQLite ---
+
+  it('backend.expand fans out across multiple sources in one round trip', async () => {
+    // Seed 2 source nodes, each with 2 outgoing edges.
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    const t3 = generateId();
+    const t4 = generateId();
+    for (const uid of [a, b, t1, t2, t3, t4]) {
+      await backend.setDoc(
+        uid,
+        { aType: 'agent', aUid: uid, axbType: 'is', bType: 'agent', bUid: uid, data: {} },
+        'replace',
+      );
+    }
+    const edges = [
+      [a, t1],
+      [a, t2],
+      [b, t3],
+      [b, t4],
+    ] as const;
+    for (const [from, to] of edges) {
+      await backend.setDoc(
+        `0:${from}:wrote:${to}`,
+        {
+          aType: 'agent',
+          aUid: from,
+          axbType: 'wrote',
+          bType: 'agent',
+          bUid: to,
+          data: {},
+        },
+        'replace',
+      );
+    }
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+    });
+    expect(out.edges).toHaveLength(4);
+    const sourceUids = new Set(out.edges.map((e) => e.aUid));
+    expect(sourceUids).toEqual(new Set([a, b]));
+  });
+
+  it('backend.expand with hydrate returns aligned target nodes', async () => {
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    for (const uid of [a, b, t1, t2]) {
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'agent',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'agent',
+          bUid: uid,
+          data: { name: uid },
+        },
+        'replace',
+      );
+    }
+    await backend.setDoc(
+      `0:${a}:wrote:${t1}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'agent', bUid: t1, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${b}:wrote:${t2}`,
+      { aType: 'agent', aUid: b, axbType: 'wrote', bType: 'agent', bUid: t2, data: {} },
+      'replace',
+    );
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+      hydrate: true,
+    });
+    expect(out.edges).toHaveLength(2);
+    expect(out.targets).toHaveLength(2);
+    // Targets align with edges by index.
+    for (let i = 0; i < out.edges.length; i++) {
+      expect(out.targets![i]?.bUid).toBe(out.edges[i].bUid);
+    }
+  });
+
+  it('backend.expand reverse direction with hydrate aligns targets to aUid', async () => {
+    // Audit gap: the forward-direction hydrate test pins
+    // `targets[i].bUid === edges[i].bUid`, but the row-stitching code in
+    // `SqliteBackendImpl.expand` uses a `direction === 'forward' ? bUid : aUid`
+    // ternary. A regression flipping that ternary would only fail under
+    // reverse-direction hydrate. Seed `(t1)-[wrote]->(a)` and
+    // `(t2)-[wrote]->(b)`; expand reverse from `[a, b]` should return both
+    // edges and align `targets[i].bUid` (the canonical node UID) to
+    // `edges[i].aUid` (the source side under reverse direction).
+    const a = generateId();
+    const b = generateId();
+    const t1 = generateId();
+    const t2 = generateId();
+    for (const uid of [a, b, t1, t2]) {
+      await backend.setDoc(
+        uid,
+        {
+          aType: 'agent',
+          aUid: uid,
+          axbType: 'is',
+          bType: 'agent',
+          bUid: uid,
+          data: { name: uid },
+        },
+        'replace',
+      );
+    }
+    await backend.setDoc(
+      `0:${t1}:wrote:${a}`,
+      { aType: 'agent', aUid: t1, axbType: 'wrote', bType: 'agent', bUid: a, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${t2}:wrote:${b}`,
+      { aType: 'agent', aUid: t2, axbType: 'wrote', bType: 'agent', bUid: b, data: {} },
+      'replace',
+    );
+
+    const out = await backend.expand!({
+      sources: [a, b],
+      axbType: 'wrote',
+      direction: 'reverse',
+      hydrate: true,
+    });
+    expect(out.edges).toHaveLength(2);
+    expect(out.targets).toHaveLength(2);
+    // Reverse direction: the "target" side (the node hydrated from the
+    // self-loop row) is the aUid. Index alignment must hold.
+    for (let i = 0; i < out.edges.length; i++) {
+      expect(out.targets![i]?.bUid).toBe(out.edges[i].aUid);
+    }
+  });
+
+  it('backend.expand emits aType / bType predicates with snake_case columns', async () => {
+    // Audit gap: the leading-predicate-order test only covers core predicates.
+    // `aType` / `bType` are optional refinements and the compiler resolves
+    // them through `compileFieldRef`, but no test pins the snake_case shape.
+    // A regression that emitted `"aType" = ?` instead of `"a_type" = ?`
+    // would crash the SQLite layer with "no such column: aType" — the same
+    // class of bug we just fixed for `axbType` / `aUid` / `bUid`.
+    const { compileExpand } = await import('../../src/sqlite/sql.js');
+    const stmt = compileExpand(TABLE, '', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      aType: 'agent',
+      bType: 'note',
+    });
+    expect(stmt.sql).toContain('"a_type" = ?');
+    expect(stmt.sql).toContain('"b_type" = ?');
+    expect(stmt.sql).not.toContain('"aType"');
+    expect(stmt.sql).not.toContain('"bType"');
+    // Param ordering: scope, axbType, sources..., aType, bType.
+    expect(stmt.params).toEqual(['', 'wrote', 'a', 'b', 'agent', 'note']);
+  });
+
+  it('backend.expand short-circuits empty sources list to an empty result', async () => {
+    // Spec contract: empty sources never reaches the compiler. The client
+    // also short-circuits, but the backend itself must too — defence in depth.
+    const out = await backend.expand!({
+      sources: [],
+      axbType: 'wrote',
+    });
+    expect(out.edges).toEqual([]);
+    expect(out.targets).toBeUndefined();
+  });
+
+  it('backend.expand in a subgraph does not fan out to sibling scopes', async () => {
+    // Cross-scope safety. Seed identical edges in parent + sibling subgraphs;
+    // expand inside `memories` must only return rows from that scope.
+    const a = generateId();
+    await backend.setDoc(
+      a,
+      { aType: 'agent', aUid: a, axbType: 'is', bType: 'agent', bUid: a, data: {} },
+      'replace',
+    );
+
+    const sub = backend.subgraph(a, 'memories');
+    const t = generateId();
+    await sub.setDoc(
+      t,
+      { aType: 'memory', aUid: t, axbType: 'is', bType: 'memory', bUid: t, data: {} },
+      'replace',
+    );
+    await sub.setDoc(
+      `0:${a}:wrote:${t}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'memory', bUid: t, data: {} },
+      'replace',
+    );
+
+    // Parent-scope edge (sibling-ish for the test) — not in the subgraph.
+    const t2 = generateId();
+    await backend.setDoc(
+      t2,
+      { aType: 'memory', aUid: t2, axbType: 'is', bType: 'memory', bUid: t2, data: {} },
+      'replace',
+    );
+    await backend.setDoc(
+      `0:${a}:wrote:${t2}`,
+      { aType: 'agent', aUid: a, axbType: 'wrote', bType: 'memory', bUid: t2, data: {} },
+      'replace',
+    );
+
+    const out = await sub.expand!({ sources: [a], axbType: 'wrote' });
+    expect(out.edges).toHaveLength(1);
+    expect(out.edges[0].bUid).toBe(t);
+  });
 });

@@ -467,17 +467,27 @@ A single Firestore transaction can span multiple collections, but firegraph's tr
 
 Firegraph works with both Firestore Standard and Enterprise editions. The edition affects query capabilities and operational behavior:
 
-| Aspect                           | Standard                             | Enterprise (Native mode)                                         |
-| -------------------------------- | ------------------------------------ | ---------------------------------------------------------------- |
-| Document size                    | 1 MiB                                | 1 MiB                                                            |
-| Indexes                          | Required — queries fail without them | Optional — the advanced query engine can execute without indexes |
-| Pipeline API                     | Not available                        | Available (firegraph's default `queryMode`)                      |
-| `data.*` queries without indexes | Fails                                | Works (Pipeline handles it; standard mode scans)                 |
-| Performance                      | Baseline                             | Up to 5x faster (SSD-backed, advanced engine)                    |
-| Composite index limit            | 200 (free) / 1,000 (billing)         | 1,000                                                            |
-| Subcollection depth              | 100 levels                           | 100 levels                                                       |
+| Aspect                                  | Standard                             | Enterprise (Native mode)                                           |
+| --------------------------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| Document size                           | 1 MiB                                | 1 MiB                                                              |
+| Indexes                                 | Required — queries fail without them | Optional — the advanced query engine can execute without indexes   |
+| Pipeline API                            | Not available                        | Available (firegraph's default `queryMode`)                        |
+| `data.*` queries without indexes        | Fails                                | Works (Pipeline handles it; standard mode scans)                   |
+| Performance                             | Baseline                             | Up to 5x faster (SSD-backed, advanced engine)                      |
+| Composite index limit                   | 200 (free) / 1,000 (billing)         | 1,000                                                              |
+| Subcollection depth                     | 100 levels                           | 100 levels                                                         |
+| `findEdgesProjected()` (`query.select`) | ✓                                    | ✓                                                                  |
+| `expand()` (`query.join`)               | ✓ (chunked classic `'in'`)           | ✓ (Pipelines `equalAny()` single stage)                            |
+| `aggregate()` (count/sum/avg)           | ✓                                    | ✓                                                                  |
+| `aggregate()` (min/max)                 | —                                    | — (SQLite and DO only; both Firestore editions reject at runtime)  |
+| `bulkDelete()` / `bulkUpdate()`         | —                                    | ✓ (opt-in via `previewDml: true`)                                  |
+| `runEngineTraversal()` (server-side)    | —                                    | ✓ (nested-Pipeline multi-hop, depth ≤ 5)                           |
+| `fullTextSearch()`                      | —                                    | ✓ (the `fields` option throws `INVALID_QUERY` — not yet supported) |
+| `geoSearch()`                           | —                                    | ✓                                                                  |
+| `findNearest()` (vector search)         | ✓                                    | ✓                                                                  |
+| `raw.firestore` _(reserved)_            | ✓                                    | ✓                                                                  |
 
-Firegraph defaults to Pipeline mode, which requires Enterprise. If you are on Standard, set `queryMode: 'standard'` and ensure you have composite indexes for all your query patterns.
+Firegraph's backend choice drives the query path. If you are on Standard Firestore (or want the classic query path on Enterprise), use `createFirestoreStandardBackend` from `firegraph/firestore-standard` and ensure you have composite indexes for all your query patterns.
 
 ### Firestore Limits
 

@@ -37,6 +37,10 @@ That single directive makes the ambient `cloudflare:workers` module declaration 
 3. **Only add a triple-slash reference** when you need a runtime virtual module (`cloudflare:workers`, `cloudflare:sockets`, etc.) to resolve, since the experimental subpath's `declare module` blocks don't propagate.
 4. **Do NOT** add `@cloudflare/workers-types` back to `compilerOptions.types`. If you find yourself wanting to, you have N+1 files using it; consider whether a project-local types file (`src/cloudflare/types.d.ts`) declaring just the surface you use would serve better.
 
+## SQLite version floor: 3.35 (`DELETE … RETURNING` / `UPDATE … RETURNING`)
+
+Both the shared-table SQLite backend (`src/sqlite/backend.ts`) and the DO backend (`src/cloudflare/do.ts`) lean on `RETURNING "doc_id"` to surface authoritative affected-row counts for `updateDoc`, `bulkDelete`, and `bulkUpdate`. SQLite added DML `RETURNING` in 3.35 (March 2021). All three runtimes we ship against — `better-sqlite3`, Cloudflare D1, and DO `state.storage.sql` — are well past that floor, so the dependency is documented but not version-gated at runtime. If you ever see `near "RETURNING": syntax error` from a third-party SQLite executor someone is wiring into the SQLite backend, that's the cause.
+
 ## Key files
 
 | File                                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                          |

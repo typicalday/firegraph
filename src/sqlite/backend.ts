@@ -11,40 +11,53 @@
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
 import { FiregraphError } from '../errors.js';
-import { buildEdgeQueryPlan } from '../query.js';
 import type {
-  BulkBatchError,
-  BulkOptions,
-  BulkResult,
-  CascadeResult,
-  FindEdgesParams,
-  GraphReader,
-  QueryFilter,
-  QueryOptions,
-  StoredGraphRecord,
-} from '../types.js';
-import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
   UpdatePayload,
   WritableRecord,
   WriteMode,
-} from './backend.js';
-import { NODE_RELATION } from './constants.js';
-import type { SqliteExecutor, SqliteTxExecutor } from './sqlite-executor.js';
-import type { CompiledStatement } from './sqlite-sql.js';
+} from '../internal/backend.js';
+import { createCapabilities } from '../internal/backend.js';
+import { NODE_RELATION } from '../internal/constants.js';
+import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
+import { buildEdgeQueryPlan } from '../query.js';
+import type {
+  AggregateSpec,
+  BulkBatchError,
+  BulkOptions,
+  BulkResult,
+  BulkUpdatePatch,
+  CascadeResult,
+  ExpandParams,
+  ExpandResult,
+  FindEdgesParams,
+  GraphReader,
+  QueryFilter,
+  QueryOptions,
+  StoredGraphRecord,
+} from '../types.js';
+import type { CompiledStatement } from './sql.js';
 import {
+  compileAggregate,
+  compileBulkDelete,
+  compileBulkUpdate,
   compileCountScopePrefix,
   compileDelete,
   compileDeleteScopePrefix,
+  compileExpand,
+  compileExpandHydrate,
+  compileFindEdgesProjected,
   compileSelect,
   compileSelectByDocId,
   compileSelectGlobal,
   compileSet,
   compileUpdate,
+  decodeProjectedRow,
   rowToRecord,
-} from './sqlite-sql.js';
+} from './sql.js';
 
 export interface SqliteBackendOptions {
   /** Logical scope path (chained subgraph names) — used for `allowedIn` matching. */
@@ -205,7 +218,52 @@ class SqliteBatchBackendImpl implements BatchBackend {
   }
 }
 
-class SqliteBackendImpl implements StorageBackend {
+/**
+ * Capability union declared by the SQLite-backed `StorageBackend`.
+ *
+ * `core.transactions` is part of the static union because `runTransaction`
+ * is always present as a method on the class. The runtime cap-set determines
+ * whether that method is *functional*: D1 leaves `executor.transaction`
+ * undefined and the call throws `UNSUPPORTED_OPERATION`; DO SQLite and
+ * better-sqlite3 wire the executor and the call works. The static type
+ * therefore promises only that the method exists — callers that care about
+ * portability check `client.capabilities.has('core.transactions')` before
+ * opening a tx, and code that runs against an unknown driver can rely on the
+ * runtime guard inside `runTransaction`.
+ *
+ * The `query.*` extension capabilities follow the same conservative
+ * declaration rule as the cap descriptor itself — only land in the union
+ * when the corresponding method is actually wired up. Today that's
+ * `query.aggregate` (Phase 4), `query.dml` (Phase 5), `query.join`
+ * (Phase 6 — fan-out via `IN (…)` in one statement), and `query.select`
+ * (Phase 7 — server-side projection via `json_extract`).
+ */
+export type SqliteCapability =
+  | 'core.read'
+  | 'core.write'
+  | 'core.transactions'
+  | 'core.batch'
+  | 'core.subgraph'
+  | 'query.aggregate'
+  | 'query.dml'
+  | 'query.join'
+  | 'query.select'
+  | 'raw.sql';
+
+const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
+  'core.read',
+  'core.write',
+  'core.batch',
+  'core.subgraph',
+  'query.aggregate',
+  'query.dml',
+  'query.join',
+  'query.select',
+  'raw.sql',
+];
+
+class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
+  readonly capabilities: BackendCapabilities<SqliteCapability>;
   /** Logical table name (returned through `collectionPath` for parity with Firestore). */
   readonly collectionPath: string;
   readonly scopePath: string;
@@ -221,6 +279,11 @@ class SqliteBackendImpl implements StorageBackend {
     this.collectionPath = tableName;
     this.storageScope = storageScope;
     this.scopePath = scopePath;
+    const caps = new Set<SqliteCapability>(SQLITE_CORE_CAPS);
+    if (typeof executor.transaction === 'function') {
+      caps.add('core.transactions');
+    }
+    this.capabilities = createCapabilities(caps);
   }
 
   // --- Reads ---
@@ -412,6 +475,9 @@ class SqliteBackendImpl implements StorageBackend {
     reader: GraphReader,
     options?: BulkOptions,
   ): Promise<BulkResult> {
+    // Override default query limit for bulk deletion — we need all matching edges.
+    // limit: 0 bypasses DEFAULT_QUERY_LIMIT; an explicit user limit is preserved.
+    // allowCollectionScan: true — bulk deletion inherently implies scanning.
     const effectiveParams =
       params.limit !== undefined
         ? { ...params, allowCollectionScan: params.allowCollectionScan ?? true }
@@ -568,6 +634,230 @@ class SqliteBackendImpl implements StorageBackend {
     const rows = await this.executor.all(stmt.sql, stmt.params);
     return rows.map(rowToRecord);
   }
+
+  // --- Aggregate ---
+
+  /**
+   * Run an aggregate query in a single SQL statement. Supports the full
+   * count/sum/avg/min/max set — the SQLite engine evaluates each aggregate
+   * function over the filtered row set and the executor returns one row
+   * with one column per alias. SUM/MIN/MAX of an empty set returns 0
+   * (SQLite's `SUM(NULL) = NULL` is mapped to a clean number for the
+   * cross-backend contract); AVG returns NaN, matching the mathematical
+   * convention and the Firestore Standard helper.
+   */
+  async aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
+    const { stmt, aliases } = compileAggregate(
+      this.collectionPath,
+      this.storageScope,
+      spec,
+      filters,
+    );
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const row = rows[0] ?? {};
+    const out: Record<string, number> = {};
+    for (const alias of aliases) {
+      const v = row[alias];
+      if (v === null || v === undefined) {
+        // SQLite returns NULL for SUM/MIN/MAX over an empty set. Resolve
+        // to 0 for SUM/MIN/MAX (well-defined) and NaN for AVG (empty-set
+        // average is undefined). COUNT(*) is never null.
+        const op = spec[alias].op;
+        out[alias] = op === 'avg' ? Number.NaN : 0;
+      } else if (typeof v === 'bigint') {
+        out[alias] = Number(v);
+      } else if (typeof v === 'number') {
+        out[alias] = v;
+      } else {
+        // Some drivers return strings for very large or precise numerics.
+        // Coerce defensively — the contract is `number`.
+        out[alias] = Number(v);
+      }
+    }
+    return out;
+  }
+
+  // --- Server-side DML ---
+
+  /**
+   * Delete every row matching `filters` in a single SQL DELETE statement.
+   *
+   * Uses `RETURNING "doc_id"` to count rows touched — the SQLite executor's
+   * `run` returns void, so RETURNING + `all()` is the portable way to learn
+   * how many rows the engine actually deleted. SQLite ≥ 3.35 supports
+   * `DELETE … RETURNING`; better-sqlite3, D1, and DO SQLite all run on a
+   * recent enough engine.
+   *
+   * Single-statement DML doesn't chunk: the engine handles N rows in one
+   * shot, so `BulkOptions.batchSize` is intentionally ignored. The retry
+   * loop here exists only for transient driver errors (e.g. D1 surface
+   * congestion); a permanent failure is surfaced via the `errors` array
+   * with `batchIndex: 0` so callers see the same shape as `bulkRemoveEdges`.
+   *
+   * Subgraph scoping is enforced inside `compileBulkDelete` (the leading
+   * `"scope" = ?` predicate) so this method, like every other backend
+   * surface, naturally honours subgraph isolation.
+   */
+  async bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+    const stmt = compileBulkDelete(this.collectionPath, this.storageScope, filters);
+    return this.executeDmlWithReturning(stmt, options);
+  }
+
+  /**
+   * Update every row matching `filters` with `patch.data` in a single SQL
+   * UPDATE statement. The patch is deep-merged into each row's `data`
+   * column via the same `flattenPatch` → `compileDataOpsExpr` pipeline that
+   * `compileUpdate` (single-row) uses.
+   *
+   * Same contract notes as `bulkDelete` apply: single-statement, no
+   * chunking, `RETURNING "doc_id"` for the affected count, retry loop for
+   * transient driver errors.
+   */
+  async bulkUpdate(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    const stmt = compileBulkUpdate(
+      this.collectionPath,
+      this.storageScope,
+      filters,
+      patch.data,
+      Date.now(),
+    );
+    return this.executeDmlWithReturning(stmt, options);
+  }
+
+  /**
+   * Multi-source fan-out — `query.join` capability.
+   *
+   * Issues a single `SELECT … WHERE "aUid" IN (?, ?, …)` statement that
+   * matches every edge from every source UID in one round trip. When
+   * `params.hydrate === true`, follows up with a second statement that
+   * fetches the target node rows; both queries hit the same table so
+   * the executor amortises connection / parsing cost across them.
+   *
+   * Empty `params.sources` short-circuits to an empty result without
+   * touching the executor — `IN ()` is not valid SQL.
+   *
+   * Per-source ordering / strict per-source LIMIT enforcement is NOT
+   * implemented here; see the `ExpandParams.limitPerSource` JSDoc and
+   * `compileExpand` for the cap semantics. Strict per-source caps would
+   * require window functions and were judged out of scope for the
+   * round-trip-collapse goal.
+   */
+  async expand(params: ExpandParams): Promise<ExpandResult> {
+    if (params.sources.length === 0) {
+      return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
+    }
+    const stmt = compileExpand(this.collectionPath, this.storageScope, params);
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const edges = rows.map(rowToRecord);
+    if (!params.hydrate) {
+      return { edges };
+    }
+    // Hydration: fetch target nodes for every edge in one IN-clause statement.
+    // The "target" side depends on direction — forward hops point at `bUid`,
+    // reverse hops point at `aUid`.
+    const direction = params.direction ?? 'forward';
+    const targetUids = edges.map((e) => (direction === 'forward' ? e.bUid : e.aUid));
+    const uniqueTargets = [...new Set(targetUids)];
+    if (uniqueTargets.length === 0) {
+      return { edges, targets: [] };
+    }
+    const hydrateStmt = compileExpandHydrate(this.collectionPath, this.storageScope, uniqueTargets);
+    const hydrateRows = await this.executor.all(hydrateStmt.sql, hydrateStmt.params);
+    const byUid = new Map<string, StoredGraphRecord>();
+    for (const row of hydrateRows) {
+      const node = rowToRecord(row);
+      // Node UID is `bUid` (== `aUid` for self-loop) by convention. Key the
+      // map by `bUid` so the alignment loop below indexes correctly.
+      byUid.set(node.bUid, node);
+    }
+    const targets = targetUids.map((uid) => byUid.get(uid) ?? null);
+    return { edges, targets };
+  }
+
+  /**
+   * Server-side projection — `query.select` capability.
+   *
+   * Issues a single `SELECT json_extract(data, '$.f1'), …` statement that
+   * returns only the requested fields. The compiler emits one column per
+   * unique field plus a paired `json_type` column for `data.*` projections
+   * so the decoder can recover JSON-encoded objects/arrays without a
+   * second round trip. Migrations are NOT applied — the caller asked for
+   * a partial shape, and rehydrating that into the migration pipeline
+   * would require synthesising every absent field.
+   *
+   * The wire-payload reduction is the entire reason this method exists:
+   * a list view that only needs `title` / `date` no longer drags the
+   * full `data` JSON across the network. Callers that need the full
+   * record should use `findEdges` (with migration support).
+   */
+  async findEdgesProjected(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>> {
+    const { stmt, columns } = compileFindEdgesProjected(
+      this.collectionPath,
+      this.storageScope,
+      select,
+      filters,
+      options,
+    );
+    const rows = await this.executor.all(stmt.sql, stmt.params);
+    return rows.map((row) => decodeProjectedRow(row, columns));
+  }
+
+  /**
+   * Run a DML statement with `RETURNING "doc_id"` so we can count the
+   * rows the engine touched, with the same retry/backoff contract as
+   * `executeChunkedBatches`. Single statement, single batch.
+   */
+  private async executeDmlWithReturning(
+    stmt: CompiledStatement,
+    options?: BulkOptions,
+  ): Promise<BulkResult> {
+    const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
+    const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const rows = await this.executor.all(sqlWithReturning, stmt.params);
+        const deleted = rows.length;
+        if (options?.onProgress) {
+          options.onProgress({
+            completedBatches: 1,
+            totalBatches: 1,
+            deletedSoFar: deleted,
+          });
+        }
+        return { deleted, batches: 1, errors: [] };
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < maxRetries) {
+          const delay = Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt), MAX_RETRY_DELAY_MS);
+          await sleep(delay);
+        }
+      }
+    }
+    // `operationCount` is genuinely unknown for a server-side DML — we
+    // don't know how many rows the failed statement would have touched.
+    // Report 0 as the lower bound; callers concerned about partial state
+    // should re-query and reconcile.
+    return {
+      deleted: 0,
+      batches: 0,
+      errors: [
+        {
+          batchIndex: 0,
+          error: lastError ?? new Error('bulk DML failed for unknown reason'),
+          operationCount: 0,
+        },
+      ],
+    };
+  }
 }
 
 /**
@@ -582,7 +872,7 @@ export function createSqliteBackend(
   executor: SqliteExecutor,
   tableName: string,
   options: SqliteBackendOptions = {},
-): StorageBackend {
+): StorageBackend<SqliteCapability> {
   const storageScope = options.storageScope ?? '';
   const scopePath = options.scopePath ?? '';
   return new SqliteBackendImpl(executor, tableName, storageScope, scopePath);

@@ -7,9 +7,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { RegistryViolationError, ValidationError } from '../../src/errors.js';
-import { createGraphClient } from '../../src/firestore.js';
 import { createRegistry } from '../../src/registry.js';
 import type { GraphClient } from '../../src/types.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 import { cleanupCollection, getFirestore, uniqueCollectionPath } from './setup.js';
 
 const tourSchema = {

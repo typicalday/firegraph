@@ -22,8 +22,8 @@ import { randomUUID } from 'node:crypto';
 
 import { Firestore } from '@google-cloud/firestore';
 
-import { createGraphClient } from '../../src/firestore.js';
 import type { GraphClient } from '../../src/types.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 
 const PROJECT_ID = process.env.PIPELINE_TEST_PROJECT;
 const DATABASE_ID = process.env.PIPELINE_TEST_DATABASE;

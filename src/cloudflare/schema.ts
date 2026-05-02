@@ -82,6 +82,24 @@ export function quoteDOIdent(name: string): string {
 }
 
 /**
+ * Quote a SQL column-alias label. Unlike `quoteDOIdent` (which validates
+ * the input as a SQL identifier and is used for table/column names), this
+ * helper accepts arbitrary text — projection aliases are pure labels we
+ * read back out of the result row, never executed as identifiers, so they
+ * can carry dots (e.g. `data.detail.region`) and other characters that the
+ * strict identifier validator rejects.
+ *
+ * Embedded double quotes are escaped per the SQL standard (`"` → `""`),
+ * which is sufficient to prevent the alias text from terminating the
+ * quoted label early. Mirrors `quoteColumnAlias` in
+ * `src/internal/sqlite-schema.ts`; both backends share the same projection
+ * contract, so the alias quoter behaviour must match.
+ */
+export function quoteDOColumnAlias(label: string): string {
+  return `"${label.replace(/"/g, '""')}"`;
+}
+
+/**
  * Options controlling DDL emission for `buildDOSchemaStatements`.
  */
 export interface BuildDOSchemaOptions {

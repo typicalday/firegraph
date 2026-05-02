@@ -5,8 +5,9 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { createGraphClient } from '../../src/client.js';
 import { discoverEntities } from '../../src/discover.js';
-import { createGraphClient } from '../../src/index.js';
+import { createFirestoreEnterpriseBackend } from '../../src/firestore-enterprise/backend.js';
 import { createRegistry } from '../../src/registry.js';
 import type { GraphClient, GraphRegistry, QueryMode, RegistryEntry } from '../../src/types.js';
 import type { EntityViewMeta, ViewRegistry } from '../../src/views.js';
@@ -232,10 +233,12 @@ async function init() {
   }
 
   // 5. Create graph client
-  state.graphClient = createGraphClient(db, resolvedCollection, {
-    registry: state.registry,
-    queryMode: resolvedQueryMode,
-  });
+  state.graphClient = createGraphClient(
+    createFirestoreEnterpriseBackend(db, resolvedCollection, {
+      defaultQueryMode: resolvedQueryMode === 'standard' ? 'classic' : 'pipeline',
+    }),
+    { registry: state.registry },
+  );
 
   // 6. If dynamic registry mode, do initial load from Firestore
   if (resolvedRegistryMode) {
@@ -300,10 +303,12 @@ async function reloadDynamicSchema(): Promise<ReloadResult> {
   state.schemaMetadata = introspectRegistry(state.registry, allDynamicNames);
 
   // 6. Recreate graph client with merged registry
-  state.graphClient = createGraphClient(db, resolvedCollection, {
-    registry: state.registry,
-    queryMode: resolvedQueryMode,
-  });
+  state.graphClient = createGraphClient(
+    createFirestoreEnterpriseBackend(db, resolvedCollection, {
+      defaultQueryMode: resolvedQueryMode === 'standard' ? 'classic' : 'pipeline',
+    }),
+    { registry: state.registry },
+  );
 
   // 7. Store dynamic type metadata (templates, css)
   state.dynamicTypeMeta = dynamic.dynamicTypeMeta;

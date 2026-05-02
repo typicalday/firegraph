@@ -15,6 +15,9 @@ import {
   validateDOTableName,
 } from '../../src/cloudflare/schema.js';
 import {
+  compileDOAggregate,
+  compileDOBulkDelete,
+  compileDOBulkUpdate,
   compileDODelete,
   compileDODeleteAll,
   compileDOSelect,
@@ -268,6 +271,125 @@ describe('cloudflare/sql compileDOSelectByDocId', () => {
   });
 });
 
+describe('cloudflare/sql compileDOAggregate', () => {
+  // The DO compiler does NOT emit a `scope` predicate — every row in a
+  // FiregraphDO's SQLite belongs to the same subgraph. That contrast with
+  // the shared-table compiler (which always leads with `"scope" = ?`) is
+  // the core invariant to defend.
+
+  it('emits COUNT(*) with no WHERE clause when no filters are supplied', () => {
+    const { stmt, aliases } = compileDOAggregate('firegraph', { total: { op: 'count' } }, []);
+    expect(stmt.sql).toBe('SELECT COUNT(*) AS "total" FROM "firegraph"');
+    expect(stmt.params).toEqual([]);
+    expect(aliases).toEqual(['total']);
+  });
+
+  it('appends WHERE for filters but never a scope predicate', () => {
+    const { stmt, aliases } = compileDOAggregate('firegraph', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+    ]);
+    expect(stmt.sql).toBe('SELECT COUNT(*) AS "n" FROM "firegraph" WHERE "a_type" = ?');
+    expect(stmt.params).toEqual(['tour']);
+    // Critical invariant — leading "scope" predicate is shared-table-only.
+    expect(stmt.sql).not.toContain('"scope"');
+    expect(aliases).toEqual(['n']);
+  });
+
+  it('compiles SUM/AVG/MIN/MAX with CAST(... AS REAL) for numeric semantics', () => {
+    // Without the cast, MIN/MAX would compare lexicographically on the
+    // underlying JSON text storage ("100" < "20"). The cast forces numeric
+    // semantics on all four ops; COUNT is unaffected.
+    const { stmt } = compileDOAggregate(
+      'firegraph',
+      {
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [],
+    );
+    expect(stmt.sql).toContain(`SUM(CAST(json_extract("data", '$.price') AS REAL)) AS "s"`);
+    expect(stmt.sql).toContain(`AVG(CAST(json_extract("data", '$.price') AS REAL)) AS "a"`);
+    expect(stmt.sql).toContain(`MIN(CAST(json_extract("data", '$.price') AS REAL)) AS "lo"`);
+    expect(stmt.sql).toContain(`MAX(CAST(json_extract("data", '$.price') AS REAL)) AS "hi"`);
+  });
+
+  it('inlines JSON paths in field references (matches expression-index form)', () => {
+    // The aggregate path must reuse the same `compileFieldRef` rules as the
+    // SELECT path so that `CREATE INDEX … ON tbl(json_extract("data", '$.x'))`
+    // can match the aggregate expression. Parametrising the path would
+    // silently fall back to a full scan.
+    const { stmt } = compileDOAggregate('firegraph', { s: { op: 'sum', field: 'data.price' } }, []);
+    expect(stmt.sql).toContain(`json_extract("data", '$.price')`);
+    expect(stmt.sql).not.toContain(`json_extract("data", ?)`);
+  });
+
+  it('rejects aliases that fail the JSON-path identifier rule', () => {
+    // Aliases are inlined into SQL (SQL aliases can't be bound parameters),
+    // so they must pass the same charset rule used everywhere else. This is
+    // the SQL-injection defense.
+    expect(() => compileDOAggregate('firegraph', { 'bad alias': { op: 'count' } }, [])).toThrow(
+      /not a safe JSON-path identifier/,
+    );
+    expect(() =>
+      compileDOAggregate('firegraph', { 'a"; DROP TABLE x;--': { op: 'count' } }, []),
+    ).toThrow(/not a safe JSON-path identifier/);
+  });
+
+  it('rejects non-count ops without a field', () => {
+    expect(() => compileDOAggregate('firegraph', { s: { op: 'sum' } }, [])).toThrow(
+      /'sum' requires a field/,
+    );
+    expect(() => compileDOAggregate('firegraph', { a: { op: 'avg' } }, [])).toThrow(
+      /'avg' requires a field/,
+    );
+    expect(() => compileDOAggregate('firegraph', { lo: { op: 'min' } }, [])).toThrow(
+      /'min' requires a field/,
+    );
+  });
+
+  it('rejects an empty spec', () => {
+    expect(() => compileDOAggregate('firegraph', {}, [])).toThrow(/at least one aggregation/);
+  });
+
+  it('rejects count with a stray field (catches typo from cribbing a sum spec)', () => {
+    // The count op operates on rows, not a column expression. Silently
+    // ignoring a stray field would mask user typos like
+    // `{ n: { op: 'count', field: 'data.price' } }` (cribbed from a sum
+    // spec) and produce a misleading row count.
+    expect(() =>
+      compileDOAggregate('firegraph', { n: { op: 'count', field: 'data.price' } }, []),
+    ).toThrow(/'count' must not specify a field/);
+  });
+
+  it('preserves alias order in the returned aliases list', () => {
+    // Spec keys are in iteration order; the alias array must mirror that so
+    // the JS-side caller can rehydrate result columns deterministically.
+    const { aliases } = compileDOAggregate(
+      'firegraph',
+      {
+        zCount: { op: 'count' },
+        aSum: { op: 'sum', field: 'data.x' },
+        mAvg: { op: 'avg', field: 'data.x' },
+      },
+      [],
+    );
+    expect(aliases).toEqual(['zCount', 'aSum', 'mAvg']);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', () => {
+    const { stmt } = compileDOAggregate('firegraph', { n: { op: 'count' } }, [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'active' },
+    ]);
+    expect(stmt.sql).toBe(
+      `SELECT COUNT(*) AS "n" FROM "firegraph" WHERE "a_type" = ? AND json_extract("data", '$.status') = ?`,
+    );
+    expect(stmt.params).toEqual(['tour', 'active']);
+  });
+});
+
 describe('cloudflare/sql compileDOSet', () => {
   it('produces INSERT OR REPLACE with serialized data when mode = replace', () => {
     const { sql, params } = compileDOSet(
@@ -495,5 +617,182 @@ describe('cloudflare/sql hydrateDORecord — client-side reconstruction', () => 
     const rec = hydrateDORecord(cloned);
     expect(rec.createdAt).toBeInstanceOf(GraphTimestampImpl);
     expect((rec.createdAt as GraphTimestamp).toMillis()).toBe(1_700_000_000_000);
+  });
+});
+
+describe('cloudflare/sql compileDOBulkDelete', () => {
+  // Per-DO single-subgraph table — no scope predicate is needed (and would
+  // be wrong, since the DO is the scope). Mirror of compileBulkDelete in
+  // shared SQLite, minus the leading "scope" = ?.
+
+  it('emits an unscoped DELETE for a filtered query', () => {
+    const stmt = compileDOBulkDelete('firegraph', [{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(stmt.sql).toBe(`DELETE FROM "firegraph" WHERE "a_type" = ?`);
+    expect(stmt.params).toEqual(['tour']);
+  });
+
+  it('emits an unconditional DELETE when no filters are supplied', () => {
+    // The client-level scan-protection gate forces `allowCollectionScan: true`
+    // to reach this path. The compiler itself does not police that — it
+    // produces the canonical SQL. The DO's per-subgraph isolation means
+    // "delete everything" is bounded to one logical subgraph by construction.
+    const stmt = compileDOBulkDelete('firegraph', []);
+    expect(stmt.sql).toBe(`DELETE FROM "firegraph"`);
+    expect(stmt.params).toEqual([]);
+  });
+
+  it('combines a built-in column filter with a data.* JSON filter', () => {
+    const stmt = compileDOBulkDelete('firegraph', [
+      { field: 'aType', op: '==', value: 'tour' },
+      { field: 'data.status', op: '==', value: 'archived' },
+    ]);
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    expect(stmt.sql).toContain(`json_extract("data", '$.status') = ?`);
+    expect(stmt.params).toEqual(['tour', 'archived']);
+  });
+});
+
+describe('cloudflare/sql compileDOBulkUpdate', () => {
+  it('emits SET "data" = json_patch-style expr and an updated_at bump', () => {
+    const stmt = compileDOBulkUpdate(
+      'firegraph',
+      [{ field: 'aType', op: '==', value: 'tour' }],
+      { status: 'archived' },
+      1_700_000_000_000,
+    );
+    // Deep-merge expression.
+    expect(stmt.sql).toMatch(/UPDATE\s+"firegraph"\s+SET\s+"data"\s*=/);
+    // updated_at always bumped.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    // No scope predicate — DO has its own physical isolation.
+    expect(stmt.sql).not.toContain(`"scope" = ?`);
+    // WHERE clause references the column-filter, not the JSON path.
+    expect(stmt.sql).toContain(`"a_type" = ?`);
+    // updated_at param appears in the param list.
+    expect(stmt.params).toContain(1_700_000_000_000);
+    // Last param is the filter value (after SET-clause params).
+    expect(stmt.params[stmt.params.length - 1]).toBe('tour');
+  });
+
+  it('rejects an empty patch with INVALID_QUERY', () => {
+    expect(() => compileDOBulkUpdate('firegraph', [], {}, Date.now())).toThrow(
+      /at least one leaf|INVALID_QUERY/,
+    );
+  });
+
+  it('emits an unconditional UPDATE when no filters are supplied (with allowCollectionScan)', () => {
+    // Same client-level gate as bulkDelete. Once filters reach the
+    // compiler, an empty list produces an UPDATE-everything-in-the-DO SQL.
+    const stmt = compileDOBulkUpdate('firegraph', [], { archived: true }, 1_700_000_000_000);
+    // No WHERE clause when there are no filters.
+    expect(stmt.sql).not.toContain(' WHERE ');
+    // updated_at and the patched data still flow through.
+    expect(stmt.sql).toContain(`"updated_at" = ?`);
+    expect(stmt.sql).toMatch(/SET\s+"data"\s*=/);
+  });
+
+  it('rejects Firestore special types in the patch', () => {
+    // assertJsonSafePayload guard — DOs use SQLite JSON columns; tagged
+    // Firestore types would round-trip back through the migration
+    // serialization but never write. Rejected at the DML boundary.
+    const tagged = { __firegraph_ser__: 'Timestamp', seconds: 1, nanoseconds: 0 };
+    expect(() => compileDOBulkUpdate('firegraph', [], { stamped: tagged }, Date.now())).toThrow();
+  });
+});
+
+describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
+  // Phase 6 query.join: per-DO multi-source fan-out via SQL `IN (?, ?, …)`.
+  // Mirror of compileExpand / compileExpandHydrate in shared SQLite, minus
+  // the leading "scope" = ? predicate (the DO is the scope).
+
+  it('compileDOExpand emits IN (?, ?, …) with leading axbType, no scope predicate', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b', 'c'],
+      axbType: 'wrote',
+    });
+    // Column refs use snake_case (`a_uid`, `axb_type`, `b_uid`) — see
+    // `DO_FIELD_TO_COLUMN` in `src/cloudflare/schema.ts`.
+    expect(stmt.sql).toContain(`SELECT * FROM "firegraph"`);
+    expect(stmt.sql).not.toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" IN (?, ?, ?)');
+    // Param order: axbType, then each source UID in order.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'c']);
+  });
+
+  it('compileDOExpand reverse direction filters on bUid', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['x', 'y'],
+      axbType: 'wrote',
+      direction: 'reverse',
+    });
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    expect(stmt.sql).not.toContain('"a_uid" IN (');
+  });
+
+  it('compileDOExpand with axbType "is" adds the self-loop guard', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a'],
+      axbType: 'is',
+    });
+    expect(stmt.sql).toContain('"a_uid" != "b_uid"');
+  });
+
+  it('compileDOExpand emits a_type / b_type predicates with snake_case columns', async () => {
+    // Audit gap: the leading-shape test doesn't exercise the optional
+    // `aType` / `bType` refinements. Compiler resolves them through
+    // `compileFieldRef`, which routes camelCase field names → snake_case
+    // columns via `DO_FIELD_TO_COLUMN`. A regression that emitted
+    // `"aType" = ?` would crash workerd's SQLite with "no such column".
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      aType: 'agent',
+      bType: 'note',
+    });
+    expect(stmt.sql).toContain('"a_type" = ?');
+    expect(stmt.sql).toContain('"b_type" = ?');
+    expect(stmt.sql).not.toContain('"aType"');
+    expect(stmt.sql).not.toContain('"bType"');
+    // Param ordering: axbType, sources..., aType, bType.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'agent', 'note']);
+  });
+
+  it('compileDOExpand multiplies limitPerSource by sources.length', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpand('firegraph', {
+      sources: ['a', 'b'],
+      axbType: 'wrote',
+      limitPerSource: 7,
+    });
+    expect(stmt.sql).toMatch(/LIMIT \?/);
+    expect(stmt.params[stmt.params.length - 1]).toBe(14);
+  });
+
+  it('compileDOExpand rejects empty sources list', async () => {
+    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    expect(() => compileDOExpand('firegraph', { sources: [], axbType: 'wrote' })).toThrow(
+      /INVALID_QUERY|empty/,
+    );
+  });
+
+  it('compileDOExpandHydrate emits the self-loop predicate without a scope clause', async () => {
+    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    const stmt = compileDOExpandHydrate('firegraph', ['x', 'y']);
+    expect(stmt.sql).not.toContain('"scope" = ?');
+    expect(stmt.sql).toContain('"axb_type" = ?');
+    expect(stmt.sql).toContain('"a_uid" = "b_uid"');
+    expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
+    // Param order: axbType ('is'), then each target UID.
+    expect(stmt.params).toEqual(['is', 'x', 'y']);
+  });
+
+  it('compileDOExpandHydrate rejects empty target list', async () => {
+    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    expect(() => compileDOExpandHydrate('firegraph', [])).toThrow(/INVALID_QUERY|empty/);
   });
 });

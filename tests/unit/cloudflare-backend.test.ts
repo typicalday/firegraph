@@ -26,10 +26,15 @@ import type {
   StorageBackend,
   TransactionBackend,
 } from '../../src/internal/backend.js';
+import { createCapabilities } from '../../src/internal/backend.js';
 import { NODE_RELATION } from '../../src/internal/constants.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import type {
+  AggregateSpec,
+  BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
+  Capability,
   CascadeResult,
   FindEdgesParams,
   QueryFilter,
@@ -49,6 +54,8 @@ interface FakeStub extends FiregraphStub {
   readonly name: string;
   readonly calls: Array<{ method: keyof FiregraphStub; args: unknown[] }>;
   records: Map<string, StoredGraphRecord>;
+  /** Programmable response for the next `_fgAggregate` call. */
+  aggregateResponse: Record<string, number | null>;
 }
 
 function makeStub(name: string): FakeStub {
@@ -58,6 +65,7 @@ function makeStub(name: string): FakeStub {
     name,
     calls,
     records,
+    aggregateResponse: {},
     async _fgGetDoc(docId: string) {
       calls.push({ method: '_fgGetDoc', args: [docId] });
       return records.get(docId) ?? null;
@@ -65,6 +73,10 @@ function makeStub(name: string): FakeStub {
     async _fgQuery(filters: QueryFilter[], options?: QueryOptions) {
       calls.push({ method: '_fgQuery', args: [filters, options] });
       return Array.from(records.values());
+    },
+    async _fgAggregate(spec: AggregateSpec, filters: QueryFilter[]) {
+      calls.push({ method: '_fgAggregate', args: [spec, filters] });
+      return stub.aggregateResponse;
     },
     async _fgSetDoc(docId: string, record) {
       calls.push({ method: '_fgSetDoc', args: [docId, record] });
@@ -87,6 +99,18 @@ function makeStub(name: string): FakeStub {
     async _fgBulkRemoveEdges(params: FindEdgesParams): Promise<BulkResult> {
       calls.push({ method: '_fgBulkRemoveEdges', args: [params] });
       return { deleted: 0, batches: 0, errors: [] };
+    },
+    async _fgBulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
+      calls.push({ method: '_fgBulkDelete', args: [filters, options] });
+      return { deleted: 0, batches: 1, errors: [] };
+    },
+    async _fgBulkUpdate(
+      filters: QueryFilter[],
+      patch: BulkUpdatePatch,
+      options?: BulkOptions,
+    ): Promise<BulkResult> {
+      calls.push({ method: '_fgBulkUpdate', args: [filters, patch, options] });
+      return { deleted: 0, batches: 1, errors: [] };
     },
     async _fgDestroy() {
       calls.push({ method: '_fgDestroy', args: [] });
@@ -185,6 +209,103 @@ describe('DORPCBackend — reads/writes forward to the stub', () => {
     const methods = stub.calls.map((c) => c.method);
     expect(methods).toEqual(['_fgSetDoc', '_fgGetDoc', '_fgUpdateDoc', '_fgQuery', '_fgDeleteDoc']);
     expect(stubs.size).toBe(1);
+  });
+});
+
+describe('DORPCBackend.aggregate — wire null → 0/NaN translation', () => {
+  // The DO returns `Record<string, number | null>` so the empty-set null
+  // distinction survives the structured-clone RPC boundary. The client-side
+  // backend is responsible for resolving null → 0 (SUM/MIN/MAX) or NaN (AVG)
+  // so the cross-backend contract stays `Record<string, number>`.
+
+  it('forwards spec + filters to _fgAggregate and unwraps numeric results', async () => {
+    const { ns } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const stub = ns.get(ns.idFromName('main')) as FakeStub;
+    stub.aggregateResponse = { n: 4, s: 100, a: 25 };
+
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+      },
+      [{ field: 'aType', op: '==', value: 'tour' }],
+    );
+    expect(out).toEqual({ n: 4, s: 100, a: 25 });
+
+    const aggCall = stub.calls.find((c) => c.method === '_fgAggregate');
+    expect(aggCall).toBeTruthy();
+    expect(aggCall!.args[1]).toEqual([{ field: 'aType', op: '==', value: 'tour' }]);
+  });
+
+  it('resolves null → 0 for sum/min/max and NaN for avg', async () => {
+    const { ns } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const stub = ns.get(ns.idFromName('main')) as FakeStub;
+    // Empty filter set on the DO side returns null for every non-count op.
+    stub.aggregateResponse = { n: 0, s: null, a: null, lo: null, hi: null };
+
+    const out = await backend.aggregate!(
+      {
+        n: { op: 'count' },
+        s: { op: 'sum', field: 'data.price' },
+        a: { op: 'avg', field: 'data.price' },
+        lo: { op: 'min', field: 'data.price' },
+        hi: { op: 'max', field: 'data.price' },
+      },
+      [],
+    );
+    expect(out.n).toBe(0);
+    expect(out.s).toBe(0);
+    expect(Number.isNaN(out.a)).toBe(true);
+    expect(out.lo).toBe(0);
+    expect(out.hi).toBe(0);
+  });
+
+  it('throws UNSUPPORTED_OPERATION when the wrapped stub omits _fgAggregate', async () => {
+    // `_fgAggregate` is optional on `FiregraphStub` so external worker code
+    // that hand-rolls a thin RPC wrapper around a DO can still compile (this
+    // is the C2 fix from the first audit pass — see backend.ts:316). The
+    // backend must surface a clean `UNSUPPORTED_OPERATION` here rather than
+    // letting the call land as `TypeError: stub._fgAggregate is not a
+    // function`. We simulate the lean-stub case by deleting the method on a
+    // FakeStub *before* dispatching through the backend, then asserting the
+    // typed firegraph error code.
+    const stubs = new Map<string, FakeStub>();
+    const ns: FiregraphNamespace = {
+      idFromName(name: string): FakeId {
+        return {
+          name,
+          toString() {
+            return name;
+          },
+        };
+      },
+      get(id: DurableObjectIdLike) {
+        const name = (id as FakeId).name;
+        let stub = stubs.get(name);
+        if (!stub) {
+          stub = makeStub(name);
+          // Strip _fgAggregate to model an external wrapper that never
+          // forwarded the optional method.
+          (stub as unknown as { _fgAggregate?: unknown })._fgAggregate = undefined;
+          stubs.set(name, stub);
+        }
+        return stub;
+      },
+    };
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+
+    await expect(backend.aggregate!({ n: { op: 'count' } }, [])).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+      message: expect.stringContaining('_fgAggregate'),
+    });
+
+    // No call should reach the stub; the surface check happens before
+    // anything is dispatched.
+    const stub = stubs.get('main')!;
+    expect(stub.calls.find((c) => c.method === '_fgAggregate')).toBeUndefined();
   });
 });
 
@@ -356,6 +477,67 @@ describe('DORPCBackend — cascade + bulk + destroy', () => {
     expect(stubs.get('main')!.calls.at(-1)!.method).toBe('_fgBulkRemoveEdges');
   });
 
+  it('forwards bulkDelete to _fgBulkDelete with filters and options', async () => {
+    const { ns, stubs } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const out = await backend.bulkDelete!(filters, { batchSize: 50 });
+
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = stubs.get('main')!.calls.find((c) => c.method === '_fgBulkDelete');
+    expect(dmlCall).toBeTruthy();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual({ batchSize: 50 });
+  });
+
+  it('forwards bulkUpdate to _fgBulkUpdate with filters, patch, and options', async () => {
+    const { ns, stubs } = makeNamespace();
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+    const filters: QueryFilter[] = [{ field: 'aType', op: '==', value: 'tour' }];
+    const patch: BulkUpdatePatch = { data: { status: 'archived' } };
+    const out = await backend.bulkUpdate!(filters, patch);
+
+    expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
+    const dmlCall = stubs.get('main')!.calls.find((c) => c.method === '_fgBulkUpdate');
+    expect(dmlCall).toBeTruthy();
+    expect(dmlCall!.args[0]).toEqual(filters);
+    expect(dmlCall!.args[1]).toEqual(patch);
+  });
+
+  it('throws UNSUPPORTED_OPERATION when the wrapped stub omits _fgBulkDelete / _fgBulkUpdate', async () => {
+    // Both DML methods are optional on `FiregraphStub` so external worker code
+    // that hand-rolls a thin RPC wrapper around a DO can still compile (same
+    // pattern as `_fgAggregate`). The backend must surface a clean
+    // `UNSUPPORTED_OPERATION` rather than landing as a runtime TypeError.
+    const stubs = new Map<string, FakeStub>();
+    const ns: FiregraphNamespace = {
+      idFromName(name: string): FakeId {
+        return { name, toString: () => name };
+      },
+      get(id: DurableObjectIdLike) {
+        const name = (id as FakeId).name;
+        let stub = stubs.get(name);
+        if (!stub) {
+          stub = makeStub(name);
+          (stub as unknown as { _fgBulkDelete?: unknown })._fgBulkDelete = undefined;
+          (stub as unknown as { _fgBulkUpdate?: unknown })._fgBulkUpdate = undefined;
+          stubs.set(name, stub);
+        }
+        return stub;
+      },
+    };
+    const backend = new DORPCBackend(ns, { storageKey: 'main' });
+
+    await expect(backend.bulkDelete!([], {})).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+      message: expect.stringContaining('_fgBulkDelete'),
+    });
+    await expect(backend.bulkUpdate!([], { data: { x: 1 } }, {})).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+      message: expect.stringContaining('_fgBulkUpdate'),
+    });
+  });
+
   it('destroy() forwards to _fgDestroy (cross-DO cascade hook)', async () => {
     const { ns, stubs } = makeNamespace();
     const backend = new DORPCBackend(ns, { storageKey: 'main' });
@@ -490,6 +672,9 @@ describe('createSiblingClient', () => {
     // across module boundaries in monorepos with duplicated copies).
     const noop = async (): Promise<void> => {};
     const fakeBackend: StorageBackend = {
+      capabilities: createCapabilities(
+        new Set<Capability>(['core.read', 'core.write', 'core.batch', 'core.subgraph']),
+      ),
       collectionPath: 'firestore-graphs',
       scopePath: '',
       async getDoc() {

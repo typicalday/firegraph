@@ -37,16 +37,16 @@ import { Firestore } from '@google-cloud/firestore';
 import type { Database as BetterSqliteDb, default as BetterSqliteDatabase } from 'better-sqlite3';
 
 import { createGraphClientFromBackend } from '../../src/client.js';
-import { createGraphClient } from '../../src/firestore.js';
-import { createSqliteBackend } from '../../src/internal/sqlite-backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
 import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
+import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import type {
   DynamicGraphClient,
   DynamicRegistryConfig,
   GraphClient,
   GraphClientOptions,
 } from '../../src/types.js';
+import { createGraphClient } from '../helpers/firestore-client.js';
 
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'demo-firegraph';
 const HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1';

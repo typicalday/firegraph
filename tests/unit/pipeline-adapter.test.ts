@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createPipelineQueryAdapter } from '../../src/internal/pipeline-adapter.js';
+import { createPipelineQueryAdapter } from '../../src/firestore-enterprise/pipeline-adapter.js';
 
 /**
  * Creates a mock Firestore instance with a chainable pipeline() method.

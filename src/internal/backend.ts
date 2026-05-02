@@ -10,16 +10,78 @@
  */
 
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
+  Capability,
   CascadeResult,
+  EngineTraversalParams,
+  EngineTraversalResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
+  FindNearestParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
 import type { DataPathOp } from './write-plan.js';
+
+/**
+ * Runtime descriptor of which `Capability`s a `StorageBackend` actually
+ * implements. Static for the lifetime of a backend instance; declared at
+ * construction. The phantom `_phantom` field is a type-level marker
+ * (never read at runtime) that lets the type parameter `C` flow through
+ * the descriptor for use by `GraphClient<C>` conditional gating.
+ *
+ * Use `createCapabilities` to construct one. Use `.has(c)` to check
+ * membership at runtime; the type system gates extension methods on the
+ * client level (see `.claude/backend-capabilities.md`).
+ */
+export interface BackendCapabilities<C extends Capability = Capability> {
+  /** Runtime membership check. */
+  has(capability: Capability): boolean;
+  /** Iterate declared capabilities (diagnostics, error messages). */
+  values(): IterableIterator<Capability>;
+  /** Type-level marker. Never read at runtime. */
+  readonly _phantom?: C;
+}
+
+/**
+ * Construct a `BackendCapabilities<C>` from an explicit set. The set is
+ * captured by reference; callers should treat it as readonly after passing
+ * it in. The runtime cost of `has()` is one Set lookup.
+ */
+export function createCapabilities<C extends Capability>(
+  caps: ReadonlySet<C>,
+): BackendCapabilities<C> {
+  return {
+    has: (capability: Capability): boolean => caps.has(capability as C),
+    values: () => caps.values() as IterableIterator<Capability>,
+  };
+}
+
+/**
+ * Intersect multiple capability sets. Used by `RoutingStorageBackend` to
+ * derive the capability set of a composite backend: a routed graph can
+ * only honour a capability if every wrapped backend honours it.
+ */
+export function intersectCapabilities(
+  parts: ReadonlyArray<BackendCapabilities>,
+): BackendCapabilities {
+  if (parts.length === 0) return createCapabilities(new Set<Capability>());
+  const sets = parts.map((p) => new Set<Capability>(p.values()));
+  const [first, ...rest] = sets;
+  const intersection = new Set<Capability>();
+  for (const c of first) {
+    if (rest.every((s) => s.has(c))) intersection.add(c);
+  }
+  return createCapabilities(intersection);
+}
 
 /**
  * Per-record write payload — backend-agnostic. Timestamps are not present;
@@ -106,7 +168,9 @@ export interface BatchBackend {
  * that's a collection path; for SQLite it's a (table, scopePath) pair.
  * `subgraph()` returns a child backend bound to a nested location.
  */
-export interface StorageBackend {
+export interface StorageBackend<C extends Capability = Capability> {
+  /** Capabilities this backend instance declares. Static for the lifetime of the backend. */
+  readonly capabilities: BackendCapabilities<C>;
   /** Backend-internal location identifier (collection path or table name). */
   readonly collectionPath: string;
   /** Subgraph scope (empty string for root). */
@@ -146,4 +210,176 @@ export interface StorageBackend {
    * Optional — backends that can't support this should throw a clear error.
    */
   findEdgesGlobal?(params: FindEdgesParams, collectionName?: string): Promise<StoredGraphRecord[]>;
+
+  // --- Aggregations ---
+  /**
+   * Run an aggregate query (count/sum/avg/min/max). Present only on backends
+   * that declare `query.aggregate`. The map's keys are caller-defined aliases
+   * matching `AggregateSpec`; values are the resolved numeric results.
+   *
+   * Backends that can't satisfy a particular op throw `FiregraphError` with
+   * code `UNSUPPORTED_AGGREGATE` (e.g. Firestore Standard rejects min/max).
+   */
+  aggregate?(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>>;
+
+  // --- Server-side DML ---
+  /**
+   * Delete every row matching `filters` in one server-side statement.
+   * Present only on backends that declare `query.dml`. The default cascade
+   * implementation in `bulk.ts` uses this when available; backends without
+   * the cap (e.g. Firestore Standard) fall back to a fetch-then-delete
+   * loop driven by `findEdges` + per-row `deleteDoc`.
+   *
+   * The contract matches `findEdges`: scope predicates are honoured
+   * automatically by the backend's own internal scope tracking. Callers
+   * supply only the filter list — the same shape produced by
+   * `buildEdgeQueryPlan`.
+   */
+  bulkDelete?(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult>;
+  /**
+   * Update every row matching `filters` with `patch` in one server-side
+   * statement. The patch is deep-merged into each row's `data` field, the
+   * same flatten-then-merge pipeline `updateDoc` uses. Identifying columns
+   * (`aType`, `axbType`, `aUid`, `bType`, `bUid`, `v`) are not writable
+   * through this path.
+   */
+  bulkUpdate?(
+    filters: QueryFilter[],
+    patch: BulkUpdatePatch,
+    options?: BulkOptions,
+  ): Promise<BulkResult>;
+
+  // --- Server-side multi-source fan-out ---
+  /**
+   * Fan out from `params.sources` over a single edge type in one server-side
+   * round trip. Present only on backends that declare `query.join`. The
+   * traversal layer (`traverse.ts`) calls `expand` once per hop when the
+   * backend declares the cap; otherwise it falls back to the per-source
+   * `findEdges` loop.
+   *
+   * Cross-graph hops are never dispatched through `expand` — each source
+   * UID resolves to a distinct subgraph location, which can't be fanned
+   * out as a single statement. The traversal layer enforces that
+   * boundary; `expand` itself does not need to inspect `targetGraph`.
+   */
+  expand?(params: ExpandParams): Promise<ExpandResult>;
+
+  // --- Engine-level multi-hop traversal ---
+  /**
+   * Compile a multi-hop traversal spec into one server-side query and
+   * dispatch a single round trip. Present only on backends that declare
+   * `traversal.serverSide` (Firestore Enterprise today, via nested
+   * Pipelines that combine `define`, `addFields`, and
+   * `toArrayExpression`).
+   *
+   * The traversal layer (`traverse.ts`) compiles a `TraversalBuilder`
+   * spec into `EngineTraversalParams` only when the spec is eligible
+   * (no cross-graph hops, no JS filters, depth ≤ `MAX_PIPELINE_DEPTH`,
+   * `Π(limitPerSource_i × N_i) ≤ maxReads`, `limitPerSource` set on
+   * every hop). Ineligible specs fall back to the per-hop `expand()`
+   * loop without invoking this method.
+   *
+   * The result collapses the nested-pipeline tree into per-hop edge
+   * arrays so the traversal layer can fold the result into the same
+   * `HopResult[]` shape it produces from the per-hop loop.
+   */
+  runEngineTraversal?(params: EngineTraversalParams): Promise<EngineTraversalResult>;
+
+  // --- Server-side projection ---
+  /**
+   * Run a projecting query — return only the listed fields per row. Present
+   * only on backends that declare `query.select`. The cap-less fallback is
+   * `findEdges` followed by a JS-side projection in user code; firegraph
+   * does not auto-fall-back because the wire-payload reduction is the only
+   * reason to call this method.
+   *
+   * `select` is the explicit field list; `filters` and `options` mirror the
+   * `query()` shape. The returned rows have one slot per unique entry in
+   * `select`. Field-name interpretation is the backend's responsibility:
+   * built-in fields resolve to columns / Firestore field names, bare names
+   * resolve to `data.<name>`, and dotted paths resolve verbatim. See
+   * `FindEdgesProjectedParams` for the user-facing contract.
+   *
+   * Migrations are not applied to the result — the caller asked for a
+   * specific projection shape, and rehydrating a partial record into the
+   * migration pipeline would require synthesising every absent field.
+   */
+  findEdgesProjected?(
+    select: ReadonlyArray<string>,
+    filters: QueryFilter[],
+    options?: QueryOptions,
+  ): Promise<Array<Record<string, unknown>>>;
+
+  // --- Native vector / nearest-neighbour search ---
+  /**
+   * Run a vector / nearest-neighbour query. Present only on backends that
+   * declare `search.vector`. There is no client-side fallback — the
+   * SQLite-shaped backends (shared SQLite, Cloudflare DO) genuinely have
+   * no native ANN index, and a JS-side k-NN sweep over `findEdges()` would
+   * scale catastrophically. Backends without the cap throw
+   * `UNSUPPORTED_OPERATION` from the client wrapper.
+   *
+   * `params` carries the user-facing shape (vector field path, query
+   * vector, distance metric, optional threshold and result-field). The
+   * client wrapper has already run scan-protection on the identifying
+   * / `where` filter list before dispatching.
+   *
+   * Path normalisation is the backend's responsibility: rewriting bare
+   * `vectorField` / `distanceResultField` names to `data.<name>` and
+   * rejecting envelope fields (`aType`, `axbType`, `bType`, `aUid`,
+   * `bUid`, `v`, etc.) with `INVALID_QUERY` happens inside the
+   * backend, not the client wrapper. The two in-tree Firestore-edition
+   * backends share `runFirestoreFindNearest` (see
+   * `src/internal/firestore-vector.ts`) for this; third-party backends
+   * declaring `search.vector` must apply equivalent normalisation
+   * before calling their underlying SDK.
+   *
+   * The backend is also responsible for translating to the underlying
+   * SDK call (`Query.findNearest` on Firestore today) and decoding the
+   * result snapshot into `StoredGraphRecord[]`.
+   *
+   * Migrations are not applied to the result. The vector index walks the
+   * raw stored shape; rehydrating into the migration pipeline before
+   * returning would change the candidate set the index already chose.
+   */
+  findNearest?(params: FindNearestParams): Promise<StoredGraphRecord[]>;
+
+  // --- Native full-text search ---
+  /**
+   * Run a full-text search query. Present only on backends that declare
+   * `search.fullText`. There is no client-side fallback — the only
+   * in-tree backend that supports it is Firestore Enterprise (via
+   * Pipeline `search({ query: documentMatches(...) })`); Standard and
+   * the SQLite-shaped backends throw `UNSUPPORTED_OPERATION` from the
+   * client wrapper.
+   *
+   * The backend is responsible for path normalisation (rewriting
+   * bare `fields` entries to `data.<name>`, rejecting envelope fields
+   * with `INVALID_QUERY`), translating to the underlying SDK call,
+   * and decoding the result into `StoredGraphRecord[]`.
+   *
+   * Migrations are not applied to the result. The search index walked
+   * the raw stored shape; rehydrating into the migration pipeline
+   * would change the candidate set the index already scored.
+   */
+  fullTextSearch?(params: FullTextSearchParams): Promise<StoredGraphRecord[]>;
+
+  // --- Native geospatial distance search ---
+  /**
+   * Run a geospatial distance search. Present only on backends that
+   * declare `search.geo`. There is no client-side fallback — only
+   * Firestore Enterprise has a native geo index (translated via
+   * Pipeline `search({ query: geoDistance(...).lessThanOrEqual(...) })`).
+   * Backends without the cap throw `UNSUPPORTED_OPERATION` from the
+   * client wrapper.
+   *
+   * The backend is responsible for `geoField` path normalisation,
+   * translating `point` to a Firestore `GeoPoint`, applying the
+   * radius cap inside the search query, and (when
+   * `orderByDistance` is true / unset) emitting the
+   * `geoDistance(...).ascending()` ordering inside the search stage.
+   *
+   * Migrations are not applied to the result.
+   */
+  geoSearch?(params: GeoSearchParams): Promise<StoredGraphRecord[]>;
 }

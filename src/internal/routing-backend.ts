@@ -61,16 +61,26 @@
 
 import { FiregraphError } from '../errors.js';
 import type {
+  AggregateSpec,
   BulkOptions,
   BulkResult,
+  BulkUpdatePatch,
   CascadeResult,
+  EngineTraversalParams,
+  EngineTraversalResult,
+  ExpandParams,
+  ExpandResult,
   FindEdgesParams,
+  FindNearestParams,
+  FullTextSearchParams,
+  GeoSearchParams,
   GraphReader,
   QueryFilter,
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
 import type {
+  BackendCapabilities,
   BatchBackend,
   StorageBackend,
   TransactionBackend,
@@ -78,6 +88,7 @@ import type {
   WritableRecord,
   WriteMode,
 } from './backend.js';
+import { intersectCapabilities } from './backend.js';
 
 /**
  * Context passed to a routing callback when `subgraph(parentUid, name)` is
@@ -110,6 +121,26 @@ export interface RoutingBackendOptions {
    * consulted.
    */
   route: (ctx: RoutingContext) => StorageBackend | null | undefined;
+  /**
+   * Capability sets for any backend `route()` may return. The root routing
+   * wrapper's `capabilities` becomes the intersection of `base.capabilities`
+   * and every set passed here, satisfying invariant 5 from
+   * `.claude/backend-capabilities.md` ("a graph mounted across multiple
+   * backends declares the intersection of child capability sets").
+   *
+   * Capability declarations are required by invariant 3 to be **static** at
+   * construction. Because `route()` is consulted dynamically, the wrapper
+   * cannot discover routed children's caps after the fact — callers
+   * intersecting across backends must enumerate the participants up front.
+   *
+   * When `undefined` or empty, the routing wrapper mirrors
+   * `base.capabilities`. That matches the common single-backend routing
+   * use case (route one subgraph name to a peer of the same backend type)
+   * without forcing every caller to declare an explicit list. Mixed-backend
+   * callers should always populate this — the cap surface won't lie about
+   * what's safe across hops.
+   */
+  routedCapabilities?: ReadonlyArray<BackendCapabilities>;
 }
 
 function assertValidSubgraphArgs(parentNodeUid: string, name: string): void {
@@ -130,6 +161,26 @@ function assertValidSubgraphArgs(parentNodeUid: string, name: string): void {
 }
 
 class RoutingStorageBackend implements StorageBackend {
+  /**
+   * Effective capability set for this wrapper.
+   *
+   * - **Root wrapper** (`createRoutingBackend(...)` direct return): if the
+   *   caller supplied `options.routedCapabilities`, the cap set is the
+   *   intersection of `base.capabilities` and every set in that list. If
+   *   not, the cap set mirrors `base.capabilities` (suitable when routes
+   *   target peers of the same backend type — no capability differential
+   *   to honour).
+   * - **Child wrapper** (returned from `subgraph()`): the cap set mirrors
+   *   the *wrapped* backend (either `base.subgraph(...)` or the backend
+   *   returned by `route()`). Each child handle reflects what's safe to
+   *   call against the specific backend it targets — invariant 3 holds
+   *   per-instance.
+   *
+   * This satisfies invariant 5 (intersection across mixed-backend graphs)
+   * when callers opt in, and falls back to a non-lying mirror when they
+   * don't.
+   */
+  readonly capabilities: BackendCapabilities;
   readonly collectionPath: string;
   /**
    * Logical (names-only) scope path for *this* wrapper. Tracked
@@ -156,22 +207,230 @@ class RoutingStorageBackend implements StorageBackend {
    * shape in the `StorageBackend` interface.
    */
   findEdgesGlobal?: StorageBackend['findEdgesGlobal'];
+  /**
+   * Same conditional-install pattern as `findEdgesGlobal`. The router's
+   * declared capability set is mirrored from the base (or intersected with
+   * the user's `routedCapabilities`) — if `query.aggregate` is in that
+   * set, the underlying method must be present, otherwise `client.aggregate()`
+   * would resolve `UNSUPPORTED_OPERATION` despite the cap claim. This
+   * ensures the "declared capability ⇒ method exists" invariant holds
+   * through routing wrappers (Phase 4 audit C1).
+   */
+  aggregate?: StorageBackend['aggregate'];
+  /**
+   * DML pass-throughs. Same conditional-install pattern as `aggregate`:
+   * gated on BOTH the base method's existence AND `this.capabilities`
+   * advertising `query.dml`. If `routedCapabilities` intersected
+   * `query.dml` away (e.g. one routed peer is Firestore Standard which
+   * has no pipeline-DML support), the methods are *not* installed even
+   * though `base.bulkDelete` exists — otherwise the router would silently
+   * outperform what the declared cap set promises across hops. This
+   * preserves the "declared capability ⇒ method exists" invariant in
+   * both directions (Phase 5).
+   */
+  bulkDelete?: StorageBackend['bulkDelete'];
+  bulkUpdate?: StorageBackend['bulkUpdate'];
+  /**
+   * Multi-source fan-out pass-through. Same conditional-install pattern as
+   * `aggregate` and the bulk-DML methods: gated on BOTH the base method's
+   * existence AND `this.capabilities` advertising `query.join`. If
+   * `routedCapabilities` intersected `query.join` away (e.g. one routed peer
+   * is Firestore Standard which has no pipeline-join support), the method is
+   * not installed even though `base.expand` exists. This preserves the
+   * "declared capability ⇒ method exists" invariant in both directions.
+   *
+   * Like `aggregate` and bulk DML, `expand` runs against the base backend
+   * only — it cannot fan out across routed children, since each routed
+   * subgraph is a separate physical store. Cross-graph hops (which resolve
+   * to per-source subgraph readers) are therefore never dispatched through
+   * `expand` by `traverse.ts`; the same constraint applies here, naturally.
+   */
+  expand?: StorageBackend['expand'];
+  /**
+   * Engine-level multi-hop traversal pass-through. Same conditional-install
+   * pattern as `aggregate`, bulk DML, and `expand`: gated on BOTH the base
+   * method's existence AND `this.capabilities` advertising
+   * `traversal.serverSide`. If `routedCapabilities` intersected
+   * `traversal.serverSide` away (e.g. one routed peer is a SQLite-shaped
+   * backend that has no nested-pipeline path), the method is not installed
+   * even though `base.runEngineTraversal` exists. This preserves the
+   * "declared capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, engine traversal runs against the base
+   * backend only — a routed child's own `runEngineTraversal` is reached
+   * through `.subgraph().runEngineTraversal()` against the routed handle.
+   * Cross-graph hops never reach this method anyway: the traversal
+   * compiler in `firestore-traverse-compiler.ts` rejects specs whose
+   * hops carry `targetGraph`, falling back to the per-hop loop. Routed
+   * children are physically distinct backends, so even an "in-graph"
+   * traversal across a routed-child boundary is structurally a
+   * cross-backend hop and never compiles for engine dispatch.
+   */
+  runEngineTraversal?: StorageBackend['runEngineTraversal'];
+  /**
+   * Server-side projection pass-through. Same conditional-install pattern as
+   * `aggregate`, bulk DML, and `expand`: gated on BOTH the base method's
+   * existence AND `this.capabilities` advertising `query.select`. If
+   * `routedCapabilities` intersected `query.select` away (e.g. one routed
+   * peer doesn't implement projection), the method is not installed even
+   * though `base.findEdgesProjected` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like `aggregate` and `expand`, projection runs against the base backend
+   * only — a routed child's own projection is reached through
+   * `.subgraph().findEdgesProjected()` against the routed handle.
+   */
+  findEdgesProjected?: StorageBackend['findEdgesProjected'];
+  /**
+   * Vector / nearest-neighbour pass-through. Same conditional-install
+   * pattern as `aggregate`, bulk DML, `expand`, and `findEdgesProjected`:
+   * gated on BOTH the base method's existence AND `this.capabilities`
+   * advertising `search.vector`. If `routedCapabilities` intersected
+   * `search.vector` away (e.g. one routed peer is a SQLite-shaped backend
+   * that has no native ANN index), the method is not installed even
+   * though `base.findNearest` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, vector search runs against the base
+   * backend only — a routed child's own `findNearest` is reached through
+   * `.subgraph().findNearest()` against the routed handle.
+   */
+  findNearest?: StorageBackend['findNearest'];
+  /**
+   * Full-text search pass-through. Same conditional-install pattern as
+   * `findNearest`: gated on BOTH the base method's existence AND
+   * `this.capabilities` advertising `search.fullText`. If
+   * `routedCapabilities` intersected `search.fullText` away (e.g. one
+   * routed peer is Firestore Standard or a SQLite-shaped backend that
+   * has no native FTS index), the method is not installed even though
+   * `base.fullTextSearch` exists. This preserves the "declared
+   * capability ⇒ method exists" invariant in both directions.
+   *
+   * Like the other extensions, FTS runs against the base backend only —
+   * a routed child's own `fullTextSearch` is reached through
+   * `.subgraph().fullTextSearch()` against the routed handle.
+   */
+  fullTextSearch?: StorageBackend['fullTextSearch'];
+  /**
+   * Geospatial distance pass-through. Same conditional-install pattern
+   * as `fullTextSearch`: gated on BOTH the base method's existence AND
+   * `this.capabilities` advertising `search.geo`. If `routedCapabilities`
+   * intersected `search.geo` away (e.g. one routed peer is Firestore
+   * Standard or a SQLite-shaped backend that has no native geo index),
+   * the method is not installed even though `base.geoSearch` exists.
+   * This preserves the "declared capability ⇒ method exists" invariant
+   * in both directions.
+   *
+   * Like the other extensions, geo search runs against the base backend
+   * only — a routed child's own `geoSearch` is reached through
+   * `.subgraph().geoSearch()` against the routed handle.
+   */
+  geoSearch?: StorageBackend['geoSearch'];
 
   constructor(
     private readonly base: StorageBackend,
     private readonly options: RoutingBackendOptions,
     storageScope: string,
     logicalScopePath: string,
+    /**
+     * Explicit cap set for this wrapper. Passed by `subgraph()` so child
+     * wrappers mirror the routed child's caps. `createRoutingBackend`
+     * leaves it `undefined` so the constructor computes the root-level
+     * intersection from `options.routedCapabilities`.
+     */
+    capabilities?: BackendCapabilities,
   ) {
     this.collectionPath = base.collectionPath;
     this.scopePath = logicalScopePath;
     this.storageScope = storageScope;
+    if (capabilities) {
+      this.capabilities = capabilities;
+    } else if (options.routedCapabilities && options.routedCapabilities.length > 0) {
+      this.capabilities = intersectCapabilities([base.capabilities, ...options.routedCapabilities]);
+    } else {
+      this.capabilities = base.capabilities;
+    }
     if (base.findEdgesGlobal) {
       // We deliberately do *not* fan out across routed children: we have no
       // enumeration index for which backends exist. Callers needing
       // cross-shard collection-group queries must maintain their own index.
       this.findEdgesGlobal = (params, collectionName) =>
         base.findEdgesGlobal!(params, collectionName);
+    }
+    if (base.aggregate && this.capabilities.has('query.aggregate')) {
+      // Aggregates are scoped to the base backend — same rationale as
+      // `findEdgesGlobal`. A routed child has its own backend with its own
+      // `aggregate` method that the user reaches via `.subgraph().aggregate()`;
+      // this router-level pass-through covers the base scope only.
+      //
+      // The cap check matters when `routedCapabilities` intersected
+      // `query.aggregate` away: even if `base.aggregate` exists, the router's
+      // declared cap set says "no aggregate", and installing the method
+      // would violate the "declared capability ⇒ method exists" invariant
+      // in the inverse direction (declared-absent yet runtime-present).
+      // The post-Phase-4 audit (M-C) calls this out explicitly.
+      this.aggregate = (spec: AggregateSpec, filters: QueryFilter[]) =>
+        base.aggregate!(spec, filters);
+    }
+    if (base.bulkDelete && this.capabilities.has('query.dml')) {
+      // Same scope rationale as `aggregate`: bulk DML runs against the base
+      // backend only. A routed child's own DML support is reached through
+      // `.subgraph().bulkDelete()` against the routed handle.
+      this.bulkDelete = (filters: QueryFilter[], options?: BulkOptions) =>
+        base.bulkDelete!(filters, options);
+    }
+    if (base.bulkUpdate && this.capabilities.has('query.dml')) {
+      this.bulkUpdate = (filters: QueryFilter[], patch: BulkUpdatePatch, options?: BulkOptions) =>
+        base.bulkUpdate!(filters, patch, options);
+    }
+    if (base.expand && this.capabilities.has('query.join')) {
+      // Same scope rationale as `aggregate` and bulk DML: `expand` runs
+      // against the base backend only. A routed child's own `expand` is
+      // reached through `.subgraph().expand()` against the routed handle.
+      this.expand = (params: ExpandParams): Promise<ExpandResult> => base.expand!(params);
+    }
+    if (base.runEngineTraversal && this.capabilities.has('traversal.serverSide')) {
+      // Same scope rationale as the other extensions: engine traversal
+      // runs against the base backend only. A routed child's own
+      // `runEngineTraversal` is reached through
+      // `.subgraph().runEngineTraversal()` against the routed handle.
+      // Cross-routed-backend traversal is structurally impossible —
+      // the compiler bails on cross-graph hops and the per-hop loop
+      // re-resolves the reader at each carry-forward step.
+      this.runEngineTraversal = (params: EngineTraversalParams): Promise<EngineTraversalResult> =>
+        base.runEngineTraversal!(params);
+    }
+    if (base.findEdgesProjected && this.capabilities.has('query.select')) {
+      // Same scope rationale as `aggregate`, bulk DML, and `expand`:
+      // server-side projection runs against the base backend only. A routed
+      // child's own projection is reached through
+      // `.subgraph().findEdgesProjected()` against the routed handle.
+      this.findEdgesProjected = (
+        select: ReadonlyArray<string>,
+        filters: QueryFilter[],
+        options?: QueryOptions,
+      ) => base.findEdgesProjected!(select, filters, options);
+    }
+    if (base.findNearest && this.capabilities.has('search.vector')) {
+      // Same scope rationale as the other extensions: vector search runs
+      // against the base backend only. A routed child's own `findNearest`
+      // is reached through `.subgraph().findNearest()` against the routed
+      // handle.
+      this.findNearest = (params: FindNearestParams) => base.findNearest!(params);
+    }
+    if (base.fullTextSearch && this.capabilities.has('search.fullText')) {
+      // Same scope rationale as the other extensions: FTS runs against
+      // the base backend only. A routed child's own `fullTextSearch` is
+      // reached through `.subgraph().fullTextSearch()` against the routed
+      // handle.
+      this.fullTextSearch = (params: FullTextSearchParams) => base.fullTextSearch!(params);
+    }
+    if (base.geoSearch && this.capabilities.has('search.geo')) {
+      // Same scope rationale as the other extensions: geo search runs
+      // against the base backend only. A routed child's own `geoSearch`
+      // is reached through `.subgraph().geoSearch()` against the routed
+      // handle.
+      this.geoSearch = (params: GeoSearchParams) => base.geoSearch!(params);
     }
   }
 
@@ -241,14 +500,32 @@ class RoutingStorageBackend implements StorageBackend {
       // layout is its business — for routing purposes we carry *our*
       // logical view forward (`childScopePath`) so grandchildren see a
       // correct context regardless of what `routed.scopePath` happens to
-      // be (typically `''` for a freshly-minted per-DO backend).
-      return new RoutingStorageBackend(routed, this.options, childStorageScope, childScopePath);
+      // be (typically `''` for a freshly-minted per-DO backend). The child
+      // wrapper mirrors the routed backend's own cap set: invariant 3
+      // (static caps per instance) holds, and the user's view of the
+      // child handle reflects what that backend actually supports.
+      return new RoutingStorageBackend(
+        routed,
+        this.options,
+        childStorageScope,
+        childScopePath,
+        routed.capabilities,
+      );
     }
 
     // No route — delegate to the base backend and keep routing in effect
-    // for grandchildren.
+    // for grandchildren. Child wrapper mirrors the base subgraph's caps
+    // (typically identical to `base.capabilities` itself, but we ask the
+    // child explicitly so a backend that narrows caps in subgraphs is
+    // honoured).
     const childBase = this.base.subgraph(parentNodeUid, name);
-    return new RoutingStorageBackend(childBase, this.options, childStorageScope, childScopePath);
+    return new RoutingStorageBackend(
+      childBase,
+      this.options,
+      childStorageScope,
+      childScopePath,
+      childBase.capabilities,
+    );
   }
 
   // --- Bulk operations: delegate, but cascade is base-scope only ---
