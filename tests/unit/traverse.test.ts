@@ -1104,7 +1104,11 @@ describe('createTraversal', () => {
         hops: params.hops.map((hop, i) => ({
           // first hop hits limit, second does not
           edges: Array.from({ length: i === 0 ? limit : 1 }, (_, j) =>
-            makeEdge({ aUid: i === 0 ? 'start' : 'mid0', bUid: `${i === 0 ? 'mid' : 'end'}${j}`, axbType: hop.axbType }),
+            makeEdge({
+              aUid: i === 0 ? 'start' : 'mid0',
+              bUid: `${i === 0 ? 'mid' : 'end'}${j}`,
+              axbType: hop.axbType,
+            }),
           ),
           sourceCount: i === 0 ? 1 : limit,
         })),

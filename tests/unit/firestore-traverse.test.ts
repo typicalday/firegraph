@@ -277,9 +277,7 @@ describe('runFirestoreEngineTraversal — scaffolding strip', () => {
     const rows = [
       edge('a', 'b1', 'r1', {
         hop_0_join: 'b1', // simulates SDK including the define() variable
-        hop_0_children: [
-          edge('b1', 'c1', 'r2', { hop_1_join: 'c1' }),
-        ],
+        hop_0_children: [edge('b1', 'c1', 'r2', { hop_1_join: 'c1' })],
       }),
     ];
     const { db } = createFakeDb(rows);
