@@ -452,7 +452,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
       }
       const targetGraph = this.resolveTargetGraph(hop);
       const direction = hop.direction ?? 'forward';
-      if (targetGraph && direction === 'forward') {
+      if (targetGraph) {
         return refuse(`hop ${i} (${hop.axbType}) is cross-graph (targetGraph=${targetGraph})`);
       }
       const limit = hop.limit ?? DEFAULT_LIMIT;
