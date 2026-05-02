@@ -159,6 +159,9 @@ export async function runFirestorePipelineDelete(
   let pipeline = db.pipeline().collection(collectionPath);
   pipeline = applyWhere(P, pipeline, filters);
   const snap = await pipeline.delete().execute();
+  // @google-cloud/firestore@8.5.0 @beta: results contains one entry per
+  // affected document. If this changes on graduation, this is the call site
+  // to update (see module docstring).
   return {
     deleted: snap.results.length,
     batches: 1,
@@ -239,6 +242,9 @@ export async function runFirestorePipelineUpdate(
   let pipeline = db.pipeline().collection(collectionPath);
   pipeline = applyWhere(P, pipeline, filters);
   const snap = await pipeline.update(transforms).execute();
+  // @google-cloud/firestore@8.5.0 @beta: results contains one entry per
+  // affected document. If this changes on graduation, this is the call site
+  // to update (see module docstring).
   return {
     deleted: snap.results.length,
     batches: 1,

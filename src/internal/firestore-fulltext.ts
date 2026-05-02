@@ -127,17 +127,20 @@ export async function runFirestoreFullTextSearch(
 
   const P = await getPipelines();
 
-  // Build the search-stage query expression.
-  //
-  // - When `fields` is omitted, `documentMatches(query)` searches every
-  //   indexed search field on the document (the SDK's default).
-  // - When `fields` is set, we currently still pass `documentMatches(query)`
-  //   without per-field scoping. The 8.5.0 typed surface does NOT expose
-  //   a per-field text predicate (the commented-out `matches(field, query)`
-  //   in the d.ts is gated on a future backend feature). When that
-  //   ships, swap in `and(matches(f1, query), matches(f2, query), ...)` —
-  //   the `normalizedFields` validation already enforces the field list
-  //   so wiring is additive.
+  // Per-field text predicates (`matches(field, query)`) are not yet typed
+  // in @google-cloud/firestore@8.5.0. Reject `fields` now so callers get a
+  // clear error instead of silently receiving full-document search results.
+  // When the SDK exposes the typed predicate, replace this guard with
+  // `and(matches(f1, query), matches(f2, query), ...)` using normalizedFields.
+  if (normalizedFields !== undefined && normalizedFields.length > 0) {
+    throw new FiregraphError(
+      'fullTextSearch(): the `fields` option is not yet supported — ' +
+        'per-field text predicates are not available in @google-cloud/firestore@8.5.0. ' +
+        'Omit `fields` to search all indexed fields.',
+      'INVALID_QUERY',
+    );
+  }
+
   const searchQuery = P.documentMatches(params.query);
 
   // Build the search stage. Sort by relevance score descending — that's
@@ -164,11 +167,6 @@ export async function runFirestoreFullTextSearch(
   }
 
   pipeline = pipeline.limit(params.limit);
-
-  // Reference normalizedFields so the unused-when-empty `fields`
-  // validation cost still happens. Once per-field text predicates ship
-  // upstream, this becomes the input to `matches(...)` calls.
-  void normalizedFields;
 
   const snap = await pipeline.execute();
   return snap.results.map((r) => r.data() as StoredGraphRecord);
