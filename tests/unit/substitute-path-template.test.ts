@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { substitutePathTemplate } from '../../editor/server/trpc.js';
+import { substitutePathTemplate } from '../../editor/server/path-template.js';
 
 describe('substitutePathTemplate', () => {
   it('substitutes a single parameter', () => {

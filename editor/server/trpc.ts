@@ -16,6 +16,7 @@ import type { DiscoveredCollection } from './collections-loader.js';
 import type { LoadedConfig } from './config-loader.js';
 import type { DynamicTypeMetadata } from './dynamic-loader.js';
 import type { ReloadResult } from './index.js';
+import { substitutePathTemplate as _substitutePathTemplate } from './path-template.js';
 import type { SchemaMetadata } from './schema-introspect.js';
 import type { SchemaViewWarning } from './schema-views-validator.js';
 import type { ViewBundle } from './views-bundler.js';
@@ -189,37 +190,12 @@ const scopeSchema = z.string().optional();
 
 // --- Plain collection helpers ---
 
-/**
- * Substitute {paramName} tokens in a collection path template.
- * e.g. "graph/{nodeUid}/logs" + {nodeUid: "abc"} → "graph/abc/logs"
- * Exported for unit testing.
- */
-export function substitutePathTemplate(
-  template: string,
-  params: Record<string, string> = {},
-): string {
-  return template.replace(/\{([^}]+)\}/g, (_, key) => {
-    if (!(key in params)) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `Missing required path parameter: "${key}"`,
-      });
-    }
-    const val = params[key];
-    if (!val) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `Path parameter "${key}" must not be empty`,
-      });
-    }
-    if (val.includes('/')) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message: `Path parameter "${key}" must not contain "/"`,
-      });
-    }
-    return val;
-  });
+function substitutePathTemplate(template: string, params: Record<string, string> = {}): string {
+  try {
+    return _substitutePathTemplate(template, params);
+  } catch (err) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+  }
 }
 
 function getCollectionDef(ctx: TRPCContext, name: string): DiscoveredCollection {

@@ -70,9 +70,7 @@ export interface CompilerOptions {
   maxDepth?: number;
   /**
    * Worst-case response-size budget. The compiler refuses to emit when
-   * `sources.length × Π(limitPerSource_i)` exceeds this. The traversal
-   * layer threads its own `maxReads` through — engine traversal counts
-   * as one round trip but its tree response can return many docs.
+   * `sources.length × Π(limitPerSource_i)` exceeds this.
    */
   maxReads?: number;
 }

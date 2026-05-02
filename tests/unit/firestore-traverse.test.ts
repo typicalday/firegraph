@@ -168,7 +168,7 @@ function edge(
 // ===========================================================================
 
 describe('runFirestoreEngineTraversal — single-hop tree decode', () => {
-  it('returns 1-hop edges with sourceCount = sources.length and totalReads = edge count', async () => {
+  it('returns 1-hop edges with sourceCount = sources.length and totalReads = 1', async () => {
     const rows = [edge('a', 'b1', 'rel'), edge('a', 'b2', 'rel')];
     const { db } = createFakeDb(rows);
 
@@ -181,7 +181,7 @@ describe('runFirestoreEngineTraversal — single-hop tree decode', () => {
     expect(result.hops[0].edges).toHaveLength(2);
     expect(result.hops[0].edges.map((e) => e.bUid)).toEqual(['b1', 'b2']);
     expect(result.hops[0].sourceCount).toBe(1);
-    expect(result.totalReads).toBe(2);
+    expect(result.totalReads).toBe(1);
   });
 });
 
@@ -208,7 +208,7 @@ describe('runFirestoreEngineTraversal — multi-hop tree decode', () => {
     expect(result.hops[0].edges).toHaveLength(1);
     expect(result.hops[0].edges[0].bUid).toBe('b1');
     expect(result.hops[1].edges.map((e) => e.bUid)).toEqual(['c1', 'c2']);
-    expect(result.hops[1].sourceCount).toBe(2);
+    expect(result.hops[1].sourceCount).toBe(1);
   });
 
   it('flattens a 3-hop deeply nested tree (hop_0_children -> hop_1_children)', async () => {

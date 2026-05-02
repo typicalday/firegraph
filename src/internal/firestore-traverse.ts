@@ -119,7 +119,6 @@ function buildHopPredicates(
   if (hop.aType !== undefined) exprs.push(P.equal('aType', hop.aType));
   if (hop.bType !== undefined) exprs.push(P.equal('bType', hop.bType));
 
-  if (exprs.length === 1) return exprs[0];
   const [first, second, ...rest] = exprs;
   return P.and(first, second, ...rest);
 }
@@ -296,7 +295,7 @@ function decodeTree(
       edges.push(stripped);
     }
 
-    out.push({ edges, sourceCount: depth === 0 ? (out[0]?.sourceCount ?? -1) : seen.size });
+    out.push({ edges, sourceCount: depth === 0 ? -1 : out[depth - 1].edges.length });
     frontier = nextFrontier;
   }
 
@@ -306,7 +305,7 @@ function decodeTree(
   // without scanning the structure twice.
   return {
     hops: out,
-    totalReads: out.reduce((sum, h) => sum + h.edges.length, 0),
+    totalReads: 1,
   };
 }
 

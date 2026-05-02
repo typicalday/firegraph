@@ -60,15 +60,33 @@ const db = new Firestore({ projectId: 'my-local-project' });
 
 ```typescript
 import { createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
+// or for Enterprise Firestore (Pipelines, DML, FTS, geo, server-side traversal):
+// import { createFirestoreEnterpriseBackend } from 'firegraph/firestore-enterprise';
 
 // Basic (no validation)
-const g = createGraphClient(db, 'my-collection');
+const backend = createFirestoreStandardBackend(db, 'my-collection');
+const g = createGraphClient(backend);
 
 // With registry validation (recommended)
-const g = createGraphClient(db, 'my-collection', { registry });
+const g = createGraphClient(backend, { registry });
 ```
 
-The second argument specifies the root Firestore collection. All graph data lives here by default; subgraphs extend into nested subcollections beneath individual nodes.
+The collection path passed to the backend factory specifies where all graph data lives by default; subgraphs extend into nested subcollections beneath individual nodes.
+
+### Checking capabilities at runtime
+
+Every client exposes `client.capabilities.has(cap)` for portable runtime feature checks:
+
+```typescript
+if (client.capabilities.has('query.join')) {
+  await (client as JoinExtension).expand({ ... });
+}
+```
+
+`GraphClient<C>` is generic — the `C` type parameter is a union of the backend's declared `Capability` strings and controls which extension methods appear statically on the type. Standard backends include `core.*`, `query.aggregate`, `query.select`, `query.join`, `search.vector`, and `raw.firestore`; Enterprise additionally adds `traversal.serverSide`, `search.fullText`, and `search.geo`, plus `query.dml` when constructed with the opt-in `previewDml: true` flag (the underlying `Pipeline.delete()` / `Pipeline.update()` stages are `@beta` in `@google-cloud/firestore@8.5.0`; without `previewDml: true`, `query.dml` is not declared and `bulkDelete`/`bulkUpdate` fall back to the fetch-then-write loop). Use `CoreGraphClient` (the unconditional base) or `GraphReader`/`GraphWriter` when writing helpers that should accept any client regardless of backend.
+
+Calling an extension method on a backend that doesn't declare the required capability throws `CapabilityNotSupportedError` (`CAPABILITY_NOT_SUPPORTED`).
 
 ### 3. Create a Configuration File
 
@@ -165,14 +183,16 @@ JSON Schema for edge data payload:
 ### Auto-discovery from entities directory (recommended)
 
 ```typescript
-import { createRegistry, discoverEntities } from 'firegraph';
+import { createGraphClient, createRegistry, discoverEntities } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
 const entitiesDir = './entities';
 const { result, warnings } = discoverEntities(entitiesDir);
 for (const w of warnings) console.warn(w.message);
 
 const registry = createRegistry(result);
-const g = createGraphClient(db, 'my-collection', { registry });
+const backend = createFirestoreStandardBackend(db, 'my-collection');
+const g = createGraphClient(backend, { registry });
 ```
 
 ### Manual registry definition
@@ -230,7 +250,7 @@ const registry = createRegistry([
 
 When a record is read with `v` behind the derived version, migrations run sequentially in memory. The `v` field lives on the record envelope (not inside `data`), so schemas with `additionalProperties: false` work without special handling.
 
-Write-back modes: `'off'` (default, in-memory only), `'eager'` (fire-and-forget write), `'background'` (errors swallowed). Set globally via `createGraphClient(db, path, { registry, migrationWriteBack: 'background' })` or per entry.
+Write-back modes: `'off'` (default, in-memory only), `'eager'` (fire-and-forget write), `'background'` (errors swallowed). Set globally via `createGraphClient(backend, { registry, migrationWriteBack: 'background' })` or per entry.
 
 With entity discovery, place `migrations.ts` in the entity folder. Optionally set `migrationWriteBack` in `meta.json`. The schema version is derived from the migrations array automatically:
 
@@ -249,8 +269,10 @@ For agent-driven or runtime-extensible schemas, use **dynamic registry mode**. I
 
 ```typescript
 import { createGraphClient } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
-const g = createGraphClient(db, 'my-collection', {
+const backend = createFirestoreStandardBackend(db, 'my-collection');
+const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
 });
 ```
@@ -315,7 +337,7 @@ await g.putNode('booking', bookingId, { total: 500 }); // throws RegistryViolati
 By default, meta-nodes live in the same collection as domain data. To keep them separate:
 
 ```typescript
-const g = createGraphClient(db, 'my-collection', {
+const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic', collection: 'graph-meta' },
 });
 ```
@@ -375,11 +397,13 @@ When both `registry` and `registryMode` are provided, firegraph operates in **me
 
 ```typescript
 import { createGraphClient, createRegistry, discoverEntities } from 'firegraph';
+import { createFirestoreStandardBackend } from 'firegraph/firestore-standard';
 
 const { result } = discoverEntities('./entities');
 const staticRegistry = createRegistry(result);
 
-const g = createGraphClient(db, 'my-collection', {
+const backend = createFirestoreStandardBackend(db, 'my-collection');
+const g = createGraphClient(backend, {
   registry: staticRegistry, // core types (immutable at runtime)
   registryMode: { mode: 'dynamic' }, // runtime extensions
 });
@@ -564,14 +588,22 @@ await g.runTransaction(async (tx) => {
 
 All errors extend `FiregraphError` with a `code` property:
 
-| Error Class              | Code                     | When                                            |
-| ------------------------ | ------------------------ | ----------------------------------------------- |
-| `ValidationError`        | `VALIDATION_ERROR`       | Data fails JSON Schema                          |
-| `RegistryViolationError` | `REGISTRY_VIOLATION`     | Triple not registered                           |
-| `MigrationError`         | `MIGRATION_ERROR`        | Migration function fails or chain is incomplete |
-| `DynamicRegistryError`   | `DYNAMIC_REGISTRY_ERROR` | Dynamic registry misconfiguration or misuse     |
-| `InvalidQueryError`      | `INVALID_QUERY`          | findEdges with no filters                       |
-| `TraversalError`         | `TRAVERSAL_ERROR`        | run() with zero hops                            |
+| Error Class                    | Code                        | When                                                                                                                           |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `FiregraphError`               | _(base class)_              | Base for all firegraph errors; check `err.code`                                                                                |
+| `ValidationError`              | `VALIDATION_ERROR`          | Data fails JSON Schema                                                                                                         |
+| `RegistryViolationError`       | `REGISTRY_VIOLATION`        | Triple not registered                                                                                                          |
+| `RegistryScopeError`           | `REGISTRY_SCOPE`            | Edge written outside its `allowedIn` subgraph scope                                                                            |
+| `NodeNotFoundError`            | `NODE_NOT_FOUND`            | _Reserved_ — defined in `src/errors.ts` but not currently thrown by the library. `getNode` returns `null` for missing UIDs.    |
+| `EdgeNotFoundError`            | `EDGE_NOT_FOUND`            | _Reserved_ — defined in `src/errors.ts` but not currently thrown by the library. `getEdge` returns `null` for missing triples. |
+| `MigrationError`               | `MIGRATION_ERROR`           | Migration function fails or chain is incomplete                                                                                |
+| `DynamicRegistryError`         | `DYNAMIC_REGISTRY_ERROR`    | Dynamic registry misconfiguration or misuse                                                                                    |
+| `InvalidQueryError`            | `INVALID_QUERY`             | findEdges with no filters                                                                                                      |
+| `QuerySafetyError`             | `QUERY_SAFETY`              | Query would trigger an unbounded collection scan                                                                               |
+| `TraversalError`               | `TRAVERSAL_ERROR`           | run() with zero hops                                                                                                           |
+| `CapabilityNotSupportedError`  | `CAPABILITY_NOT_SUPPORTED`  | Extension method called on a backend that doesn't declare the capability                                                       |
+| `CrossBackendTransactionError` | `CROSS_BACKEND_TRANSACTION` | `runTransaction()` attempted across backends with different storage                                                            |
+| `DiscoveryError`               | `DISCOVERY_ERROR`           | Entity discovery fails (missing required files, malformed schema, etc.)                                                        |
 
 ```typescript
 import { ValidationError, RegistryViolationError } from 'firegraph';
@@ -721,7 +753,7 @@ export default [wrapSvelte(TaskCard, { viewName: 'card', description: 'Compact t
 4. Define `schema.json` + `edge.json` for each edge type
 5. Create `firegraph.config.ts` with `defineConfig()`
 6. Set up registry: `discoverEntities()` + `createRegistry()`
-7. Create client: `createGraphClient(db, collection, { registry })`
+7. Create client: `createFirestoreStandardBackend(db, collection)` → `createGraphClient(backend, { registry })`
 8. Add editor script: `"editor": "firegraph editor"`
 9. Optional: add `views.ts` per entity, `sample.json` for gallery
 10. Optional: add `migrations.ts` for schema evolution (version is derived from migrations automatically)

@@ -154,7 +154,6 @@ class TraversalBuilderImpl implements TraversalBuilder {
     if (engineMode !== 'off') {
       const engineResult = await this.tryEngineTraversal({
         engineMode,
-        maxReads,
         returnIntermediates,
       });
       if (engineResult) return engineResult;
@@ -426,10 +425,9 @@ class TraversalBuilderImpl implements TraversalBuilder {
    */
   private async tryEngineTraversal(args: {
     engineMode: 'auto' | 'force';
-    maxReads: number;
     returnIntermediates: boolean;
   }): Promise<TraversalResult | undefined> {
-    const { engineMode, maxReads, returnIntermediates } = args;
+    const { engineMode, returnIntermediates } = args;
 
     const refuse = (reason: string): TraversalResult | undefined => {
       if (engineMode === 'force') {
@@ -472,7 +470,6 @@ class TraversalBuilderImpl implements TraversalBuilder {
     const params: EngineTraversalParams = {
       sources: [this.startUid],
       hops: engineHops,
-      maxReads,
     };
 
     // Compile-side validation (depth, limits, response-size budget) lives

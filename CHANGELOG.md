@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- **capabilities:** split Firestore into `firestore-standard` and `firestore-enterprise` backends; each declares a typed `BackendCapabilities<C>` set reflecting what it supports.
+- **capabilities:** `GraphClient<C>` is now a generic type — the `C` parameter narrows which extension methods appear on the surface. `CoreGraphClient` is the new unconditional base interface (all backends).
+- **capabilities:** `client.capabilities` property on every client for runtime feature checks (`client.capabilities.has('query.join')`).
+- **capabilities:** `CapabilityNotSupportedError` (`CAPABILITY_NOT_SUPPORTED`) thrown when a capability-gated method is called on a backend that doesn't declare the required capability.
+- **aggregate:** `aggregate(spec)` — portable count/sum/avg across all backends; min/max on SQLite and DO only (both Firestore editions reject min/max at runtime).
+- **select:** `findEdgesProjected(params)` — server-side field projection returning `ProjectedRow[]`.
+- **join:** `expand(params)` — server-side multi-source fan-out; one round trip per hop regardless of source-set size.
+- **dml:** `bulkDelete(params)` / `bulkUpdate(params)` — server-side bulk DML on Enterprise (opt-in via `previewDml: true`), SQLite, and DO.
+- **traversal.serverSide:** `runEngineTraversal(params)` — collapses the entire hop chain into one nested-Pipeline round trip on Enterprise; controlled by `engineTraversal: 'auto' | 'force' | 'off'` in `TraversalOptions`.
+- **search.vector:** `findNearest(params)` — vector similarity search on Firestore Standard and Enterprise.
+- **search.fullText:** `fullTextSearch(params)` — full-text search on Enterprise via `Pipeline.search()`.
+- **search.geo:** `geoSearch(params)` — geospatial radius/distance search on Enterprise.
+- **raw:** `raw.firestore` (Firestore Standard and Enterprise) and `raw.sql` (SQLite only — Cloudflare DO intentionally does not declare `raw.sql`; the RPC boundary hides the backend's SQL surface) reserved placeholder capabilities — no methods yet.
+
 ## [0.12.0](https://github.com/typicalday/firegraph/compare/v0.11.2...v0.12.0) (2026-04-28)
 
 
