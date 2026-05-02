@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.0](https://github.com/typicalday/firegraph/compare/v0.12.0...v0.13.0) (2026-05-02)
+
+
+### Features
+
+* **capabilities:** add portable query.aggregate across all backends (Phase 4) ([16baf04](https://github.com/typicalday/firegraph/commit/16baf048a9b7a6818400ae0898a3ff6a8eda584a))
+* **capabilities:** add search.vector / findNearest on Firestore (Phase 8) ([5bea549](https://github.com/typicalday/firegraph/commit/5bea54956a22b82554b6231f1b0f4810273cf8d4))
+* **capabilities:** add server-side bulkDelete/bulkUpdate via query.dml (Phase 5) ([46438e9](https://github.com/typicalday/firegraph/commit/46438e95fff4e804b0e2e4bf4be96db0e2081c6e))
+* **capabilities:** add server-side multi-source fan-out via query.join (Phase 6) ([5fb14e4](https://github.com/typicalday/firegraph/commit/5fb14e4fdfed63bba3225d2c60674e5523e96f14))
+* **capabilities:** add server-side projection via query.select (Phase 7) ([d8ade96](https://github.com/typicalday/firegraph/commit/d8ade96c13a00db4946a44e38611a39d9a898c59))
+* **capabilities:** introduce backend capability descriptor (Phase 1) ([dd4519b](https://github.com/typicalday/firegraph/commit/dd4519b75afc632180cdc44897bbff789cfa1b37))
+* **capabilities:** narrow GraphClient&lt;C&gt; by backend capability union (Phase 3) ([5bd9fbc](https://github.com/typicalday/firegraph/commit/5bd9fbcad078210e22ff22dd5cd180b934203e29))
+* **capabilities:** phantom-typed GraphClient&lt;C&gt; with Standard/Enterprise editions and 9 extension methods ([6703136](https://github.com/typicalday/firegraph/commit/6703136d3e6656d558f70ba1ba3c6c090435c87e))
+* **capabilities:** phase 12 — search.fullText + search.geo on enterprise (8.5.0) ([d42fb4c](https://github.com/typicalday/firegraph/commit/d42fb4ca450e444991c9b257a1f4d2be5a0cbf4d))
+* **capabilities:** phase 13a — query.join on Firestore via Pipelines equalAny + chunked classic ([d89ca71](https://github.com/typicalday/firegraph/commit/d89ca714a62d12d7a0a7a41dc0a96df74ad1aab1))
+* **capabilities:** phase 13b — query.dml on Enterprise via Pipeline DML ([31c38dd](https://github.com/typicalday/firegraph/commit/31c38dd6737338e182197343a9149a4f70bb622d))
+
 ## [Unreleased]
 
 ### Features
