@@ -18,6 +18,11 @@
 - **search.geo:** `geoSearch(params)` — geospatial radius/distance search on Enterprise.
 - **raw:** `raw.firestore` (Firestore Standard and Enterprise) and `raw.sql` (SQLite only — Cloudflare DO intentionally does not declare `raw.sql`; the RPC boundary hides the backend's SQL surface) reserved placeholder capabilities — no methods yet.
 
+### Restrictions
+
+- **search.fullText:** `fullTextSearch()` rejects a non-empty `fields` option with `INVALID_QUERY` (`'fields is not yet supported'`). The `fields` parameter is reserved for when the SDK exposes a typed per-field text predicate; omit it for now.
+- **dml:** `bulkDelete()` / `bulkUpdate()` result counts are read from `snap.results.length` of the `@beta` Pipeline `delete()` / `update()` stages in `@google-cloud/firestore@8.5.0`. The `BulkResult.deleted` field serves as the affected-row count for both operations.
+
 ## [0.12.0](https://github.com/typicalday/firegraph/compare/v0.11.2...v0.12.0) (2026-04-28)
 
 

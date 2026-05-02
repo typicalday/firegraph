@@ -185,6 +185,40 @@ describe('runFirestoreFullTextSearch — input validation', () => {
       } as FullTextSearchParams),
     ).rejects.toMatchObject({ code: 'INVALID_QUERY', message: /built-in envelope field/ });
   });
+
+  it('rejects a valid data field in `fields` with INVALID_QUERY (per-field FTS not yet supported)', async () => {
+    const { db } = makeFakeDb([]);
+    await expect(
+      runFirestoreFullTextSearch(db as never, 'graph', {
+        query: 'hello',
+        limit: 10,
+        fields: ['title'],
+      } as FullTextSearchParams),
+    ).rejects.toMatchObject({ code: 'INVALID_QUERY', message: /not yet supported/ });
+  });
+
+  it('rejects multiple valid data fields in `fields`', async () => {
+    const { db } = makeFakeDb([]);
+    await expect(
+      runFirestoreFullTextSearch(db as never, 'graph', {
+        query: 'hello',
+        limit: 10,
+        fields: ['data.title', 'data.body'],
+      } as FullTextSearchParams),
+    ).rejects.toMatchObject({ code: 'INVALID_QUERY', message: /not yet supported/ });
+  });
+
+  it('does not reject when `fields` is absent', async () => {
+    const { db } = makeFakeDb([
+      { data: () => ({ aType: 'doc', aUid: 'u1', axbType: 'is', bType: 'doc', bUid: 'u1' }) },
+    ]);
+    await expect(
+      runFirestoreFullTextSearch(db as never, 'graph', {
+        query: 'hello',
+        limit: 10,
+      } as FullTextSearchParams),
+    ).resolves.toBeDefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

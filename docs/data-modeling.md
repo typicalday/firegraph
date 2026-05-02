@@ -482,7 +482,7 @@ Firegraph works with both Firestore Standard and Enterprise editions. The editio
 | `aggregate()` (min/max)                 | —                                    | — (SQLite and DO only; both Firestore editions reject at runtime) |
 | `bulkDelete()` / `bulkUpdate()`         | —                                    | ✓ (opt-in via `previewDml: true`)                                 |
 | `runEngineTraversal()` (server-side)    | —                                    | ✓ (nested-Pipeline multi-hop, depth ≤ 5)                          |
-| `fullTextSearch()`                      | —                                    | ✓                                                                 |
+| `fullTextSearch()`                      | —                                    | ✓ (the `fields` option throws `INVALID_QUERY` — not yet supported) |
 | `geoSearch()`                           | —                                    | ✓                                                                 |
 | `findNearest()` (vector search)         | ✓                                    | ✓                                                                 |
 | `raw.firestore` _(reserved)_            | ✓                                    | ✓                                                                 |

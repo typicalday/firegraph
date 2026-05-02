@@ -1050,21 +1050,14 @@ export interface FullTextSearchParams {
    */
   query: string;
   /**
-   * Indexed text fields the caller wants the search restricted to. Bare
-   * names resolve to `data.<name>` per the same convention as `select` /
-   * `where`; envelope fields are rejected with `INVALID_QUERY`.
+   * Indexed text fields the caller wants the search restricted to.
    *
-   * **Caveat (current SDK):** `@google-cloud/firestore@8.5.0` does not yet
-   * expose a typed per-field text predicate (the `matches(field, query)`
-   * form is gated on a future backend feature in the SDK's `.d.ts`).
-   * Today the helper validates this list (path normalisation +
-   * envelope-field rejection) but always executes document-wide
-   * `documentMatches(query)` regardless of whether `fields` is set or
-   * omitted. The list is therefore an early-validation surface for the
-   * eventual typed predicate, not a runtime scoping mechanism. For
-   * per-`aType` scoping, rely on Firestore's per-collection FTS indexes;
-   * for per-field scoping, wait on the typed predicate or compose results
-   * client-side.
+   * **Not yet supported.** Passing a non-empty `fields` array throws
+   * `INVALID_QUERY` (`'fields is not yet supported'`). The option is
+   * reserved for when `@google-cloud/firestore` exposes a typed per-field
+   * text predicate (`matches(field, query)`). Until then, omit `fields` —
+   * every search executes document-wide `documentMatches(query)`. For
+   * per-`aType` scoping, rely on Firestore's per-collection FTS indexes.
    */
   fields?: string[];
   /** Upper bound on rows returned, sorted by relevance. */
@@ -1537,7 +1530,13 @@ export interface BulkProgress {
 }
 
 export interface BulkResult {
-  /** Total documents successfully deleted. */
+  /**
+   * Total documents affected.
+   *
+   * For `bulkDelete()` this is the count of deleted documents; for
+   * `bulkUpdate()` this is the count of updated documents (the field name
+   * is a legacy from cascade-delete).
+   */
   deleted: number;
   /** Number of batches committed. */
   batches: number;

@@ -88,6 +88,8 @@ if (client.capabilities.has('query.join')) {
 
 Calling an extension method on a backend that doesn't declare the required capability throws `CapabilityNotSupportedError` (`CAPABILITY_NOT_SUPPORTED`).
 
+> **Note:** Several parameter and result types are not yet exported from the `'firegraph'` entry point: `FullTextSearchParams`, `GeoSearchParams`, `GeoPointLiteral`, `EngineHopSpec`, `EngineTraversalParams`, `EngineTraversalResult`, and `EngineTraversalExtension`. Use type inference or declare local helpers such as `type MyFTSParams = Parameters<typeof client.fullTextSearch>[0]` until these types are promoted to the public export.
+
 ### 3. Create a Configuration File
 
 Create `firegraph.config.ts` in your project root:
