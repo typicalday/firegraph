@@ -22,16 +22,16 @@
  * ```
  * db.pipeline().collection(graph)
  *   .where(and(equal('axbType', 'e1'), equalAny('aUid', sources)))
- *   .define(field('bUid').as('hop_0_bUid'))
+ *   .define(field('bUid').as('hop_0_join'))
  *   .addFields(
  *     db.pipeline().collection(graph)
- *       .where(and(equal('axbType', 'e2'), equal('aUid', variable('hop_0_bUid'))))
+ *       .where(and(equal('axbType', 'e2'), equal('aUid', variable('hop_0_join'))))
  *       .toArrayExpression()
- *       .as('hop_1'))
+ *       .as('hop_0_children'))
  *   .execute();
  * ```
  *
- * Each top-level result row is a hop-0 edge augmented with a `hop_1`
+ * Each top-level result row is a hop-0 edge augmented with a `hop_0_children`
  * field — an array of hop-1 edges. For depth N+1 the executor wraps
  * the inner pipeline in another `define` + `addFields` layer before
  * `toArrayExpression()`, with each hop's sub-pipeline nested inside
@@ -44,9 +44,10 @@
  *
  * Result decoding flattens the tree into per-depth `StoredGraphRecord[]`
  * arrays, deduping each depth on the target-side UID (`bUid` for
- * forward hops, `aUid` for reverse). The sub-array fields (`hop_1`,
- * `hop_2`, …) are stripped from each row before it lands in the
- * returned `edges` slot — they're scaffolding, not part of the edge
+ * forward hops, `aUid` for reverse). The scaffolding fields
+ * (`hop_0_children`, `hop_0_join`, `hop_1_children`, `hop_1_join`, …)
+ * are stripped from each row before it lands in the returned `edges`
+ * slot — they're scaffolding, not part of the edge
  * payload.
  *
  * NODE_RELATION self-loop guard mirrors `firestore-expand.ts`: if any
