@@ -461,8 +461,8 @@ class TraversalBuilderImpl implements TraversalBuilder {
         direction,
         limitPerSource: limit,
       };
-      if (hop.aType !== undefined) engineHop.aType = hop.aType;
-      if (hop.bType !== undefined) engineHop.bType = hop.bType;
+      if (hop.aType) engineHop.aType = hop.aType;
+      if (hop.bType) engineHop.bType = hop.bType;
       if (hop.orderBy) engineHop.orderBy = hop.orderBy;
       engineHops.push(engineHop);
     }
