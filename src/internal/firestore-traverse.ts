@@ -231,14 +231,18 @@ function buildRootPipeline(
  * yielding a clean `StoredGraphRecord` whose shape matches what
  * `findEdges` and `expand` return.
  *
- * The scaffolding is the `hop_{depth}_children` field for the depth
- * the row is at. Removing only the per-depth child-array key (instead
- * of every `hop_*` key) lets us layer scaffolding from multiple
- * ancestors without overwriting each other.
+ * Two scaffolding keys are removed per depth:
+ *   - `hop_{depth}_children`  — the `addFields(child.toArrayExpression())`
+ *     array used to nest the next-hop rows.
+ *   - `hop_{depth}_join`      — the `define(field(...).as(...))` variable
+ *     bound so the child sub-pipeline can reference the parent join key.
+ *     Whether `define`'d variables appear in `data()` output is
+ *     SDK-behavior-dependent; we strip defensively.
  */
 function stripScaffolding(row: Record<string, unknown>, depth: number): StoredGraphRecord {
   const stripped: Record<string, unknown> = { ...row };
   delete stripped[childArrayKey(depth)];
+  delete stripped[joinVarName(depth)];
   // Cast through `unknown` because `StoredGraphRecord` declares specific
   // required fields (`aType`, `aUid`, …) and TS won't narrow a generic
   // object with an index signature down to that nominal shape. The row
