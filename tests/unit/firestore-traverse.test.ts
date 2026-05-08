@@ -11,9 +11,9 @@
  *     `sourceCount` reflects the input source count
  *   - 2-hop nested array flattening: `hop_0_children` arrays on each
  *     parent row become `hops[1].edges`
- *   - scaffolding stripping: `hop_{depth}_children` is removed from
- *     each returned record so the shape matches `findEdges` /
- *     `expand` output
+ *   - scaffolding stripping: `hop_{depth}_children` and `hop_{depth}_join`
+ *     are removed from each returned record so the shape matches
+ *     `findEdges` / `expand` output
  *   - dedup on `bUid` for forward hops, `aUid` for reverse hops
  *   - NODE_RELATION self-loop guard: `aUid === bUid` rows for the
  *     `'is'` relation are filtered out (mirrors `firestore-expand.ts`)
@@ -268,6 +268,32 @@ describe('runFirestoreEngineTraversal — scaffolding strip', () => {
     // unconditionally — this is a depth-correctness probe.
     const hop1 = result.hops[1].edges[0] as unknown as Record<string, unknown>;
     expect(hop1.hop_1_children).toBeUndefined();
+  });
+
+  it('removes hop_{depth}_join (define variable) from every returned record', async () => {
+    // The SDK may or may not include `define()`-bound variables in `data()`
+    // output. Strip them defensively so stray `hop_0_join` fields never
+    // leak into returned StoredGraphRecord objects.
+    const rows = [
+      edge('a', 'b1', 'r1', {
+        hop_0_join: 'b1', // simulates SDK including the define() variable
+        hop_0_children: [edge('b1', 'c1', 'r2', { hop_1_join: 'c1' })],
+      }),
+    ];
+    const { db } = createFakeDb(rows);
+
+    const result = await runFirestoreEngineTraversal(db, 'graph', {
+      sources: ['a'],
+      hops: [
+        { axbType: 'r1', limitPerSource: 10 },
+        { axbType: 'r2', limitPerSource: 10 },
+      ],
+    });
+
+    const hop0 = result.hops[0].edges[0] as unknown as Record<string, unknown>;
+    expect(hop0.hop_0_join).toBeUndefined();
+    const hop1 = result.hops[1].edges[0] as unknown as Record<string, unknown>;
+    expect(hop1.hop_1_join).toBeUndefined();
   });
 });
 

@@ -1028,7 +1028,7 @@ When you call `findEdges`, the query planner decides the strategy:
 
 Traversal dispatches through three tiers in order:
 
-1. **Engine-level** (Firestore Enterprise, `traversal.serverSide`): collapses the entire hop chain into one nested-Pipeline server-side round trip. Requires every hop to have a positive `limitPerSource`, no JS `filter` predicates, no cross-graph hops, and depth ≤ 5. Counts as `totalReads: 1`. Controlled by `engineTraversal` option (`'auto'` by default).
+1. **Engine-level** (Firestore Enterprise, `traversal.serverSide`): collapses the entire hop chain into one nested-Pipeline server-side round trip. Requires every hop to have a positive `limitPerSource`, no JS `filter` predicates, no cross-graph hops, and depth ≤ 5. Counts as `totalReads: 1`. Controlled by `engineTraversal` option (`'auto'` by default). Sets `truncated: true` on any hop whose returned edge count reaches `limitPerSource`; `result.truncated` is `true` when any hop is truncated.
 
 2. **Expand fast-path** (`query.join`): one `expand()` call per hop instead of one `findEdges` per source. Counts as 1 read per hop regardless of source-set size.
 

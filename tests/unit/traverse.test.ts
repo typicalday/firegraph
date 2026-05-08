@@ -4,6 +4,8 @@ import { TraversalError } from '../../src/errors.js';
 import { createRegistry } from '../../src/registry.js';
 import { _resetCrossGraphWarning, createTraversal } from '../../src/traverse.js';
 import type {
+  EngineTraversalParams,
+  EngineTraversalResult,
   ExpandParams,
   FindEdgesParams,
   GraphReader,
@@ -1023,6 +1025,103 @@ describe('createTraversal', () => {
 
       expect(expandFn).toHaveBeenCalledTimes(1);
       expect(result.totalReads).toBe(1);
+      expect(result.truncated).toBe(true);
+    });
+  });
+
+  describe('engine traversal', () => {
+    function makeEngineClient(
+      engineImpl: (params: EngineTraversalParams) => Promise<EngineTraversalResult>,
+    ) {
+      const engineFn = vi.fn(engineImpl);
+      const client = {
+        getNode: vi.fn().mockResolvedValue(null),
+        getEdge: vi.fn().mockResolvedValue(null),
+        edgeExists: vi.fn().mockResolvedValue(false),
+        findEdges: vi.fn().mockResolvedValue([]),
+        findNodes: vi.fn().mockResolvedValue([]),
+        subgraph: vi.fn(),
+        capabilities: {
+          has: (cap: string) => cap === 'traversal.serverSide',
+          values: () => (['traversal.serverSide'] as const).values(),
+        },
+        runEngineTraversal: engineFn,
+      };
+      return { client, engineFn };
+    }
+
+    it('sets truncated:true when hop edge count equals limitPerSource', async () => {
+      const limit = 3;
+      const { client } = makeEngineClient(async (params) => ({
+        hops: params.hops.map(() => ({
+          edges: Array.from({ length: limit }, (_, i) =>
+            makeEdge({ aUid: 'start', bUid: `b${i}`, axbType: 'rel' }),
+          ),
+          sourceCount: 1,
+        })),
+        totalReads: 1,
+      }));
+
+      const result = await createTraversal(client as any, 'start')
+        .follow('rel', { limit })
+        .run({ engineTraversal: 'force' });
+
+      expect(result.hops[0].truncated).toBe(true);
+      expect(result.truncated).toBe(true);
+    });
+
+    it('sets truncated:false when hop edge count is below limitPerSource', async () => {
+      const limit = 10;
+      const { client } = makeEngineClient(async (params) => ({
+        hops: params.hops.map(() => ({
+          edges: [makeEdge({ aUid: 'start', bUid: 'b0', axbType: 'rel' })],
+          sourceCount: 1,
+        })),
+        totalReads: 1,
+      }));
+
+      const result = await createTraversal(client as any, 'start')
+        .follow('rel', { limit })
+        .run({ engineTraversal: 'force' });
+
+      expect(result.hops[0].truncated).toBe(false);
+      expect(result.truncated).toBe(false);
+    });
+
+    it('refuses a reverse cross-graph hop in force mode', async () => {
+      const { client } = makeEngineClient(async () => ({ hops: [], totalReads: 1 }));
+
+      await expect(
+        createTraversal(client as any, 'start')
+          .follow('rel', { direction: 'reverse', targetGraph: 'other' })
+          .run({ engineTraversal: 'force' }),
+      ).rejects.toThrow('cross-graph');
+    });
+
+    it('truncated:true propagates to overall result when any hop is truncated', async () => {
+      const limit = 2;
+      const { client } = makeEngineClient(async (params) => ({
+        hops: params.hops.map((hop, i) => ({
+          // first hop hits limit, second does not
+          edges: Array.from({ length: i === 0 ? limit : 1 }, (_, j) =>
+            makeEdge({
+              aUid: i === 0 ? 'start' : 'mid0',
+              bUid: `${i === 0 ? 'mid' : 'end'}${j}`,
+              axbType: hop.axbType,
+            }),
+          ),
+          sourceCount: i === 0 ? 1 : limit,
+        })),
+        totalReads: 1,
+      }));
+
+      const result = await createTraversal(client as any, 'start')
+        .follow('rel1', { limit })
+        .follow('rel2', { limit })
+        .run({ engineTraversal: 'force' });
+
+      expect(result.hops[0].truncated).toBe(true);
+      expect(result.hops[1].truncated).toBe(false);
       expect(result.truncated).toBe(true);
     });
   });

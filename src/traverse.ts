@@ -452,7 +452,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
       }
       const targetGraph = this.resolveTargetGraph(hop);
       const direction = hop.direction ?? 'forward';
-      if (targetGraph && direction === 'forward') {
+      if (targetGraph) {
         return refuse(`hop ${i} (${hop.axbType}) is cross-graph (targetGraph=${targetGraph})`);
       }
       const limit = hop.limit ?? DEFAULT_LIMIT;
@@ -490,21 +490,23 @@ class TraversalBuilderImpl implements TraversalBuilder {
     }
 
     // Translate `EngineTraversalResult` into `TraversalResult` (`HopResult[]`).
-    // Engine traversal counts as ONE round trip but the response can carry
-    // many docs across hops; we mirror the `expand()` fast path's choice to
-    // bill one read per call and surface the truncation flag on the deepest
-    // hop only when the input source set is empty.
+    // Truncation is detected per-hop: if the returned edge count equals the
+    // limitPerSource enforced in the pipeline, the server hit its cap and
+    // there may be more edges. This is conservative — for depth-1+ hops with
+    // multiple parents, deduplication may reduce the count below limitPerSource
+    // per-parent while the aggregate still triggers the check.
     const hopResults: HopResult[] = [];
     for (let i = 0; i < this.hops.length; i++) {
       const definedHop = this.hops[i];
       const engineHopResult = engineResult.hops[i] ?? { edges: [], sourceCount: 0 };
       const edges = engineHopResult.edges;
+      const hopTruncated = edges.length >= engineHops[i].limitPerSource;
       hopResults.push({
         axbType: definedHop.axbType,
         depth: i,
         edges: returnIntermediates ? [...edges] : edges,
         sourceCount: engineHopResult.sourceCount,
-        truncated: false,
+        truncated: hopTruncated,
       });
     }
 
@@ -516,7 +518,7 @@ class TraversalBuilderImpl implements TraversalBuilder {
       // fast path. The tree response can carry up to `estimatedReads`
       // docs total, but the budget is in round trips, not docs.
       totalReads: 1,
-      truncated: false,
+      truncated: hopResults.some((h) => h.truncated),
     };
   }
 
