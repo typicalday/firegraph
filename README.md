@@ -1118,7 +1118,8 @@ The default (standard-edition) Firestore emulator does not execute the Pipeline 
 With both set, `defaultQueryMode: 'pipeline'` is honored against the local emulator. To introspect the effective mode (post emulator-edition coercion), keep a reference to the backend before passing it to `createGraphClient`:
 
 ```ts
-import { createFirestoreEnterpriseBackend, createGraphClient } from '@typicalday/firegraph';
+import { createFirestoreEnterpriseBackend } from '@typicalday/firegraph/firestore-enterprise';
+import { createGraphClient } from '@typicalday/firegraph';
 
 const backend = createFirestoreEnterpriseBackend(db, 'firegraph', {
   defaultQueryMode: 'pipeline',
