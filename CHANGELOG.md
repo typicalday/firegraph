@@ -5,7 +5,7 @@
 ### Features
 
 - **firestore-enterprise:** honor `FIRESTORE_EMULATOR_EDITION=enterprise` (case-insensitive) so that when the local Firestore emulator is started in enterprise mode (firebase-tools v15.14+, `firebase emulators:start --database-edition enterprise` / `firestore.edition: "enterprise"` in `firebase.json`), `defaultQueryMode: 'pipeline'` is honored against the emulator instead of being coerced to `'classic'`. Default behavior is unchanged: with the env var unset, the historical "force classic" coercion fires whenever `FIRESTORE_EMULATOR_HOST` is set. Production (no emulator host) ignores the variable.
-- **firestore-enterprise:** `createFirestoreEnterpriseBackend(...)` now returns the exported `FirestoreEnterpriseBackend` interface — `StorageBackend<FirestoreEnterpriseCapability>` plus a public `readonly queryMode: 'pipeline' | 'classic'` field reflecting the *effective* mode (post emulator-edition coercion). Consumers can introspect via `client.backend?.queryMode` without an `any` cast.
+- **firestore-enterprise:** `createFirestoreEnterpriseBackend(...)` now returns the exported `FirestoreEnterpriseBackend` interface — `StorageBackend<FirestoreEnterpriseCapability>` plus a public `readonly queryMode: 'pipeline' | 'classic'` field reflecting the *effective* mode (post emulator-edition coercion). Keep a reference to the backend before passing it to `createGraphClient` to introspect `queryMode` without an `any` cast: `const backend = createFirestoreEnterpriseBackend(...); const client = createGraphClient(backend);`.
 
 ## [0.13.0](https://github.com/typicalday/firegraph/compare/v0.12.0...v0.13.0) (2026-05-02)
 
