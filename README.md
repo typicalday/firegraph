@@ -997,6 +997,14 @@ import type {
 } from 'firegraph';
 ```
 
+The Enterprise backend also exports its own narrowed return type:
+
+```ts
+import type { FirestoreEnterpriseBackend } from 'firegraph/firestore-enterprise';
+```
+
+`FirestoreEnterpriseBackend` is the type returned by `createFirestoreEnterpriseBackend`. It adds a `readonly queryMode` field so you can inspect the effective query mode after construction without losing type information.
+
 > **Note:** Several types are defined in the library but not yet exported from the `'firegraph'` entry point: the parameter and result types for `fullTextSearch()`, `geoSearch()`, and `runEngineTraversal()` (`FullTextSearchParams`, `GeoSearchParams`, `GeoPointLiteral`, `EngineHopSpec`, `EngineTraversalParams`, `EngineTraversalResult`), and the extension interface `EngineTraversalExtension`. Rely on type inference or declare local `Parameters<typeof client.fullTextSearch>[0]`-style helpers until these types are promoted to the public export.
 
 ## How It Works
@@ -1078,9 +1086,57 @@ Uses the Firestore Pipeline API (`db.pipeline()`) by default. Requires **Firesto
 - Enables queries on `data.*` fields without composite indexes
 - Unlocks additional capabilities: `query.dml`, `traversal.serverSide`, `search.fullText`, `search.geo`
 
-**Emulator auto-fallback:** when `FIRESTORE_EMULATOR_HOST` is detected, the Enterprise backend automatically switches to the classic query path (pipelines aren't supported in the emulator). No configuration needed.
+**Emulator auto-fallback:** when `FIRESTORE_EMULATOR_HOST` is detected, the Enterprise backend automatically switches to the classic query path because the default Firestore emulator does not execute pipelines. See [Local emulator](#local-emulator) below for opting into the enterprise-edition emulator (firebase-tools v15.14+), which does support pipelines.
 
 **Transactions** always use the classic query path regardless of `defaultQueryMode`, because Pipeline queries are not transactionally bound.
+
+#### Local emulator
+
+The default (standard-edition) Firestore emulator does not execute the Pipeline API, so when `FIRESTORE_EMULATOR_HOST` is set the Enterprise backend coerces `defaultQueryMode: 'pipeline'` to `'classic'` automatically.
+
+[firebase-tools v15.14+](https://firebase.google.com/docs/emulator-suite/install_and_configure) ships an **enterprise-edition** emulator that does support pipelines end-to-end. Two pieces are required:
+
+1. Start the emulator in enterprise mode — either via the CLI flag:
+
+   ```bash
+   firebase emulators:start --database-edition enterprise
+   ```
+
+   or via `firebase.json`:
+
+   ```jsonc
+   {
+     "firestore": { "edition": "enterprise" },
+     "emulators": {
+       "firestore": {
+         "port": 8080,
+         "edition": "enterprise",
+       },
+     },
+   }
+   ```
+
+2. Tell firegraph the emulator is enterprise-edition by exporting `FIRESTORE_EMULATOR_EDITION=enterprise` in the same environment that sets `FIRESTORE_EMULATOR_HOST`:
+
+   ```bash
+   export FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+   export FIRESTORE_EMULATOR_EDITION=enterprise
+   ```
+
+With both set, `defaultQueryMode: 'pipeline'` is honored against the local emulator and engine traversal (`traversal.serverSide` / `runEngineTraversal`) is enabled. Without `FIRESTORE_EMULATOR_EDITION=enterprise`, engine traversal throws `UNSUPPORTED_OPERATION` when `FIRESTORE_EMULATOR_HOST` is set (or silently degrades to per-hop looping when `engineTraversal` is `'auto'`). To introspect the effective mode (post emulator-edition coercion), keep a reference to the backend before passing it to `createGraphClient`:
+
+```ts
+import { createFirestoreEnterpriseBackend } from 'firegraph/firestore-enterprise';
+import { createGraphClient } from 'firegraph';
+
+const backend = createFirestoreEnterpriseBackend(db, 'firegraph', {
+  defaultQueryMode: 'pipeline',
+});
+console.log(backend.queryMode); // 'pipeline' under the enterprise emulator, 'classic' under the default emulator
+const client = createGraphClient(backend);
+```
+
+The match on `FIRESTORE_EMULATOR_EDITION` is case-insensitive and whitespace-trimmed (`enterprise`, `Enterprise`, `ENTERPRISE`, `" enterprise "` all work); any other value (unset, empty, `standard`, garbage) keeps the historical "force classic" behavior. Production (`FIRESTORE_EMULATOR_HOST` unset) never reads the variable.
 
 ### SQLite Backend (`firegraph/sqlite`)
 

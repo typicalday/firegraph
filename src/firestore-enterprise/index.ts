@@ -13,6 +13,7 @@ export { META_EDGE_TYPE, META_NODE_TYPE } from '../dynamic-registry.js';
 export { generateId } from '../id.js';
 export { createMergedRegistry, createRegistry } from '../registry.js';
 export type {
+  FirestoreEnterpriseBackend,
   FirestoreEnterpriseCapability,
   FirestoreEnterpriseOptions,
   FirestoreEnterpriseQueryMode,

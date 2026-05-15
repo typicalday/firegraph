@@ -40,10 +40,12 @@ Both Firestore editions delegate writes, doc lookups, and transactionally-bound 
 
 **Auto-fallback rules (Enterprise edition):**
 
-- `FIRESTORE_EMULATOR_HOST` set → always classic (emulator doesn't support pipelines). One-time `console.warn` fires.
+- `FIRESTORE_EMULATOR_HOST` set AND `FIRESTORE_EMULATOR_EDITION` ≠ `enterprise` (case-insensitive, whitespace-trimmed) → forced to classic (the default / standard-edition emulator does not execute pipelines). One-time `console.warn` fires when the caller asked for pipeline mode. Set `FIRESTORE_EMULATOR_EDITION=enterprise` when running firebase-tools v15.14+ with `firebase emulators:start --database-edition enterprise` (or `firestore.edition: "enterprise"` in `firebase.json`) — the enterprise emulator DOES execute pipelines, so the coercion is skipped and `defaultQueryMode: 'pipeline'` is honored end-to-end.
+- Engine traversal (`runFirestoreEngineTraversal` in `src/internal/firestore-traverse.ts`) applies the same gate: `FIRESTORE_EMULATOR_HOST` set without `FIRESTORE_EMULATOR_EDITION=enterprise` throws `UNSUPPORTED_OPERATION`, so `'auto'` mode falls back to the per-hop loop. The check uses the same `.trim().toLowerCase()` normalisation as the backend factory.
 - Transactions → always classic (pipelines aren't transactionally bound).
 - Writes / doc lookups → always classic.
 - Explicit `'classic'` outside the emulator → one-time `console.warn` (production scan risk).
+- The effective mode is readable as `backend.queryMode` on the runtime backend (`FirestoreEnterpriseBackend` interface, re-exported from `firegraph/firestore-enterprise`). The public `GraphClient` surface does not expose `backend` — keep a reference to the backend returned by `createFirestoreEnterpriseBackend` before passing it to `createGraphClient` if you need to introspect.
 
 The Standard edition has no pipeline path; its query layer is classic-only by construction.
 
