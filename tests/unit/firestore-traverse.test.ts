@@ -380,3 +380,103 @@ describe('runFirestoreEngineTraversal — short-circuits and errors', () => {
     ).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
   });
 });
+
+describe('runFirestoreEngineTraversal — emulator-edition gate', () => {
+  // The guard fires BEFORE the compiler runs, so even a perfectly valid
+  // spec must throw on the default emulator. firebase-tools v15.14+'s
+  // enterprise-edition emulator opts out via FIRESTORE_EMULATOR_EDITION.
+  // We restore env state per-test to keep this isolated.
+  const ORIGINAL_HOST = process.env.FIRESTORE_EMULATOR_HOST;
+  const ORIGINAL_EDITION = process.env.FIRESTORE_EMULATOR_EDITION;
+
+  function restoreEnv(): void {
+    if (ORIGINAL_HOST === undefined) delete process.env.FIRESTORE_EMULATOR_HOST;
+    else process.env.FIRESTORE_EMULATOR_HOST = ORIGINAL_HOST;
+    if (ORIGINAL_EDITION === undefined) delete process.env.FIRESTORE_EMULATOR_EDITION;
+    else process.env.FIRESTORE_EMULATOR_EDITION = ORIGINAL_EDITION;
+  }
+
+  it('throws UNSUPPORTED_OPERATION when emulator host is set and edition is unset', async () => {
+    delete process.env.FIRESTORE_EMULATOR_EDITION;
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188';
+    try {
+      const { db } = createFakeDb([]);
+      await expect(
+        runFirestoreEngineTraversal(db, 'graph', {
+          sources: ['a'],
+          hops: [{ axbType: 'r', limitPerSource: 5 }],
+        }),
+      ).rejects.toMatchObject({
+        code: 'UNSUPPORTED_OPERATION',
+        message: expect.stringContaining('FIRESTORE_EMULATOR_EDITION=enterprise'),
+      });
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it('throws UNSUPPORTED_OPERATION when emulator host is set and edition is "standard"', async () => {
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188';
+    process.env.FIRESTORE_EMULATOR_EDITION = 'standard';
+    try {
+      const { db } = createFakeDb([]);
+      await expect(
+        runFirestoreEngineTraversal(db, 'graph', {
+          sources: ['a'],
+          hops: [{ axbType: 'r', limitPerSource: 5 }],
+        }),
+      ).rejects.toMatchObject({ code: 'UNSUPPORTED_OPERATION' });
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it('proceeds past the guard when emulator host is set and edition=enterprise', async () => {
+    // Asserts the guard is OFF — execution reaches the compiler / pipeline
+    // path and produces a normal (empty-sources) result.
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188';
+    process.env.FIRESTORE_EMULATOR_EDITION = 'enterprise';
+    try {
+      const { db } = createFakeDb([]);
+      const result = await runFirestoreEngineTraversal(db, 'graph', {
+        sources: [],
+        hops: [{ axbType: 'r', limitPerSource: 5 }],
+      });
+      expect(result.totalReads).toBe(0);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it('proceeds past the guard when edition is case-insensitive ENTERPRISE', async () => {
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188';
+    process.env.FIRESTORE_EMULATOR_EDITION = 'ENTERPRISE';
+    try {
+      const { db } = createFakeDb([]);
+      const result = await runFirestoreEngineTraversal(db, 'graph', {
+        sources: [],
+        hops: [{ axbType: 'r', limitPerSource: 5 }],
+      });
+      expect(result.totalReads).toBe(0);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it('proceeds past the guard when edition is whitespace-padded " enterprise "', async () => {
+    // Symmetric with the backend factory's `.trim().toLowerCase()` so the
+    // two guards can't drift on whitespace handling.
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188';
+    process.env.FIRESTORE_EMULATOR_EDITION = '  enterprise  ';
+    try {
+      const { db } = createFakeDb([]);
+      const result = await runFirestoreEngineTraversal(db, 'graph', {
+        sources: [],
+        hops: [{ axbType: 'r', limitPerSource: 5 }],
+      });
+      expect(result.totalReads).toBe(0);
+    } finally {
+      restoreEnv();
+    }
+  });
+});

@@ -329,16 +329,27 @@ export async function runFirestoreEngineTraversal(
   collectionPath: string,
   params: EngineTraversalParams,
 ): Promise<EngineTraversalResult> {
-  // The Firestore emulator does not support the nested Pipeline primitives
-  // (`define`, `addFields`, `toArrayExpression`, `variable`) — dispatching
-  // would result in an unresolved promise and a test timeout instead of a
-  // clear error. Throw immediately so `tryEngineTraversal`'s auto-mode
-  // catch can fall back to the per-hop loop without hanging.
+  // The legacy / standard-edition Firestore emulator does not support the
+  // nested Pipeline primitives (`define`, `addFields`, `toArrayExpression`,
+  // `variable`) — dispatching would result in an unresolved promise and a
+  // test timeout instead of a clear error. Throw immediately so
+  // `tryEngineTraversal`'s auto-mode catch can fall back to the per-hop
+  // loop without hanging. firebase-tools v15.14+ ships an enterprise-
+  // edition emulator that DOES support these primitives — opt in via
+  // `FIRESTORE_EMULATOR_EDITION=enterprise` (case-insensitive, mirrors the
+  // `firebase emulators:start --database-edition enterprise` flag).
   if (process.env.FIRESTORE_EMULATOR_HOST) {
-    throw new FiregraphError(
-      'engine traversal requires Pipelines — not supported on the Firestore emulator',
-      'UNSUPPORTED_OPERATION',
-    );
+    // `.trim()` matches the symmetric read in `createFirestoreEnterpriseBackend`
+    // so the two sites can't disagree on whitespace-padded values.
+    const emulatorEdition = (process.env.FIRESTORE_EMULATOR_EDITION ?? '').trim().toLowerCase();
+    if (emulatorEdition !== 'enterprise') {
+      throw new FiregraphError(
+        'engine traversal requires Pipelines — not supported on the default Firestore emulator. ' +
+          'Run firebase-tools v15.14+ with `--database-edition enterprise` and set ' +
+          '`FIRESTORE_EMULATOR_EDITION=enterprise` to opt in.',
+        'UNSUPPORTED_OPERATION',
+      );
+    }
   }
 
   const compiled = compileEngineTraversal(params);

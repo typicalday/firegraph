@@ -192,10 +192,15 @@ export interface FirestoreEnterpriseOptions {
    * (search, aggregate, etc., once implemented) always use pipelines
    * regardless of this option.
    *
-   * The emulator does not execute pipeline queries, so this option is
-   * forced to `'classic'` whenever `FIRESTORE_EMULATOR_HOST` is set, with
-   * a one-time `console.warn` if the caller explicitly asked for pipeline
-   * mode.
+   * The legacy / standard-edition Firestore emulator does not execute
+   * pipeline queries, so this option is coerced to `'classic'` whenever
+   * `FIRESTORE_EMULATOR_HOST` is set AND the caller has NOT opted into
+   * the enterprise-edition emulator via `FIRESTORE_EMULATOR_EDITION=enterprise`
+   * (case-insensitive). When that env var is set, the requested mode is
+   * honored end-to-end — pipelines work in firebase-tools v15.14+ with
+   * `--database-edition enterprise`. A one-time `console.warn` fires when
+   * the emulator forces the fallback after the caller explicitly asked for
+   * pipeline mode.
    */
   defaultQueryMode?: FirestoreEnterpriseQueryMode;
   /**
@@ -226,6 +231,26 @@ export interface FirestoreEnterpriseOptions {
   previewDml?: boolean;
   /** Internal: the logical scope path inherited from a parent subgraph. */
   scopePath?: string;
+}
+
+/**
+ * The runtime shape returned from `createFirestoreEnterpriseBackend`.
+ *
+ * Extends `StorageBackend<FirestoreEnterpriseCapability>` with the
+ * `queryMode` field. The field always reflects the *effective* mode after
+ * emulator coercion, not the mode the caller requested. The public
+ * `GraphClient` surface does not expose the backend, so to introspect
+ * `queryMode` keep a reference to the backend before passing it to
+ * `createGraphClient`:
+ *
+ * ```ts
+ * const backend = createFirestoreEnterpriseBackend(db, 'firegraph', { defaultQueryMode: 'pipeline' });
+ * console.log(backend.queryMode);
+ * const client = createGraphClient(backend);
+ * ```
+ */
+export interface FirestoreEnterpriseBackend extends StorageBackend<FirestoreEnterpriseCapability> {
+  readonly queryMode: FirestoreEnterpriseQueryMode;
 }
 
 let _emulatorFallbackWarned = false;
@@ -348,20 +373,22 @@ class FirestoreEnterpriseBatchBackend implements BatchBackend {
   }
 }
 
-class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpriseCapability> {
+class FirestoreEnterpriseBackendImpl implements FirestoreEnterpriseBackend {
   readonly capabilities: BackendCapabilities<FirestoreEnterpriseCapability>;
   readonly collectionPath: string;
   readonly scopePath: string;
+  readonly queryMode: FirestoreEnterpriseQueryMode;
   private readonly adapter: FirestoreAdapter;
   private readonly pipelineAdapter?: PipelineQueryAdapter;
 
   constructor(
     private readonly db: Firestore,
     collectionPath: string,
-    private readonly queryMode: FirestoreEnterpriseQueryMode,
+    queryMode: FirestoreEnterpriseQueryMode,
     scopePath: string,
     private readonly previewDml: boolean,
   ) {
+    this.queryMode = queryMode;
     this.collectionPath = collectionPath;
     this.scopePath = scopePath;
     this.adapter = createFirestoreAdapter(db, collectionPath);
@@ -696,33 +723,51 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
 /**
  * Create a Firestore Enterprise-edition `StorageBackend`.
  *
- * Pipeline mode is the default. When `FIRESTORE_EMULATOR_HOST` is set the
- * effective mode is forced to `'classic'` because the emulator does not
- * execute pipelines; if the caller explicitly asked for pipeline mode in
- * that environment, a one-time `console.warn` surfaces the override so
- * the deployment mismatch is visible without breaking the test run.
+ * Pipeline mode is the default. The legacy / standard-edition Firestore
+ * emulator does not execute pipelines, so the effective mode is coerced
+ * to `'classic'` whenever `FIRESTORE_EMULATOR_HOST` is set AND the caller
+ * has NOT opted into the enterprise-edition emulator via
+ * `FIRESTORE_EMULATOR_EDITION=enterprise` (case-insensitive). The opt-in
+ * env var mirrors firebase-tools v15.14+'s `--database-edition enterprise`
+ * (and `firestore.edition` in `firebase.json`); when set, pipelines work
+ * end-to-end against the local emulator without patching firegraph. If
+ * the caller explicitly asked for pipeline mode in a non-enterprise
+ * emulator, a one-time `console.warn` surfaces the override so the
+ * deployment mismatch is visible without breaking the test run.
  */
 export function createFirestoreEnterpriseBackend(
   db: Firestore,
   collectionPath: string,
   options: FirestoreEnterpriseOptions = {},
-): StorageBackend<FirestoreEnterpriseCapability> {
+): FirestoreEnterpriseBackend {
   const requestedMode: FirestoreEnterpriseQueryMode = options.defaultQueryMode ?? 'pipeline';
   const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST;
+  // firebase-tools v15.14+ ships an enterprise-edition emulator that DOES
+  // execute pipelines. Any other value (unset, empty, "standard", garbage)
+  // is treated as "not enterprise" and the historical coercion fires.
+  // `.trim()` so stray whitespace from shell profiles / Docker env files
+  // (`FIRESTORE_EMULATOR_EDITION="enterprise "`) doesn't silently fall
+  // through to the classic coercion.
+  const emulatorEdition = (process.env.FIRESTORE_EMULATOR_EDITION ?? '').trim().toLowerCase();
+  const emulatorIsEnterprise = emulatorEdition === 'enterprise';
+  const emulatorForcesClassic = isEmulator && !emulatorIsEnterprise;
   const effectiveMode: FirestoreEnterpriseQueryMode =
-    isEmulator && requestedMode === 'pipeline' ? 'classic' : requestedMode;
+    emulatorForcesClassic && requestedMode === 'pipeline' ? 'classic' : requestedMode;
 
   if (
-    isEmulator &&
+    emulatorForcesClassic &&
     requestedMode === 'pipeline' &&
     effectiveMode === 'classic' &&
     !_emulatorFallbackWarned
   ) {
     _emulatorFallbackWarned = true;
     console.warn(
-      '[firegraph] Firestore Enterprise pipeline mode is unavailable in the emulator; ' +
-        'falling back to classic Query API for this run. Set ' +
-        "`defaultQueryMode: 'classic'` to silence this warning.",
+      '[firegraph] Firestore Enterprise pipeline mode is unavailable in the default ' +
+        'emulator; falling back to classic Query API for this run. If you are running ' +
+        'firebase-tools v15.14+ with the enterprise-edition emulator (`firebase ' +
+        'emulators:start --database-edition enterprise`), set ' +
+        '`FIRESTORE_EMULATOR_EDITION=enterprise` in your environment to honor pipeline ' +
+        "mode. Otherwise set `defaultQueryMode: 'classic'` to silence this warning.",
     );
   }
 
