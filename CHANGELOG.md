@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/typicalday/firegraph/compare/v0.13.0...v0.14.0) (2026-05-15)
+
+
+### Features
+
+* **firestore-enterprise:** honor FIRESTORE_EMULATOR_EDITION=enterprise ([#20](https://github.com/typicalday/firegraph/issues/20)) ([3628f0f](https://github.com/typicalday/firegraph/commit/3628f0ff3f799195d6059c2daf9f1d1eadce1906))
+
 ## [0.14.0](https://github.com/typicalday/firegraph/compare/v0.13.0...v0.14.0)
 
 ### Features
