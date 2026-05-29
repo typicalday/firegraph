@@ -70,6 +70,26 @@ export function validateJsonPathKey(key: string, backendLabel: string): void {
 }
 
 /**
+ * Build a SQLite JSON path (`$."a"."b"."c"`) from `DataPathOp` segments.
+ *
+ * Each segment is wrapped as a double-quoted JSON-path label via
+ * `JSON.stringify`, which quotes the key and backslash-escapes any embedded
+ * double-quotes or backslashes — exactly the escaping SQLite's JSON path
+ * parser accepts for quoted labels (verified on SQLite 3.53). Quoting every
+ * segment means digit-leading keys (`4f9Kq_2bN`), hyphens, dots, brackets,
+ * and whitespace all address the literal key rather than being reparsed as
+ * path syntax. Dots stay inside the quotes, so `{ 'a.b': 1 }` writes the
+ * single key `"a.b"` instead of a nested `a → b`.
+ *
+ * The result is always bound as a SQL parameter (never interpolated), so
+ * there is no injection surface — the quoting here is purely about producing
+ * a path string SQLite parses as the intended literal key.
+ */
+export function buildJsonPath(segments: readonly string[]): string {
+  return '$' + segments.map((seg) => '.' + JSON.stringify(seg)).join('');
+}
+
+/**
  * Bind a value as a JSON-serializable string for `json(?)` placeholders in
  * the compiled `json_set` expression. `assertJsonSafePayload` already runs
  * eagerly at the write boundary, so the Firestore-special-type rejection
@@ -123,8 +143,7 @@ export function compileDataOpsExpr(
     const placeholders = deletes.map(() => '?').join(', ');
     expr = `json_remove(${expr}, ${placeholders})`;
     for (const op of deletes) {
-      for (const seg of op.path) validateJsonPathKey(seg, backendLabel);
-      params.push(`$.${op.path.join('.')}`);
+      params.push(buildJsonPath(op.path));
     }
   }
 
@@ -132,8 +151,7 @@ export function compileDataOpsExpr(
     const pieces = sets.map(() => '?, json(?)').join(', ');
     expr = `json_set(${expr}, ${pieces})`;
     for (const op of sets) {
-      for (const seg of op.path) validateJsonPathKey(seg, backendLabel);
-      params.push(`$.${op.path.join('.')}`);
+      params.push(buildJsonPath(op.path));
       params.push(jsonBind(op.value, backendLabel));
     }
   }

@@ -373,11 +373,11 @@ describe('FiregraphDO — batch', () => {
       'replace',
     );
 
-    // An unsafe key in the patch trips `flattenPatch` validation up front —
-    // the call throws synchronously before any batch op is dispatched, so no
-    // row can be touched. From the caller's point of view the effect is the
-    // same as a mid-transaction rollback: nothing persisted.
-    expect(() => flattenPatch({ 'bad key': 1 })).toThrow(/unsafe object key/);
+    // An empty-string key in the patch trips `flattenPatch` validation up
+    // front — the call throws synchronously before any batch op is
+    // dispatched, so no row can be touched. From the caller's point of view
+    // the effect is the same as a mid-transaction rollback: nothing persisted.
+    expect(() => flattenPatch({ '': 1 })).toThrow(/empty object key/);
 
     const count = (db.prepare('SELECT COUNT(*) as n FROM firegraph').get() as { n: number }).n;
     expect(count).toBe(1);

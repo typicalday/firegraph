@@ -56,6 +56,37 @@ async function getFirestoreSurface(): Promise<{
 }
 
 /**
+ * A field-name segment that needs no backtick escaping in a Firestore
+ * field-path string. Mirrors `@google-cloud/firestore`'s internal
+ * `UNESCAPED_FIELD_NAME_RE` (`src/path.js`). Anything not matching — a
+ * leading digit, a hyphen, a literal dot, etc. — must be backtick-quoted.
+ */
+const UNESCAPED_FIELD_NAME_RE = /^[_A-Za-z][_A-Za-z0-9]*$/;
+
+/**
+ * Encode `['data', ...segments]` as Firestore's canonical field-path
+ * string, the same encoding `FieldPath.formattedName` produces. The
+ * Pipeline `update([...])` stage carries each set op as an
+ * `AliasedExpression` whose alias the server parses as a field path
+ * (dots mean nesting), and `.as()` only accepts a string — there is no
+ * `FieldPath`-object overload on the typed surface. So we hand it the
+ * canonical string form: plain segments stay bare (byte-identical to the
+ * pre-fix `data.a.b` for normal keys, so existing Enterprise behavior is
+ * unchanged), and exotic segments are backtick-wrapped with `\` and
+ * `` ` `` escaped. This is what makes a `generateId()`-shaped leading-digit
+ * key (`'4f9Kq_2bN'`) or a key containing a literal dot (`'a.b'`)
+ * round-trip as a single literal key instead of silently mis-nesting.
+ */
+function buildDataPathAlias(segments: readonly string[]): string {
+  const encoded = segments.map((seg) =>
+    UNESCAPED_FIELD_NAME_RE.test(seg)
+      ? seg
+      : '`' + seg.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`',
+  );
+  return ['data', ...encoded].join('.');
+}
+
+/**
  * Build the Pipelines `BooleanExpression` for one `QueryFilter`. Mirrors
  * `pipeline-adapter.ts`'s `buildFilterExpression` exactly — kept as a
  * private helper here so this module doesn't reach into the Enterprise
@@ -183,9 +214,13 @@ export async function runFirestorePipelineDelete(
  *      read-modify-write loop, which defeats the single-statement DML
  *      goal. Use the regular `replaceEdge` / `replaceNode` path or
  *      `bulkRemoveEdges` for delete-leaning patches.
- *   3. Each set op becomes `constant(value).as('data.<dotted.path>')`.
- *      The dotted alias relies on Firestore's standard nested-update
- *      semantics; integration tests against real Enterprise pin this.
+ *   3. Each set op becomes `constant(value).as(<canonical field path>)`,
+ *      where the alias is built by `buildDataPathAlias` — Firestore's
+ *      canonical `FieldPath.formattedName` string encoding (plain segments
+ *      bare, exotic ones backtick-escaped). The server parses the alias as
+ *      a field path, so this is what lets a leading-digit or dot-containing
+ *      key round-trip as one literal key instead of mis-nesting. Integration
+ *      tests against real Enterprise pin the round trip.
  *   4. `updatedAt` is stamped with `constant(Timestamp.now())`. This is
  *      a client-side timestamp (Pipeline `update` doesn't accept a
  *      `FieldValue.serverTimestamp()` sentinel — it only takes typed
@@ -227,7 +262,7 @@ export async function runFirestorePipelineUpdate(
 
   const { P, Ts } = await getFirestoreSurface();
   const transforms: Pipelines.AliasedExpression[] = ops.map((op) => {
-    const alias = `data.${op.path.join('.')}`;
+    const alias = buildDataPathAlias(op.path);
     // `constant(value)` in the Pipelines surface accepts a fixed set of
     // primitive / Firestore-special types; we cast through `unknown` because
     // patch values are user-defined and the typed overloads don't expose a

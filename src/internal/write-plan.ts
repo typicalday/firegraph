@@ -125,19 +125,6 @@ export interface DataPathOp {
 // ---------------------------------------------------------------------------
 
 /**
- * Object keys that are safe to embed in SQLite `json_set`/`json_remove`
- * paths. The SQLite backend uses an allowlist regex too — keep these in
- * sync (see `JSON_PATH_KEY_RE` in `internal/sqlite-sql.ts` and
- * `cloudflare/sql.ts`).
- *
- * Allows: ASCII letters, digits, `_`, `-`. Must start with a letter or
- * underscore. This rejects keys containing dots, brackets, quotes, or
- * non-ASCII characters that could break path parsing or be used to
- * inject into the path expression.
- */
-const SAFE_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-
-/**
  * Mutual-exclusion guard for {@link UpdatePayload}. The two branches of the
  * shape — `dataOps` (deep-merge) and `replaceData` (full replace) — are
  * structurally incompatible: combining them would tell the backend to
@@ -224,16 +211,23 @@ function walkForDeleteSentinels(
   }
 }
 
-/** Throws if any path segment in the patch is unsafe for SQLite paths. */
+/**
+ * Throws if any path segment is an empty string.
+ *
+ * Empty keys are the one shape no backend can represent: Firestore's
+ * `FieldPath` rejects empty segments, and a SQLite JSON-path label `$.""`
+ * is meaningless. Every other key — digits-first, hyphens, dots, brackets,
+ * whitespace, non-ASCII — is escaped by the backends at path-construction
+ * time (Firestore via `FieldPath` literal segments, SQLite via
+ * `JSON.stringify`-quoted labels), so it is accepted here untouched.
+ */
 export function assertSafePath(path: readonly string[]): void {
   for (const seg of path) {
-    if (!SAFE_KEY_RE.test(seg)) {
+    if (seg === '') {
       throw new Error(
-        `firegraph: unsafe object key ${JSON.stringify(seg)} at path ${path
+        `firegraph: empty object key at path ${path
           .map((p) => JSON.stringify(p))
-          .join(' > ')}. Keys used inside update payloads must match ` +
-          `/^[A-Za-z_][A-Za-z0-9_-]*$/ so they can be embedded safely in ` +
-          `SQLite JSON paths.`,
+          .join(' > ')}. Object keys in update payloads must be non-empty.`,
       );
     }
   }

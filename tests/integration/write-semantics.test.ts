@@ -141,6 +141,47 @@ describe('write semantics contract — put/replace/update/deleteField', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Exotic object keys — escaped at path-construction time, not rejected.
+  //
+  // Regression coverage for the downstream report: a nested map keyed by a
+  // `generateId()` value (~17% start with a digit or hyphen) used to throw
+  // `unsafe object key …` on the update path. Both backend families now
+  // escape arbitrary non-empty keys — Firestore via `FieldPath` literal
+  // segments, SQLite/DO via quoted JSON-path labels — so the key addresses
+  // the literal map entry on every backend.
+  // -------------------------------------------------------------------------
+  describe('exotic object keys (escaped across backends)', () => {
+    it('round-trips a leading-digit nested map key and preserves siblings', async () => {
+      const holdId = '4f9Kq_2bN'; // shape of a generateId() value that starts with a digit
+      await g.putNode('tour', 'a', { holds: { existing: { spots: 1 } }, kept: 'yes' });
+      await g.updateNode('a', { holds: { [holdId]: { userId: 'u1', spots: 2 } } });
+      const node = await g.getNode('a');
+      expect(node!.data).toEqual({
+        holds: { existing: { spots: 1 }, [holdId]: { userId: 'u1', spots: 2 } },
+        kept: 'yes',
+      });
+    });
+
+    it('updates a leaf under an exotic key without disturbing siblings', async () => {
+      const holdId = '4f9Kq_2bN';
+      await g.putNode('tour', 'a', { holds: { [holdId]: { userId: 'u1', spots: 2 } } });
+      await g.updateNode('a', { holds: { [holdId]: { spots: 5 } } });
+      const node = await g.getNode('a');
+      expect(node!.data).toEqual({ holds: { [holdId]: { userId: 'u1', spots: 5 } } });
+    });
+
+    it('removes an exotic-keyed entry via deleteField()', async () => {
+      const holdId = '4f9Kq_2bN';
+      await g.putNode('tour', 'a', {
+        holds: { [holdId]: { userId: 'u1' }, other: { userId: 'u2' } },
+      });
+      await g.updateNode('a', { holds: { [holdId]: deleteField() } });
+      const node = await g.getNode('a');
+      expect(node!.data).toEqual({ holds: { other: { userId: 'u2' } } });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // deleteField sentinel
   // -------------------------------------------------------------------------
   describe('deleteField()', () => {

@@ -164,25 +164,26 @@ describe('flattenPatch — terminal special types', () => {
   });
 });
 
-describe('flattenPatch — unsafe key rejection', () => {
-  it('rejects keys with dots', () => {
-    expect(() => flattenPatch({ 'a.b': 1 })).toThrow(/unsafe object key "a\.b"/);
+describe('flattenPatch — arbitrary object keys (escaped, not rejected)', () => {
+  it('accepts keys starting with a digit (nanoid map keys)', () => {
+    expect(flattenPatch({ '4f9Kq_2bN': 1 })).toEqual([
+      { path: ['4f9Kq_2bN'], value: 1, delete: false },
+    ]);
   });
 
-  it('rejects keys with brackets', () => {
-    expect(() => flattenPatch({ 'a[0]': 1 })).toThrow(/unsafe object key "a\[0\]"/);
+  it('accepts keys starting with a hyphen', () => {
+    expect(flattenPatch({ '-abc': 1 })).toEqual([{ path: ['-abc'], value: 1, delete: false }]);
   });
 
-  it('rejects keys with whitespace', () => {
-    expect(() => flattenPatch({ 'first name': 1 })).toThrow(/unsafe object key "first name"/);
+  it('accepts keys with dots as a single literal segment', () => {
+    expect(flattenPatch({ 'a.b': 1 })).toEqual([{ path: ['a.b'], value: 1, delete: false }]);
   });
 
-  it('rejects empty key', () => {
-    expect(() => flattenPatch({ '': 1 })).toThrow(/unsafe object key/);
-  });
-
-  it('rejects keys starting with a digit', () => {
-    expect(() => flattenPatch({ '1abc': 1 })).toThrow(/unsafe object key/);
+  it('accepts keys with brackets and whitespace', () => {
+    expect(flattenPatch({ 'a[0]': 1, 'first name': 2 })).toEqual([
+      { path: ['a[0]'], value: 1, delete: false },
+      { path: ['first name'], value: 2, delete: false },
+    ]);
   });
 
   it('accepts kebab/snake/camel identifiers', () => {
@@ -191,8 +192,18 @@ describe('flattenPatch — unsafe key rejection', () => {
     ).not.toThrow();
   });
 
-  it('rejects unsafe keys deep in the tree', () => {
-    expect(() => flattenPatch({ a: { 'b.c': 1 } })).toThrow(/unsafe object key "b\.c"/);
+  it('accepts arbitrary keys deep in the tree (nested map keyed by generated id)', () => {
+    expect(flattenPatch({ holds: { '4f9Kq_2bN': { userId: 'u1' } } })).toEqual([
+      { path: ['holds', '4f9Kq_2bN', 'userId'], value: 'u1', delete: false },
+    ]);
+  });
+
+  it('still rejects empty-string keys', () => {
+    expect(() => flattenPatch({ '': 1 })).toThrow(/empty object key/);
+  });
+
+  it('still rejects empty-string keys deep in the tree', () => {
+    expect(() => flattenPatch({ a: { '': 1 } })).toThrow(/empty object key/);
   });
 
   it('rejects a literal SERIALIZATION_TAG key on a plain object', () => {
@@ -216,9 +227,13 @@ describe('assertSafePath', () => {
     expect(() => assertSafePath(['a', 'b_c', 'd-e', '_f'])).not.toThrow();
   });
 
-  it('rejects unsafe paths', () => {
-    expect(() => assertSafePath(['a', 'b.c'])).toThrow(/unsafe object key/);
-    expect(() => assertSafePath(['1abc'])).toThrow(/unsafe object key/);
+  it('accepts arbitrary non-empty keys (dots, digits, brackets, whitespace)', () => {
+    expect(() => assertSafePath(['a', 'b.c', '1abc', 'a[0]', 'first name'])).not.toThrow();
+  });
+
+  it('rejects empty-string segments', () => {
+    expect(() => assertSafePath([''])).toThrow(/empty object key/);
+    expect(() => assertSafePath(['a', '', 'b'])).toThrow(/empty object key/);
   });
 });
 
