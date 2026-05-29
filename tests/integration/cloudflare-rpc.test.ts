@@ -35,6 +35,10 @@ import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { computeNodeDocId } from '../../src/docid.js';
+import { NODE_RELATION } from '../../src/internal/constants.js';
+import { deleteField, flattenPatch } from '../../src/internal/write-plan.js';
+
 const FIXTURE_PATH = fileURLToPath(
   new URL('../fixtures/cloudflare-rpc/worker.ts', import.meta.url),
 );
@@ -136,5 +140,96 @@ describe('FiregraphDO RPC dispatch (real workerd)', () => {
     }
     expect(caught, 'expected the call to throw').toBeDefined();
     expect((caught as Error).message).toMatch(/does not support RPC/i);
+  });
+});
+
+/**
+ * Exotic-key escaping against *real workerd SQLite*.
+ *
+ * The 0.12 deep-merge write path turns nested object keys into quoted
+ * JSON-path labels (`json_set(data, '$."holds"."4f9Kq_2bN"', …)`) via
+ * `buildJsonPath` (`src/internal/sqlite-data-ops.ts`). The DO unit tests
+ * (`tests/unit/cloudflare-do.test.ts`) exercise that path, but they back
+ * `ctx.storage.sql` with **better-sqlite3** — they prove the escaping works
+ * on better-sqlite3's SQLite build, not on the SQLite that ships inside
+ * workerd / `state.storage.sql`. Those are different SQLite builds.
+ *
+ * This block closes that gap: it drives `_fgSetDoc` / `_fgUpdateDoc` /
+ * `_fgGetDoc` through real workerd (booted by Miniflare with `useSQLite:
+ * true`) so the quoted JSON-path labels are evaluated by the same SQLite
+ * engine production DOs use. The canonical trigger is a `generateId()`-shaped
+ * key that starts with a digit (`'4f9Kq_2bN'`) — the exact shape that the
+ * old `SAFE_KEY_RE` guard rejected.
+ */
+describe('FiregraphDO exotic-key escaping (real workerd SQLite)', () => {
+  const HOLD_ID = '4f9Kq_2bN';
+  const uid = 'kX1nQ2mP9xR4wL1tY8s3a';
+
+  async function freshStub(name: string) {
+    const ns = await mf.getDurableObjectNamespace('GRAPH');
+    return ns.get(ns.idFromName(name)) as unknown as {
+      _fgSetDoc(docId: string, record: unknown, mode: string): Promise<void>;
+      _fgUpdateDoc(docId: string, update: unknown): Promise<void>;
+      _fgGetDoc(docId: string): Promise<{ data: Record<string, unknown> } | null>;
+    };
+  }
+
+  function nodeRecord(data: Record<string, unknown>) {
+    return {
+      aType: 'tour',
+      aUid: uid,
+      axbType: NODE_RELATION,
+      bType: 'tour',
+      bUid: uid,
+      data,
+    };
+  }
+
+  it('round-trips a leading-digit nested map key, preserving siblings', async () => {
+    const stub = await freshStub('exotic-roundtrip');
+    const docId = computeNodeDocId(uid);
+    await stub._fgSetDoc(docId, nodeRecord({ keep: 'me' }), 'replace');
+
+    await stub._fgUpdateDoc(docId, {
+      dataOps: flattenPatch({ holds: { [HOLD_ID]: { userId: 'u1' } } }),
+    });
+
+    const rec = await stub._fgGetDoc(docId);
+    expect(rec).not.toBeNull();
+    expect(rec!.data).toEqual({ keep: 'me', holds: { [HOLD_ID]: { userId: 'u1' } } });
+  });
+
+  it('updates a leaf under an exotic key without disturbing siblings', async () => {
+    const stub = await freshStub('exotic-leaf');
+    const docId = computeNodeDocId(uid);
+    await stub._fgSetDoc(
+      docId,
+      nodeRecord({ holds: { [HOLD_ID]: { userId: 'u1', qty: 1 } } }),
+      'replace',
+    );
+
+    await stub._fgUpdateDoc(docId, {
+      dataOps: flattenPatch({ holds: { [HOLD_ID]: { qty: 2 } } }),
+    });
+
+    const rec = await stub._fgGetDoc(docId);
+    expect(rec!.data).toEqual({ holds: { [HOLD_ID]: { userId: 'u1', qty: 2 } } });
+  });
+
+  it('removes an exotic-keyed entry via deleteField()', async () => {
+    const stub = await freshStub('exotic-delete');
+    const docId = computeNodeDocId(uid);
+    await stub._fgSetDoc(
+      docId,
+      nodeRecord({ holds: { [HOLD_ID]: { userId: 'u1' }, other: { userId: 'u2' } } }),
+      'replace',
+    );
+
+    await stub._fgUpdateDoc(docId, {
+      dataOps: flattenPatch({ holds: { [HOLD_ID]: deleteField() } }),
+    });
+
+    const rec = await stub._fgGetDoc(docId);
+    expect(rec!.data).toEqual({ holds: { other: { userId: 'u2' } } });
   });
 });

@@ -1024,8 +1024,8 @@ describe('SqliteBackend transactions & batches', () => {
 
   it('runTransaction surfaces and rolls back when an inner write rejects', async () => {
     // Force the transaction's inner write to fail by attempting an
-    // updateNode with a dotted key — compileUpdate now rejects this at
-    // compile time. Without C5's fix the rejection would be swallowed and
+    // updateNode with an empty-string key — flattenPatch rejects this
+    // synchronously. Without C5's fix the rejection would be swallowed and
     // the transaction would silently commit any prior writes.
     const a = generateId();
     await backend.setDoc(
@@ -1055,9 +1055,9 @@ describe('SqliteBackend transactions & batches', () => {
           },
           'replace',
         );
-        await tx.updateDoc(a, { dataOps: flattenPatch({ 'a.b': 1 }) });
+        await tx.updateDoc(a, { dataOps: flattenPatch({ '': 1 }) });
       }),
-    ).rejects.toThrow(/unsafe object key/);
+    ).rejects.toThrow(/empty object key/);
 
     // The first write should have been rolled back too.
     const recovered = await backend.getDoc(a);
@@ -1183,7 +1183,7 @@ describe('SqliteBackend findEdgesGlobal', () => {
   });
 });
 
-describe('SqliteBackend updateDoc field-name validation', () => {
+describe('SqliteBackend updateDoc exotic-key escaping', () => {
   let db: BetterSqliteDb;
   let backend: StorageBackend;
 
@@ -1196,11 +1196,12 @@ describe('SqliteBackend updateDoc field-name validation', () => {
   });
 
   it.each([
+    ['leading-digit key', '4f9Kq_2bN'],
     ['dotted key', 'a.b'],
     ['bracket key', 'a[0]'],
     ['quote key', 'a"b'],
-    ['empty key', ''],
-  ])('rejects %s in dataFields at compile time', async (_label, key) => {
+    ['whitespace key', 'first name'],
+  ])('round-trips %s through updateDoc as a literal key', async (_label, key) => {
     const uid = generateId();
     await backend.setDoc(
       uid,
@@ -1215,13 +1216,32 @@ describe('SqliteBackend updateDoc field-name validation', () => {
       'replace',
     );
 
-    // `flattenPatch` validates path segments synchronously, so the throw
-    // happens at call time — before any storage method is reached. The
-    // resulting `updateDoc` is therefore never dispatched and the row is
-    // untouched.
-    expect(() => flattenPatch({ [key]: 1 })).toThrow(/unsafe object key/);
+    // The exotic key is escaped at path-construction time (quoted JSON-path
+    // label), so it addresses the literal key rather than being reparsed as
+    // path syntax. Sibling keys survive (deep-merge).
+    await backend.updateDoc(uid, { dataOps: flattenPatch({ holds: { [key]: 1 } }) });
 
-    // Original data must be untouched.
+    const record = await backend.getDoc(uid);
+    expect(record!.data).toEqual({ keep: 'me', holds: { [key]: 1 } });
+  });
+
+  it('still rejects an empty-string key at flattenPatch time', async () => {
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      {
+        aType: 'tour',
+        aUid: uid,
+        axbType: 'is',
+        bType: 'tour',
+        bUid: uid,
+        data: { keep: 'me' },
+      },
+      'replace',
+    );
+
+    expect(() => flattenPatch({ '': 1 })).toThrow(/empty object key/);
+
     const record = await backend.getDoc(uid);
     expect(record!.data).toEqual({ keep: 'me' });
   });

@@ -63,11 +63,9 @@ import { runFirestoreFullTextSearch } from '../internal/firestore-fulltext.js';
 import { runFirestoreGeoSearch } from '../internal/firestore-geo.js';
 import { runFirestoreFindEdgesProjected } from '../internal/firestore-projection.js';
 import { runFirestoreEngineTraversal } from '../internal/firestore-traverse.js';
+import { buildFirestoreUpdateArgs } from '../internal/firestore-update.js';
 import { runFirestoreFindNearest } from '../internal/firestore-vector.js';
-import type { DataPathOp } from '../internal/write-plan.js';
-import { assertSafePath, assertUpdatePayloadExclusive } from '../internal/write-plan.js';
 import { buildEdgeQueryPlan } from '../query.js';
-import { deserializeFirestoreTypes } from '../serialization.js';
 import type {
   AggregateSpec,
   BulkOptions,
@@ -232,44 +230,6 @@ let _emulatorFallbackWarned = false;
 let _classicInProductionWarned = false;
 let _previewDmlWarned = false;
 
-/** Build a `data.a.b.c` dotted path for Firestore's `update()` API. */
-function dottedDataPath(op: DataPathOp): string {
-  assertSafePath(op.path);
-  return `data.${op.path.join('.')}`;
-}
-
-/**
- * Build the patch payload Firestore expects from an `UpdatePayload`.
- *
- * - `replaceData` sets the whole `data` field at once (full replacement).
- *   Tagged Firestore types from the migration sandbox are reconstructed
- *   here. Cannot be combined with `dataOps`.
- * - `dataOps` becomes one Firestore field-update entry per terminal op,
- *   keyed by `data.<dotted.path>`. Delete ops use `FieldValue.delete()`.
- *   Sibling keys at every depth are preserved by Firestore's update
- *   semantics for nested maps.
- * - `updatedAt` is always stamped with `FieldValue.serverTimestamp()`.
- * - `v` is stamped at the root when provided.
- */
-function buildFirestoreUpdate(update: UpdatePayload, db: Firestore): Record<string, unknown> {
-  assertUpdatePayloadExclusive(update);
-  const out: Record<string, unknown> = {
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-  if (update.replaceData) {
-    out.data = deserializeFirestoreTypes(update.replaceData, db);
-  } else if (update.dataOps) {
-    for (const op of update.dataOps) {
-      const key = dottedDataPath(op);
-      out[key] = op.delete ? FieldValue.delete() : op.value;
-    }
-  }
-  if (update.v !== undefined) {
-    out.v = update.v;
-  }
-  return out;
-}
-
 /**
  * Stamp `createdAt`/`updatedAt` server-timestamp sentinels on a
  * timestampless record. Used for `setDoc`.
@@ -313,7 +273,7 @@ class FirestoreEnterpriseTransactionBackend implements TransactionBackend {
   }
 
   async updateDoc(docId: string, update: UpdatePayload): Promise<void> {
-    this.adapter.updateDoc(docId, buildFirestoreUpdate(update, this.db));
+    this.adapter.updateDoc(docId, buildFirestoreUpdateArgs(update, this.db));
   }
 
   async deleteDoc(docId: string): Promise<void> {
@@ -336,7 +296,7 @@ class FirestoreEnterpriseBatchBackend implements BatchBackend {
   }
 
   updateDoc(docId: string, update: UpdatePayload): void {
-    this.adapter.updateDoc(docId, buildFirestoreUpdate(update, this.db));
+    this.adapter.updateDoc(docId, buildFirestoreUpdateArgs(update, this.db));
   }
 
   deleteDoc(docId: string): void {
@@ -401,7 +361,7 @@ class FirestoreEnterpriseBackendImpl implements StorageBackend<FirestoreEnterpri
   }
 
   updateDoc(docId: string, update: UpdatePayload): Promise<void> {
-    return this.adapter.updateDoc(docId, buildFirestoreUpdate(update, this.db));
+    return this.adapter.updateDoc(docId, buildFirestoreUpdateArgs(update, this.db));
   }
 
   deleteDoc(docId: string): Promise<void> {

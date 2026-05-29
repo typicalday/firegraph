@@ -379,3 +379,63 @@ describe('runFirestorePipelineUpdate — pipeline composition', () => {
     expect(out).toEqual({ deleted: 0, batches: 1, errors: [] });
   });
 });
+
+// ---------------------------------------------------------------------------
+// runFirestorePipelineUpdate — exotic-key alias encoding
+//
+// The Pipeline `update([...])` stage carries each set op as an
+// `AliasedExpression` whose alias string the server parses as a *field
+// path* (dots mean nesting). A bare `data.${op.path.join('.')}` alias is
+// therefore wrong for any key that contains a dot (silent mis-nesting) or
+// that isn't a plain field-name token (leading digit, hyphen, …). The fix
+// mirrors Firestore's canonical FieldPath string encoding
+// (`FieldPath.formattedName`): segments matching /^[_A-Za-z][_A-Za-z0-9]*$/
+// stay bare; everything else is wrapped in backticks with `\` and `` ` ``
+// escaped. These tests pin that encoding on the alias the helper composes.
+// (End-to-end verification against the real preview pipeline lives in the
+// gated Enterprise integration suite — these unit tests pin the client-side
+// alias string only.)
+// ---------------------------------------------------------------------------
+
+describe('runFirestorePipelineUpdate — exotic-key alias encoding', () => {
+  async function aliasesFor(data: Record<string, unknown>): Promise<string[]> {
+    const { db, calls } = makeFakeDb([1]);
+    await runFirestorePipelineUpdate(
+      db as never,
+      'graph',
+      [{ field: 'aType', op: '==', value: 'tour' }],
+      { data },
+    );
+    const transforms = calls[2].args[0] as TaggedAlias[];
+    return transforms.map((t) => t.alias);
+  }
+
+  it('leaves plain field-name segments bare (no regression for normal keys)', async () => {
+    const aliases = await aliasesFor({ profile: { name: 'A' }, active: true });
+    expect(aliases).toEqual(expect.arrayContaining(['data.profile.name', 'data.active']));
+  });
+
+  it('backtick-escapes a leading-digit nested key (generateId-shaped)', async () => {
+    const aliases = await aliasesFor({ holds: { '4f9Kq_2bN': 'x' } });
+    expect(aliases).toContain('data.holds.`4f9Kq_2bN`');
+    expect(aliases).not.toContain('data.holds.4f9Kq_2bN');
+  });
+
+  it('backtick-escapes a key containing a literal dot (prevents silent mis-nesting)', async () => {
+    const aliases = await aliasesFor({ 'a.b': 1 });
+    // Must NOT collapse to `data.a.b` (which the server would read as a
+    // two-level nested path data→a→b instead of the literal key "a.b").
+    expect(aliases).toContain('data.`a.b`');
+    expect(aliases).not.toContain('data.a.b');
+  });
+
+  it('escapes backticks and backslashes inside an exotic key', async () => {
+    const aliases = await aliasesFor({ 'we`ird\\key': 1 });
+    expect(aliases).toContain('data.`we\\`ird\\\\key`');
+  });
+
+  it('backtick-escapes a hyphenated key', async () => {
+    const aliases = await aliasesFor({ 'kebab-key': 1 });
+    expect(aliases).toContain('data.`kebab-key`');
+  });
+});
