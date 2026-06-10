@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/typicalday/firegraph/compare/v0.15.0...v0.16.0) (2026-06-10)
+
+
+### Features
+
+* **sqlite-local:** add FTS5 full-text search + vector semantic search ([#26](https://github.com/typicalday/firegraph/issues/26)) ([d4bee97](https://github.com/typicalday/firegraph/commit/d4bee97b85f59a1cdcf7f1ada8184568aa99afc6))
+
 ## [0.15.0](https://github.com/typicalday/firegraph/compare/v0.14.1...v0.15.0) (2026-06-10)
 
 
