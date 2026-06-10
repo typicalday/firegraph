@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/typicalday/firegraph/compare/v0.14.1...v0.15.0) (2026-06-10)
+
+
+### Features
+
+* **sqlite:** scope-free table-per-graph SQLite edition + local file backend ([#24](https://github.com/typicalday/firegraph/issues/24)) ([36dfa35](https://github.com/typicalday/firegraph/commit/36dfa350d8e47572132d38b1f1eba418234fd97b))
+
 ## [0.14.1](https://github.com/typicalday/firegraph/compare/v0.14.0...v0.14.1) (2026-05-29)
 
 
