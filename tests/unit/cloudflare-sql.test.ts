@@ -14,20 +14,19 @@ import {
   quoteDOIdent,
   validateDOTableName,
 } from '../../src/cloudflare/schema.js';
-import {
-  compileDOAggregate,
-  compileDOBulkDelete,
-  compileDOBulkUpdate,
-  compileDODelete,
-  compileDODeleteAll,
-  compileDOSelect,
-  compileDOSelectByDocId,
-  compileDOSet,
-  compileDOUpdate,
-  hydrateDORecord,
-  rowToDORecord,
-} from '../../src/cloudflare/sql.js';
+import { hydrateDORecord, rowToDORecord } from '../../src/cloudflare/sql.js';
 import { DEFAULT_CORE_INDEXES } from '../../src/default-indexes.js';
+import {
+  compileAggregate as compileDOAggregate,
+  compileBulkDelete as compileDOBulkDelete,
+  compileBulkUpdate as compileDOBulkUpdate,
+  compileDelete as compileDODelete,
+  compileDeleteAll as compileDODeleteAll,
+  compileSelect as compileDOSelect,
+  compileSelectByDocId as compileDOSelectByDocId,
+  compileSet as compileDOSet,
+  compileUpdate as compileDOUpdate,
+} from '../../src/internal/sqlite-sql.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import { createRegistry } from '../../src/registry.js';
 import type { GraphTimestamp } from '../../src/timestamp.js';
@@ -706,7 +705,7 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   // the leading "scope" = ? predicate (the DO is the scope).
 
   it('compileDOExpand emits IN (?, ?, …) with leading axbType, no scope predicate', async () => {
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpand('firegraph', {
       sources: ['a', 'b', 'c'],
       axbType: 'wrote',
@@ -722,7 +721,7 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   });
 
   it('compileDOExpand reverse direction filters on bUid', async () => {
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpand('firegraph', {
       sources: ['x', 'y'],
       axbType: 'wrote',
@@ -733,7 +732,7 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   });
 
   it('compileDOExpand with axbType "is" adds the self-loop guard', async () => {
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpand('firegraph', {
       sources: ['a'],
       axbType: 'is',
@@ -747,7 +746,7 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
     // `compileFieldRef`, which routes camelCase field names → snake_case
     // columns via `DO_FIELD_TO_COLUMN`. A regression that emitted
     // `"aType" = ?` would crash workerd's SQLite with "no such column".
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpand('firegraph', {
       sources: ['a', 'b'],
       axbType: 'wrote',
@@ -763,7 +762,7 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   });
 
   it('compileDOExpand multiplies limitPerSource by sources.length', async () => {
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpand('firegraph', {
       sources: ['a', 'b'],
       axbType: 'wrote',
@@ -774,14 +773,15 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   });
 
   it('compileDOExpand rejects empty sources list', async () => {
-    const { compileDOExpand } = await import('../../src/cloudflare/sql.js');
+    const { compileExpand: compileDOExpand } = await import('../../src/internal/sqlite-sql.js');
     expect(() => compileDOExpand('firegraph', { sources: [], axbType: 'wrote' })).toThrow(
       /INVALID_QUERY|empty/,
     );
   });
 
   it('compileDOExpandHydrate emits the self-loop predicate without a scope clause', async () => {
-    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    const { compileExpandHydrate: compileDOExpandHydrate } =
+      await import('../../src/internal/sqlite-sql.js');
     const stmt = compileDOExpandHydrate('firegraph', ['x', 'y']);
     expect(stmt.sql).not.toContain('"scope" = ?');
     expect(stmt.sql).toContain('"axb_type" = ?');
@@ -792,7 +792,8 @@ describe('cloudflare/sql compileDOExpand / compileDOExpandHydrate', () => {
   });
 
   it('compileDOExpandHydrate rejects empty target list', async () => {
-    const { compileDOExpandHydrate } = await import('../../src/cloudflare/sql.js');
+    const { compileExpandHydrate: compileDOExpandHydrate } =
+      await import('../../src/internal/sqlite-sql.js');
     expect(() => compileDOExpandHydrate('firegraph', [])).toThrow(/INVALID_QUERY|empty/);
   });
 });

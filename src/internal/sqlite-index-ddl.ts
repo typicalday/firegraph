@@ -1,16 +1,10 @@
 /**
  * Translator from `IndexSpec` to SQLite `CREATE INDEX` DDL.
  *
- * Shared between the DO SQLite backend (`src/cloudflare/schema.ts`) and the
- * legacy single-table SQLite backend (`src/internal/sqlite-schema.ts`). The
- * two backends differ only in:
- *
- *  1. Their field→column mapping (no `scope` column in the DO schema).
- *  2. Whether a fixed `scope` leading column is prepended to every index
- *     (legacy backend only — DO rows are scoped by DO-instance identity).
- *
- * Both differences are handled via the `fieldToColumn` and `leadingColumns`
- * options; the rest of the emission logic is identical.
+ * Shared by every SQLite-shaped backend (the table-per-graph edition in
+ * `src/sqlite/` and the Cloudflare DO edition) via the common schema module
+ * (`src/internal/sqlite-schema.ts`). Both use the same scope-free row shape,
+ * so the only knob is the `fieldToColumn` mapping.
  *
  * ## JSON path expression indexes
  *
@@ -86,13 +80,12 @@ function normalizeFields(
   });
 }
 
-function specFingerprint(spec: IndexSpec, leadingColumns: string[]): string {
-  // Canonical form: JSON of normalized fields + leading cols + where.
-  // Leading columns are part of the fingerprint so the same spec under
-  // two different backends gets distinct names (though in practice only
-  // one backend compiles a given spec).
+function specFingerprint(spec: IndexSpec): string {
+  // Canonical form: JSON of normalized fields + where. The `lead` key is
+  // kept (always empty now) so fingerprints — and therefore index names —
+  // stay stable across the removal of the legacy scope leading column.
   const normalized = {
-    lead: leadingColumns,
+    lead: [] as string[],
     fields: normalizeFields(spec.fields),
     where: spec.where ?? '',
   };
@@ -143,14 +136,6 @@ export interface SqliteIndexDDLOptions {
   table: string;
   /** Map from firegraph field name to SQLite column name. */
   fieldToColumn: Record<string, string>;
-  /**
-   * Columns prepended to every index's field list (leading ASC). Used by
-   * the legacy shared-table SQLite backend to lead every index with
-   * `scope`, matching the predicate its query compiler emits.
-   *
-   * Identifier names only — no JSON paths or expressions.
-   */
-  leadingColumns?: string[];
 }
 
 /**
@@ -160,20 +145,17 @@ export interface SqliteIndexDDLOptions {
  * name across runs), so re-running the bootstrap is idempotent.
  */
 export function buildIndexDDL(spec: IndexSpec, options: SqliteIndexDDLOptions): string {
-  const { table, fieldToColumn, leadingColumns = [] } = options;
+  const { table, fieldToColumn } = options;
 
   if (!spec.fields || spec.fields.length === 0) {
     throw new FiregraphError('IndexSpec.fields must be a non-empty array', 'INVALID_INDEX');
   }
 
   const normalized = normalizeFields(spec.fields);
-  const hash = specFingerprint(spec, leadingColumns);
+  const hash = specFingerprint(spec);
   const indexName = `${table}_idx_${hash}`;
 
   const cols: string[] = [];
-  for (const col of leadingColumns) {
-    cols.push(quoteIdent(col));
-  }
   for (const f of normalized) {
     const expr = compileFieldExpr(f.path, fieldToColumn);
     cols.push(f.desc ? `${expr} DESC` : expr);
@@ -197,14 +179,11 @@ export function buildIndexDDL(spec: IndexSpec, options: SqliteIndexDDLOptions): 
  * declared twice (e.g., by core preset + registry entry) collapses to a
  * single DDL statement.
  */
-export function dedupeIndexSpecs(
-  specs: ReadonlyArray<IndexSpec>,
-  leadingColumns: string[] = [],
-): IndexSpec[] {
+export function dedupeIndexSpecs(specs: ReadonlyArray<IndexSpec>): IndexSpec[] {
   const seen = new Set<string>();
   const out: IndexSpec[] = [];
   for (const spec of specs) {
-    const fp = specFingerprint(spec, leadingColumns);
+    const fp = specFingerprint(spec);
     if (seen.has(fp)) continue;
     seen.add(fp);
     out.push(spec);

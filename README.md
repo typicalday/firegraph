@@ -833,6 +833,8 @@ const allAssignments = await g.findEdgesGlobal(
 
 This uses Firestore collection group queries and requires collection group indexes. The collection name defaults to the last segment of the client's collection path if omitted.
 
+Firestore-only: the SQLite backend uses a table-per-graph layout with no cross-table index, so it omits `findEdgesGlobal` entirely (calling it throws `UNSUPPORTED_OPERATION`).
+
 #### Multi-Hop Limitation
 
 Each hop carries its reader context forward — if hop 1 crosses into a subgraph, hop 2 stays in that subgraph. To return to the root or traverse a different subgraph, create a separate traversal from the desired client:
@@ -1140,17 +1142,35 @@ The match on `FIRESTORE_EMULATOR_EDITION` is case-insensitive and whitespace-tri
 
 ### SQLite Backend (`firegraph/sqlite`)
 
-Shared-table SQLite backend for Node.js (`better-sqlite3`) and Cloudflare D1. Supports all four core capabilities plus `query.aggregate`, `query.select`, `query.join`, and `query.dml`. Does not support `search.*`.
+Table-per-graph SQLite backend for Node.js (`better-sqlite3`) and Cloudflare D1. There is no `scope` column — the root graph lives in `tableName` itself and each subgraph gets its own physical table, tracked in a small `<tableName>_graphs` catalog. Schema (tables, indexes, catalog) is bootstrapped lazily on first use; no manual DDL step. Supports all four core capabilities plus `query.aggregate`, `query.select`, `query.join`, `query.dml`, and `raw.sql`. Does not support `search.*` or `findEdgesGlobal` (no cross-table index).
 
 ```typescript
 import { createSqliteBackend } from 'firegraph/sqlite';
-import { createGraphClientFromBackend } from 'firegraph';
+import { createGraphClient } from 'firegraph';
 
 const backend = createSqliteBackend(executor, 'graph');
-const g = createGraphClientFromBackend(backend, { registry });
+const g = createGraphClient(backend, { registry });
 ```
 
 Note: `core.transactions` is only declared when `executor.transaction` is defined — `better-sqlite3` provides this, but Cloudflare D1 does not.
+
+### Local SQLite Files (`firegraph/sqlite-local`)
+
+For a local graph database in a single SQLite file, use the better-sqlite3 factory. It opens (or wraps) a database, applies `journal_mode = WAL` and a `busy_timeout`, and returns a ready-to-use backend. Requires the optional peer dependency `better-sqlite3` (loaded via dynamic `import()`, so this subpath is safe to reference from code that also targets D1/workerd — just don't bundle it there).
+
+```typescript
+import { createLocalSqliteBackend } from 'firegraph/sqlite-local';
+import { createGraphClient } from 'firegraph';
+
+const { backend, db, close } = await createLocalSqliteBackend('./graph.db', {
+  tableName: 'graph', // default 'firegraph'
+});
+const g = createGraphClient(backend, { registry });
+// ... use the client; `db` is the raw better-sqlite3 Database if needed ...
+close();
+```
+
+`createLocalSqliteBackend` also accepts an already-open better-sqlite3 `Database` (in which case `close()` is a no-op — the caller owns the lifecycle), `':memory:'` for ephemeral graphs, a `pragmas` map for extra tuning, and `fileMustExist: true` to refuse creating new files. `createBetterSqliteExecutor(db)` is exported separately for wiring `createSqliteBackend` directly.
 
 ### Cloudflare Durable Object Backend (`firegraph/cloudflare`)
 

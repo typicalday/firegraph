@@ -38,7 +38,6 @@ import type { Database as BetterSqliteDb, default as BetterSqliteDatabase } from
 
 import { createGraphClientFromBackend } from '../../src/client.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
-import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import type {
   DynamicGraphClient,
@@ -107,10 +106,9 @@ function getOrCreateSqliteDb(collectionPath: string): BetterSqliteDb {
       'better-sqlite3 not loaded yet. createTestGraphClient must be awaited at least once with a sqlite backend before reusing a path.',
     );
   }
+  // No manual DDL — the backend bootstraps its schema (table + indexes +
+  // graph catalog) lazily on first use.
   const db = new _Database(':memory:');
-  for (const sql of buildSchemaStatements(SQLITE_TABLE)) {
-    db.exec(sql);
-  }
   _sqliteDbs.set(collectionPath, db);
   return db;
 }
@@ -172,8 +170,8 @@ export interface CreateTestGraphClientOptions extends GraphClientOptions {}
  *   - Pipeline query mode
  *   - Firestore-specific `Timestamp` / `GeoPoint` / `DocumentReference`
  *     round-trips that depend on the Firestore SDK
- *   - `findEdgesGlobal()` against arbitrary Firestore collection paths
- *     (SQLite uses a single-table materialized-scope layout)
+ *   - `findEdgesGlobal()` (SQLite uses a table-per-graph layout with no
+ *     cross-table index — the backend omits the method entirely)
  */
 export function createTestGraphClient(
   collectionPath: string,

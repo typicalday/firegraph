@@ -43,6 +43,10 @@ import type {
 } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
+import {
+  decodeProjectedRow as decodeDOProjectedRow,
+  type ProjectedColumnSpec as DOProjectedColumnSpec,
+} from '../internal/sqlite-sql.js';
 import type {
   AggregateSpec,
   BulkOptions,
@@ -61,8 +65,8 @@ import type {
   StoredGraphRecord,
 } from '../types.js';
 import type { BatchOp } from './do.js';
-import type { DOProjectedColumnSpec, DORecordWire } from './sql.js';
-import { decodeDOProjectedRow, hydrateDORecord } from './sql.js';
+import type { DORecordWire } from './sql.js';
+import { hydrateDORecord } from './sql.js';
 
 // ---------------------------------------------------------------------------
 // Minimal DO namespace / stub types

@@ -1,12 +1,21 @@
 /**
  * SQLite implementation of `StorageBackend`.
  *
- * Uses a single table keyed by `(scope, doc_id)`. Subgraphs are encoded in
- * the `scope` column as a materialized path of interleaved parent UIDs and
- * subgraph names — `''` at the root, `'<uid>/<name>'` one level down,
- * `'<uid1>/<name1>/<uid2>/<name2>'` two levels down, and so on. Cascade
- * delete uses a single `DELETE … WHERE scope LIKE 'prefix/%'` instead of
- * walking subcollections.
+ * Table-per-graph design: the root graph lives in `tableName`, and each
+ * subgraph lives in its own physical table (`<tableName>_g_<mangled scope>`,
+ * see `tableForScope`). There is no `scope` column — the table a row lives
+ * in *is* its scope, exactly like the Cloudflare DO edition where each
+ * subgraph is its own Durable Object.
+ *
+ * A small catalog table (`<tableName>_graphs`) records every graph's
+ * storage scope → table mapping. Cascade delete prefix-matches descendant
+ * scopes in the catalog and drops each listed table — no registry topology
+ * required.
+ *
+ * Schema is ensured lazily: the first operation on a backend instance runs
+ * `CREATE TABLE IF NOT EXISTS` for the graph's table, its indexes, and the
+ * catalog, then registers the graph in the catalog. Callers no longer
+ * pre-create tables.
  */
 
 import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
@@ -23,7 +32,23 @@ import type {
 import { createCapabilities } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
-import { buildEdgeQueryPlan } from '../query.js';
+import { buildSchemaStatements, quoteIdent, validateTableName } from '../internal/sqlite-schema.js';
+import type { CompiledStatement } from '../internal/sqlite-sql.js';
+import {
+  compileAggregate,
+  compileBulkDelete,
+  compileBulkUpdate,
+  compileDelete,
+  compileExpand,
+  compileExpandHydrate,
+  compileFindEdgesProjected,
+  compileSelect,
+  compileSelectByDocId,
+  compileSet,
+  compileUpdate,
+  decodeProjectedRow,
+  rowToRecord,
+} from '../internal/sqlite-sql.js';
 import type {
   AggregateSpec,
   BulkBatchError,
@@ -35,35 +60,39 @@ import type {
   ExpandResult,
   FindEdgesParams,
   GraphReader,
+  GraphRegistry,
+  IndexSpec,
   QueryFilter,
   QueryOptions,
   StoredGraphRecord,
 } from '../types.js';
-import type { CompiledStatement } from './sql.js';
 import {
-  compileAggregate,
-  compileBulkDelete,
-  compileBulkUpdate,
-  compileCountScopePrefix,
-  compileDelete,
-  compileDeleteScopePrefix,
-  compileExpand,
-  compileExpandHydrate,
-  compileFindEdgesProjected,
-  compileSelect,
-  compileSelectByDocId,
-  compileSelectGlobal,
-  compileSet,
-  compileUpdate,
-  decodeProjectedRow,
-  rowToRecord,
-} from './sql.js';
+  buildCatalogDDL,
+  compileCatalogDelete,
+  compileCatalogDescendants,
+  compileCatalogRegister,
+  tableForScope,
+} from './catalog.js';
 
 export interface SqliteBackendOptions {
   /** Logical scope path (chained subgraph names) — used for `allowedIn` matching. */
   scopePath?: string;
-  /** Internal storage scope (interleaved parent-uid/name path). */
+  /**
+   * Internal storage scope (interleaved parent-uid/name path). Determines
+   * which physical table this backend reads and writes — `''` (the default)
+   * is the root graph in `tableName` itself.
+   */
   storageScope?: string;
+  /**
+   * Registry contributing per-entry `indexes` declarations, applied to
+   * every graph table this backend (and its subgraphs) lazily creates.
+   */
+  registry?: GraphRegistry;
+  /**
+   * Replaces the built-in core index preset for lazily created tables.
+   * Pass `[]` to disable core indexes entirely.
+   */
+  coreIndexes?: IndexSpec[];
 }
 
 /**
@@ -147,41 +176,40 @@ class SqliteTransactionBackendImpl implements TransactionBackend {
   constructor(
     private readonly tx: SqliteTxExecutor,
     private readonly tableName: string,
-    private readonly storageScope: string,
   ) {}
 
   async getDoc(docId: string): Promise<StoredGraphRecord | null> {
-    const stmt = compileSelectByDocId(this.tableName, this.storageScope, docId);
+    const stmt = compileSelectByDocId(this.tableName, docId);
     const rows = await this.tx.all(stmt.sql, stmt.params);
     return rows.length === 0 ? null : rowToRecord(rows[0]);
   }
 
   async query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]> {
-    const stmt = compileSelect(this.tableName, this.storageScope, filters, options);
+    const stmt = compileSelect(this.tableName, filters, options);
     const rows = await this.tx.all(stmt.sql, stmt.params);
     return rows.map(rowToRecord);
   }
 
   async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
-    const stmt = compileSet(this.tableName, this.storageScope, docId, record, Date.now(), mode);
+    const stmt = compileSet(this.tableName, docId, record, Date.now(), mode);
     await this.tx.run(stmt.sql, stmt.params);
   }
 
   async updateDoc(docId: string, update: UpdatePayload): Promise<void> {
-    const stmt = compileUpdate(this.tableName, this.storageScope, docId, update, Date.now());
+    const stmt = compileUpdate(this.tableName, docId, update, Date.now());
     // RETURNING + `all()` for parity with Firestore — see SqliteBackendImpl.updateDoc.
     const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
     const rows = await this.tx.all(sqlWithReturning, stmt.params);
     if (rows.length === 0) {
       throw new FiregraphError(
-        `updateDoc: no document found for doc_id=${docId} (scope=${this.storageScope})`,
+        `updateDoc: no document found for doc_id=${docId} (table=${this.tableName})`,
         'NOT_FOUND',
       );
     }
   }
 
   async deleteDoc(docId: string): Promise<void> {
-    const stmt = compileDelete(this.tableName, this.storageScope, docId);
+    const stmt = compileDelete(this.tableName, docId);
     await this.tx.run(stmt.sql, stmt.params);
   }
 }
@@ -192,27 +220,24 @@ class SqliteBatchBackendImpl implements BatchBackend {
   constructor(
     private readonly executor: SqliteExecutor,
     private readonly tableName: string,
-    private readonly storageScope: string,
+    private readonly ensureSchema: () => Promise<void>,
   ) {}
 
   setDoc(docId: string, record: WritableRecord, mode: WriteMode): void {
-    this.statements.push(
-      compileSet(this.tableName, this.storageScope, docId, record, Date.now(), mode),
-    );
+    this.statements.push(compileSet(this.tableName, docId, record, Date.now(), mode));
   }
 
   updateDoc(docId: string, update: UpdatePayload): void {
-    this.statements.push(
-      compileUpdate(this.tableName, this.storageScope, docId, update, Date.now()),
-    );
+    this.statements.push(compileUpdate(this.tableName, docId, update, Date.now()));
   }
 
   deleteDoc(docId: string): void {
-    this.statements.push(compileDelete(this.tableName, this.storageScope, docId));
+    this.statements.push(compileDelete(this.tableName, docId));
   }
 
   async commit(): Promise<void> {
     if (this.statements.length === 0) return;
+    await this.ensureSchema();
     await this.executor.batch(this.statements);
     this.statements.length = 0;
   }
@@ -264,21 +289,32 @@ const SQLITE_CORE_CAPS: ReadonlyArray<SqliteCapability> = [
 
 class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
   readonly capabilities: BackendCapabilities<SqliteCapability>;
-  /** Logical table name (returned through `collectionPath` for parity with Firestore). */
+  /** Physical table holding this graph's triples. */
   readonly collectionPath: string;
   readonly scopePath: string;
-  /** Materialized storage scope (interleaved parent UIDs + subgraph names). */
+  /** Storage scope (interleaved parent UIDs + subgraph names) — `''` at root. */
   private readonly storageScope: string;
+  /** Root graph's table name — prefix for subgraph tables and the catalog. */
+  private readonly rootTable: string;
+  private readonly registry: GraphRegistry | undefined;
+  private readonly coreIndexes: IndexSpec[] | undefined;
+  private ensured: Promise<void> | null = null;
 
   constructor(
     private readonly executor: SqliteExecutor,
-    tableName: string,
+    rootTable: string,
     storageScope: string,
     scopePath: string,
+    registry: GraphRegistry | undefined,
+    coreIndexes: IndexSpec[] | undefined,
   ) {
-    this.collectionPath = tableName;
+    validateTableName(rootTable);
+    this.rootTable = rootTable;
+    this.collectionPath = tableForScope(rootTable, storageScope);
     this.storageScope = storageScope;
     this.scopePath = scopePath;
+    this.registry = registry;
+    this.coreIndexes = coreIndexes;
     const caps = new Set<SqliteCapability>(SQLITE_CORE_CAPS);
     if (typeof executor.transaction === 'function') {
       caps.add('core.transactions');
@@ -286,53 +322,133 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     this.capabilities = createCapabilities(caps);
   }
 
+  /**
+   * Lazily create this graph's table + indexes + the catalog, and register
+   * the graph in the catalog. Runs once per backend instance; the DDL is
+   * all `IF NOT EXISTS` / `INSERT OR IGNORE`, so concurrent instances over
+   * the same database converge safely.
+   */
+  private ensureSchema(): Promise<void> {
+    if (!this.ensured) {
+      this.ensured = this.doEnsureSchema().catch((err) => {
+        // Allow retry on the next operation rather than caching the failure.
+        this.ensured = null;
+        throw err;
+      });
+    }
+    return this.ensured;
+  }
+
+  private async doEnsureSchema(): Promise<void> {
+    const ddl = [
+      ...buildSchemaStatements(this.collectionPath, {
+        coreIndexes: this.coreIndexes,
+        registry: this.registry,
+      }),
+      buildCatalogDDL(this.rootTable),
+    ];
+    const statements: CompiledStatement[] = ddl.map((sql) => ({ sql, params: [] }));
+    statements.push(
+      compileCatalogRegister(
+        this.rootTable,
+        this.storageScope,
+        this.collectionPath,
+        this.scopePath,
+      ),
+    );
+    // Respect the driver's batch caps (D1 ≈ 100 statements / ≈ 1000 params) —
+    // a registry with many index declarations could push the DDL list past
+    // them. Every statement is IF NOT EXISTS / INSERT OR IGNORE, so losing
+    // cross-chunk atomicity here is harmless: a partial bootstrap converges
+    // on the next attempt.
+    const chunks = chunkStatements(
+      statements,
+      this.executor.maxBatchSize,
+      this.executor.maxBatchParams,
+    );
+    for (const chunk of chunks) {
+      await this.executor.batch(chunk);
+    }
+  }
+
+  /**
+   * Run `op` with the schema bootstrap applied, self-healing when this
+   * graph's table was dropped out from under the instance — a parent's
+   * cascade delete DROPs descendant tables, but subgraph handles created
+   * before the cascade still point at this (now missing) table with a
+   * resolved bootstrap cache. On a "no such table: <own table>" error the
+   * cache resets, the empty graph is recreated, and the op retries once.
+   * This matches Firestore semantics, where a deleted subcollection reads
+   * as empty and writes recreate it.
+   */
+  private async withSchema<T>(op: () => Promise<T>): Promise<T> {
+    await this.ensureSchema();
+    try {
+      return await op();
+    } catch (err) {
+      if (!this.isMissingOwnTable(err)) throw err;
+      this.ensured = null;
+      await this.ensureSchema();
+      return op();
+    }
+  }
+
+  /** True when `err` is SQLite's missing-table error naming OUR table. */
+  private isMissingOwnTable(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : String(err);
+    return message.includes(`no such table: ${this.collectionPath}`);
+  }
+
   // --- Reads ---
 
   async getDoc(docId: string): Promise<StoredGraphRecord | null> {
-    const stmt = compileSelectByDocId(this.collectionPath, this.storageScope, docId);
-    const rows = await this.executor.all(stmt.sql, stmt.params);
-    return rows.length === 0 ? null : rowToRecord(rows[0]);
+    return this.withSchema(async () => {
+      const stmt = compileSelectByDocId(this.collectionPath, docId);
+      const rows = await this.executor.all(stmt.sql, stmt.params);
+      return rows.length === 0 ? null : rowToRecord(rows[0]);
+    });
   }
 
   async query(filters: QueryFilter[], options?: QueryOptions): Promise<StoredGraphRecord[]> {
-    const stmt = compileSelect(this.collectionPath, this.storageScope, filters, options);
-    const rows = await this.executor.all(stmt.sql, stmt.params);
-    return rows.map(rowToRecord);
+    return this.withSchema(async () => {
+      const stmt = compileSelect(this.collectionPath, filters, options);
+      const rows = await this.executor.all(stmt.sql, stmt.params);
+      return rows.map(rowToRecord);
+    });
   }
 
   // --- Writes ---
 
   async setDoc(docId: string, record: WritableRecord, mode: WriteMode): Promise<void> {
-    const stmt = compileSet(
-      this.collectionPath,
-      this.storageScope,
-      docId,
-      record,
-      Date.now(),
-      mode,
-    );
-    await this.executor.run(stmt.sql, stmt.params);
+    return this.withSchema(async () => {
+      const stmt = compileSet(this.collectionPath, docId, record, Date.now(), mode);
+      await this.executor.run(stmt.sql, stmt.params);
+    });
   }
 
   async updateDoc(docId: string, update: UpdatePayload): Promise<void> {
-    const stmt = compileUpdate(this.collectionPath, this.storageScope, docId, update, Date.now());
-    // Use RETURNING + `all()` so missing rows surface as an error, matching
-    // Firestore's `update()` semantics (NOT_FOUND when the doc doesn't exist).
-    // SQLite ≥3.35 supports UPDATE … RETURNING; better-sqlite3, D1, and DO
-    // SQLite all run on a recent enough engine.
-    const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
-    const rows = await this.executor.all(sqlWithReturning, stmt.params);
-    if (rows.length === 0) {
-      throw new FiregraphError(
-        `updateDoc: no document found for doc_id=${docId} (scope=${this.storageScope})`,
-        'NOT_FOUND',
-      );
-    }
+    return this.withSchema(async () => {
+      const stmt = compileUpdate(this.collectionPath, docId, update, Date.now());
+      // Use RETURNING + `all()` so missing rows surface as an error, matching
+      // Firestore's `update()` semantics (NOT_FOUND when the doc doesn't exist).
+      // SQLite ≥3.35 supports UPDATE … RETURNING; better-sqlite3, D1, and DO
+      // SQLite all run on a recent enough engine.
+      const sqlWithReturning = `${stmt.sql} RETURNING "doc_id"`;
+      const rows = await this.executor.all(sqlWithReturning, stmt.params);
+      if (rows.length === 0) {
+        throw new FiregraphError(
+          `updateDoc: no document found for doc_id=${docId} (table=${this.collectionPath})`,
+          'NOT_FOUND',
+        );
+      }
+    });
   }
 
   async deleteDoc(docId: string): Promise<void> {
-    const stmt = compileDelete(this.collectionPath, this.storageScope, docId);
-    await this.executor.run(stmt.sql, stmt.params);
+    return this.withSchema(async () => {
+      const stmt = compileDelete(this.collectionPath, docId);
+      await this.executor.run(stmt.sql, stmt.params);
+    });
   }
 
   // --- Transactions / Batches ---
@@ -347,18 +463,19 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
         'UNSUPPORTED_OPERATION',
       );
     }
+    // Schema must exist before the tx opens — DDL inside an interactive
+    // transaction would commit with it, complicating rollback semantics.
+    await this.ensureSchema();
     return this.executor.transaction(async (tx) => {
-      const txBackend = new SqliteTransactionBackendImpl(
-        tx,
-        this.collectionPath,
-        this.storageScope,
-      );
+      const txBackend = new SqliteTransactionBackendImpl(tx, this.collectionPath);
       return fn(txBackend);
     });
   }
 
   createBatch(): BatchBackend {
-    return new SqliteBatchBackendImpl(this.executor, this.collectionPath, this.storageScope);
+    return new SqliteBatchBackendImpl(this.executor, this.collectionPath, () =>
+      this.ensureSchema(),
+    );
   }
 
   // --- Subgraphs ---
@@ -386,7 +503,14 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
       ? `${this.storageScope}/${parentNodeUid}/${name}`
       : `${parentNodeUid}/${name}`;
     const newScope = this.scopePath ? `${this.scopePath}/${name}` : name;
-    return new SqliteBackendImpl(this.executor, this.collectionPath, newStorageScope, newScope);
+    return new SqliteBackendImpl(
+      this.executor,
+      this.rootTable,
+      newStorageScope,
+      newScope,
+      this.registry,
+      this.coreIndexes,
+    );
   }
 
   // --- Cascade & bulk ---
@@ -396,7 +520,8 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     reader: GraphReader,
     options?: BulkOptions,
   ): Promise<CascadeResult> {
-    // Collect all edges touching the node in the current scope (excluding self-loop).
+    await this.ensureSchema();
+    // Collect all edges touching the node in the current graph (excluding self-loop).
     const [outgoingRaw, incomingRaw] = await Promise.all([
       reader.findEdges({ aUid: uid, allowCollectionScan: true, limit: 0 }),
       reader.findEdges({ bUid: uid, allowCollectionScan: true, limit: 0 }),
@@ -416,33 +541,47 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     const nodeDocId = computeNodeDocId(uid);
     const shouldDeleteSubgraphs = options?.deleteSubcollections !== false;
 
-    // Pre-count subgraph rows so the returned `deleted` total reflects the
-    // actual number of records removed by the prefix-delete (which is a
-    // single statement, but may match many rows). One extra index lookup is
-    // cheap relative to the cascade itself.
+    // Discover descendant graphs via the catalog — every subgraph under this
+    // node has a storage scope starting with `<scope>/<uid>/`. Pre-count
+    // each table's rows so the returned `deleted` total reflects actual
+    // records removed by the DROPs, not bookkeeping statements.
+    const descendants: Array<{ storageScope: string; tableName: string }> = [];
     let subgraphRowCount = 0;
     if (shouldDeleteSubgraphs) {
       const prefix = this.storageScope ? `${this.storageScope}/${uid}` : uid;
-      const countStmt = compileCountScopePrefix(this.collectionPath, prefix);
-      const countRows = await this.executor.all(countStmt.sql, countStmt.params);
-      const first = countRows[0] as Record<string, unknown> | undefined;
-      const n = first?.n;
-      subgraphRowCount = typeof n === 'bigint' ? Number(n) : Number(n ?? 0);
+      const descStmt = compileCatalogDescendants(this.rootTable, prefix);
+      const rows = await this.executor.all(descStmt.sql, descStmt.params);
+      for (const row of rows) {
+        const tableName = String(row.table_name);
+        // Catalog rows are written exclusively by `doEnsureSchema` with
+        // mangled names, but validate anyway — these get interpolated into
+        // DROP TABLE statements.
+        validateTableName(tableName);
+        descendants.push({ storageScope: String(row.storage_scope), tableName });
+      }
+      for (const d of descendants) {
+        const countRows = await this.executor.all(
+          `SELECT COUNT(*) AS n FROM ${quoteIdent(d.tableName)}`,
+          [],
+        );
+        const n = (countRows[0] as Record<string, unknown> | undefined)?.n;
+        subgraphRowCount += typeof n === 'bigint' ? Number(n) : Number(n ?? 0);
+      }
     }
 
-    // Build the full statement list. Order: edges → node → prefix-delete.
-    // When the executor's `batch()` is fully atomic (DO SQLite uses
-    // `transactionSync`) the chunking loop below collapses to a single batch
-    // and the operation is atomic. When the executor caps batches (D1, ~100
+    // Build the full statement list. Order: edges → node → per-descendant
+    // (DROP TABLE + catalog row delete). When the executor's `batch()` is
+    // fully atomic the chunking loop below collapses to a single batch and
+    // the operation is atomic. When the executor caps batches (D1, ~100
     // statements) we lose cross-batch atomicity, but `removeNodeCascade` is
     // idempotent so a caller can retry after a partial failure.
     const writeStatements: CompiledStatement[] = edgeDocIds.map((id) =>
-      compileDelete(this.collectionPath, this.storageScope, id),
+      compileDelete(this.collectionPath, id),
     );
-    writeStatements.push(compileDelete(this.collectionPath, this.storageScope, nodeDocId));
-    if (shouldDeleteSubgraphs) {
-      const prefix = this.storageScope ? `${this.storageScope}/${uid}` : uid;
-      writeStatements.push(compileDeleteScopePrefix(this.collectionPath, prefix));
+    writeStatements.push(compileDelete(this.collectionPath, nodeDocId));
+    for (const d of descendants) {
+      writeStatements.push({ sql: `DROP TABLE IF EXISTS ${quoteIdent(d.tableName)}`, params: [] });
+      writeStatements.push(compileCatalogDelete(this.rootTable, d.storageScope));
     }
 
     const {
@@ -459,13 +598,13 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     const edgesDeleted = allOk ? edgeDocIds.length : 0;
     const nodeDeleted = allOk;
 
-    // `stmtDeleted` counts committed *statements*. Replace the prefix-
-    // delete's per-statement contribution (1) with the pre-computed row
-    // count so callers see a true row total. Only credit subgraph rows when
-    // every chunk succeeded — partial failure means we can't be sure the
-    // chunk containing the prefix-delete actually committed.
-    const prefixStatementContribution = shouldDeleteSubgraphs && allOk ? 1 : 0;
-    const deleted = stmtDeleted - prefixStatementContribution + (allOk ? subgraphRowCount : 0);
+    // `stmtDeleted` counts committed *statements*. Replace the per-descendant
+    // bookkeeping statements' contribution (DROP + catalog delete = 2 each)
+    // with the pre-computed row totals so callers see a true record count.
+    // Only credit subgraph rows when every chunk succeeded — partial failure
+    // means we can't be sure the chunks containing the DROPs committed.
+    const bookkeepingContribution = allOk ? descendants.length * 2 : 0;
+    const deleted = stmtDeleted - bookkeepingContribution + (allOk ? subgraphRowCount : 0);
 
     return { deleted, batches, errors, edgesDeleted, nodeDeleted };
   }
@@ -475,6 +614,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     reader: GraphReader,
     options?: BulkOptions,
   ): Promise<BulkResult> {
+    await this.ensureSchema();
     // Override default query limit for bulk deletion — we need all matching edges.
     // limit: 0 bypasses DEFAULT_QUERY_LIMIT; an explicit user limit is preserved.
     // allowCollectionScan: true — bulk deletion inherently implies scanning.
@@ -489,9 +629,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
       return { deleted: 0, batches: 0, errors: [] };
     }
 
-    const statements = docIds.map((id) =>
-      compileDelete(this.collectionPath, this.storageScope, id),
-    );
+    const statements = docIds.map((id) => compileDelete(this.collectionPath, id));
 
     return this.executeChunkedBatches(statements, options);
   }
@@ -509,9 +647,9 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
    * `result.errors.length` after the call.
    *
    * Returns `BulkResult`-shaped fields. `deleted` reflects only the
-   * statement count of *successfully committed* batches — a prefix-delete
-   * statement contributes 1 to that total even though it may match many
-   * rows; `removeNodeCascade` patches that up with a pre-counted row total.
+   * statement count of *successfully committed* batches — a DROP TABLE
+   * statement contributes 1 to that total even though it may remove many
+   * rows; `removeNodeCascade` patches that up with pre-counted row totals.
    *
    * **Atomicity caveat (D1):** when chunking kicks in, atomicity is lost
    * across chunk boundaries — one chunk may commit while a later one fails.
@@ -534,7 +672,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     // of: caller-supplied `batchSize` (used by callers who want progress
     // granularity), the driver's statement-count cap (`maxBatchSize`, D1 ≈
     // 100), and the driver's total bound-parameter cap (`maxBatchParams`,
-    // D1 ≈ 1000). Most cascade/bulk statements are 2-param DELETEs so the
+    // D1 ≈ 1000). Most cascade/bulk statements are 1-param DELETEs so the
     // param cap rarely triggers, but we respect it defensively. Drivers with
     // no declared caps and no caller cap submit everything in one batch (DO
     // SQLite's atomic `transactionSync`).
@@ -602,38 +740,12 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     return { deleted, batches, errors };
   }
 
-  // --- Cross-scope (collection group) ---
-
-  async findEdgesGlobal(
-    params: FindEdgesParams,
-    collectionName?: string,
-  ): Promise<StoredGraphRecord[]> {
-    const plan = buildEdgeQueryPlan(params);
-    if (plan.strategy === 'get') {
-      throw new FiregraphError(
-        'findEdgesGlobal() requires a query, not a direct document lookup. ' +
-          'Omit one of aUid/axbType/bUid to force a query strategy.',
-        'INVALID_QUERY',
-      );
-    }
-    // Mirror Firestore's `collectionGroup(name)` semantics over the
-    // materialized-scope SQLite layout: when `collectionName` matches the
-    // table name (the implicit root default), filter to root rows; otherwise
-    // filter to rows whose scope's last segment equals the requested name.
-    const name = collectionName ?? this.collectionPath;
-    const scopeNameFilter = {
-      name,
-      isRoot: name === this.collectionPath,
-    };
-    const stmt = compileSelectGlobal(
-      this.collectionPath,
-      plan.filters,
-      plan.options,
-      scopeNameFilter,
-    );
-    const rows = await this.executor.all(stmt.sql, stmt.params);
-    return rows.map(rowToRecord);
-  }
+  // `findEdgesGlobal` is deliberately NOT defined on this class. Each graph
+  // is its own table, so a "collection group" query would mean scanning every
+  // table listed in the catalog — an unbounded fan-out the cross-backend
+  // contract treats as unsupported (the Cloudflare DO edition makes the same
+  // call: no cross-DO index, no `findEdgesGlobal`). The client surfaces
+  // `UNSUPPORTED_OPERATION` when the method is absent.
 
   // --- Aggregate ---
 
@@ -647,13 +759,8 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
    * convention and the Firestore Standard helper.
    */
   async aggregate(spec: AggregateSpec, filters: QueryFilter[]): Promise<Record<string, number>> {
-    const { stmt, aliases } = compileAggregate(
-      this.collectionPath,
-      this.storageScope,
-      spec,
-      filters,
-    );
-    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const { stmt, aliases } = compileAggregate(this.collectionPath, spec, filters);
+    const rows = await this.withSchema(() => this.executor.all(stmt.sql, stmt.params));
     const row = rows[0] ?? {};
     const out: Record<string, number> = {};
     for (const alias of aliases) {
@@ -694,12 +801,12 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
    * congestion); a permanent failure is surfaced via the `errors` array
    * with `batchIndex: 0` so callers see the same shape as `bulkRemoveEdges`.
    *
-   * Subgraph scoping is enforced inside `compileBulkDelete` (the leading
-   * `"scope" = ?` predicate) so this method, like every other backend
-   * surface, naturally honours subgraph isolation.
+   * Subgraph isolation is physical — the statement only ever touches this
+   * graph's table, so no scoping predicate is needed.
    */
   async bulkDelete(filters: QueryFilter[], options?: BulkOptions): Promise<BulkResult> {
-    const stmt = compileBulkDelete(this.collectionPath, this.storageScope, filters);
+    await this.ensureSchema();
+    const stmt = compileBulkDelete(this.collectionPath, filters);
     return this.executeDmlWithReturning(stmt, options);
   }
 
@@ -718,13 +825,8 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     patch: BulkUpdatePatch,
     options?: BulkOptions,
   ): Promise<BulkResult> {
-    const stmt = compileBulkUpdate(
-      this.collectionPath,
-      this.storageScope,
-      filters,
-      patch.data,
-      Date.now(),
-    );
+    await this.ensureSchema();
+    const stmt = compileBulkUpdate(this.collectionPath, filters, patch.data, Date.now());
     return this.executeDmlWithReturning(stmt, options);
   }
 
@@ -750,8 +852,8 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     if (params.sources.length === 0) {
       return params.hydrate ? { edges: [], targets: [] } : { edges: [] };
     }
-    const stmt = compileExpand(this.collectionPath, this.storageScope, params);
-    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const stmt = compileExpand(this.collectionPath, params);
+    const rows = await this.withSchema(() => this.executor.all(stmt.sql, stmt.params));
     const edges = rows.map(rowToRecord);
     if (!params.hydrate) {
       return { edges };
@@ -765,7 +867,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     if (uniqueTargets.length === 0) {
       return { edges, targets: [] };
     }
-    const hydrateStmt = compileExpandHydrate(this.collectionPath, this.storageScope, uniqueTargets);
+    const hydrateStmt = compileExpandHydrate(this.collectionPath, uniqueTargets);
     const hydrateRows = await this.executor.all(hydrateStmt.sql, hydrateStmt.params);
     const byUid = new Map<string, StoredGraphRecord>();
     for (const row of hydrateRows) {
@@ -801,12 +903,11 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
   ): Promise<Array<Record<string, unknown>>> {
     const { stmt, columns } = compileFindEdgesProjected(
       this.collectionPath,
-      this.storageScope,
       select,
       filters,
       options,
     );
-    const rows = await this.executor.all(stmt.sql, stmt.params);
+    const rows = await this.withSchema(() => this.executor.all(stmt.sql, stmt.params));
     return rows.map((row) => decodeProjectedRow(row, columns));
   }
 
@@ -863,10 +964,11 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
 /**
  * Create a SQLite-backed `StorageBackend`.
  *
- * `tableName` is the single table that holds every triple. The driver must
- * have already created the table and indexes via `buildSchemaStatements()`
- * before any reads/writes arrive — callers that ship their own SQLite
- * driver are responsible for wiring that up.
+ * `tableName` is the root graph's table; subgraphs get their own tables
+ * derived from it (see `tableForScope`). Schema (tables, indexes, and the
+ * graph catalog) is created lazily on first use — no manual DDL step.
+ * Pass `options.registry` so per-entry `indexes` declarations land in
+ * every lazily created table.
  */
 export function createSqliteBackend(
   executor: SqliteExecutor,
@@ -875,5 +977,12 @@ export function createSqliteBackend(
 ): StorageBackend<SqliteCapability> {
   const storageScope = options.storageScope ?? '';
   const scopePath = options.scopePath ?? '';
-  return new SqliteBackendImpl(executor, tableName, storageScope, scopePath);
+  return new SqliteBackendImpl(
+    executor,
+    tableName,
+    storageScope,
+    scopePath,
+    options.registry,
+    options.coreIndexes,
+  );
 }

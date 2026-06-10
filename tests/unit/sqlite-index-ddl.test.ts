@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest';
 
 import { DO_FIELD_TO_COLUMN } from '../../src/cloudflare/schema.js';
 import { buildIndexDDL, dedupeIndexSpecs } from '../../src/internal/sqlite-index-ddl.js';
-import { FIELD_TO_COLUMN } from '../../src/internal/sqlite-schema.js';
 
 describe('buildIndexDDL — top-level fields', () => {
   it('compiles a single firegraph field to its mapped column', () => {
@@ -98,36 +97,21 @@ describe('buildIndexDDL — JSON path inlining', () => {
   });
 });
 
-describe('buildIndexDDL — leadingColumns', () => {
-  it('prepends leading columns ahead of the spec fields (legacy scope prefix)', () => {
+describe('buildIndexDDL — index name stability', () => {
+  it('keeps index names stable across the removal of the legacy scope leading column', () => {
+    // The fingerprint canonical form retains a `lead: []` key so the hash —
+    // and therefore the index name — is identical to what the pre-refactor
+    // DO backend (which never had a leading column) emitted. Existing DO
+    // databases must not see their index names change.
     const ddl = buildIndexDDL(
-      { fields: ['aType', 'data.status'] },
-      {
-        table: 'firegraph',
-        fieldToColumn: FIELD_TO_COLUMN,
-        leadingColumns: ['scope'],
-      },
-    );
-    expect(ddl).toMatch(/\("scope", "a_type", json_extract\("data", '\$\.status'\)\)/);
-  });
-
-  it('fingerprint differs between leadingColumns variants', () => {
-    // Same spec under legacy ('scope' prefix) vs DO (no prefix) → different
-    // hashes → different index names. This is defensive: the two backends
-    // must not alias to the same name if they ever share a table.
-    const legacy = buildIndexDDL(
-      { fields: ['aType', 'axbType'] },
-      { table: 't', fieldToColumn: FIELD_TO_COLUMN, leadingColumns: ['scope'] },
-    );
-    const doBackend = buildIndexDDL(
       { fields: ['aType', 'axbType'] },
       { table: 't', fieldToColumn: DO_FIELD_TO_COLUMN },
     );
-    const legacyName = legacy.match(/"t_idx_([0-9a-f]{8})"/)?.[1];
-    const doName = doBackend.match(/"t_idx_([0-9a-f]{8})"/)?.[1];
-    expect(legacyName).toBeDefined();
-    expect(doName).toBeDefined();
-    expect(legacyName).not.toBe(doName);
+    const name = ddl.match(/"t_idx_([0-9a-f]{8})"/)?.[1];
+    expect(name).toBeDefined();
+    // Index columns carry no scope prefix.
+    expect(ddl).toMatch(/ON "t"\("a_type", "axb_type"\)/);
+    expect(ddl).not.toContain('"scope"');
   });
 });
 
@@ -206,17 +190,6 @@ describe('dedupeIndexSpecs', () => {
       { fields: ['aType'], where: 'x = 2' },
     ]);
     expect(out).toHaveLength(2);
-  });
-
-  it('scopes fingerprinting to the provided leadingColumns', () => {
-    const withoutLead = dedupeIndexSpecs([{ fields: ['aType', 'axbType'] }]);
-    const withLead = dedupeIndexSpecs([{ fields: ['aType', 'axbType'] }], ['scope']);
-    // Both single-spec calls dedupe to one entry, but running them through
-    // the two-call mental model proves leadingColumns alters the bucket —
-    // the scope case would not collide with the non-scope case if both
-    // were emitted.
-    expect(withoutLead).toHaveLength(1);
-    expect(withLead).toHaveLength(1);
   });
 
   it('is stable across calls (returns an array, does not mutate input)', () => {

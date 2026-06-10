@@ -25,18 +25,18 @@ Public entry point: `firegraph/backend`. The full surface is intentionally small
 - `parseStorageScope`, `resolveAncestorScope`, `isAncestorScopeUid`, `appendStorageScope`, `StorageScopeSegment`
 - `CrossBackendTransactionError`
 
-Backend authors implementing `setDoc(docId, record, mode)` and `updateDoc(docId, payload)` must consume these primitives to participate in the 0.12 deep-merge contract: `setDoc` honours `mode` (`'merge'` deep-merges into existing data, `'replace'` wipes and rewrites); `updateDoc` consumes either `{ dataOps: DataPathOp[] }` (the canonical flat op list produced by `flattenPatch()`, with `DELETE_FIELD` sentinels surfacing as `delete: true` ops) or `{ replaceData; v? }` (used by the migration write-back path). All three in-tree backends (Firestore, shared-table SQLite, Cloudflare DO) consume the same op list, so divergence is structurally hard to introduce.
+Backend authors implementing `setDoc(docId, record, mode)` and `updateDoc(docId, payload)` must consume these primitives to participate in the 0.12 deep-merge contract: `setDoc` honours `mode` (`'merge'` deep-merges into existing data, `'replace'` wipes and rewrites); `updateDoc` consumes either `{ dataOps: DataPathOp[] }` (the canonical flat op list produced by `flattenPatch()`, with `DELETE_FIELD` sentinels surfacing as `delete: true` ops) or `{ replaceData; v? }` (used by the migration write-back path). All three in-tree backends (Firestore, SQLite, Cloudflare DO) consume the same op list, so divergence is structurally hard to introduce.
 
 ## Two scope vocabularies
 
 Firegraph has always tracked two shapes of the subgraph chain. `routing.md` locks the vocabulary in so the rest of the codebase (and external docs) use the same names:
 
-| Name           | Shape                                          | Example                  | Consumed by                                 |
-| -------------- | ---------------------------------------------- | ------------------------ | ------------------------------------------- |
-| `scopePath`    | names-only                                     | `'memories/context'`     | `allowedIn` matching (`matchScope`)         |
-| `storageScope` | materialized: interleaved `<uid>/<name>` pairs | `'A/memories/B/context'` | SQLite `scope` column, DO names, shard keys |
+| Name           | Shape                                          | Example                  | Consumed by                                                          |
+| -------------- | ---------------------------------------------- | ------------------------ | -------------------------------------------------------------------- |
+| `scopePath`    | names-only                                     | `'memories/context'`     | `allowedIn` matching (`matchScope`)                                  |
+| `storageScope` | materialized: interleaved `<uid>/<name>` pairs | `'A/memories/B/context'` | SQLite per-graph table names (`tableForScope`), DO names, shard keys |
 
-Both are `/`-delimited strings. `scopePath` is empty at the root; `storageScope` is empty at the root. `subgraphs.md` describes the former. Storage-scope is owned by the SQLite backend (`SqliteBackendImpl`) and is now also the canonical form used by the routing primitive.
+Both are `/`-delimited strings. `scopePath` is empty at the root; `storageScope` is empty at the root. `subgraphs.md` describes the former. Storage-scope determines the physical table a SQLite subgraph lives in (`tableForScope` in `src/sqlite/catalog.ts` — table-per-graph, no scope column) and is also the canonical form used by the routing primitive.
 
 ## Contract summary
 

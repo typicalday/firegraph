@@ -1,10 +1,9 @@
 /**
  * Shared helpers for the `query.select` projection contract.
  *
- * The SQLite-shaped backends (`src/sqlite/sql.ts`,
- * `src/cloudflare/sql.ts`) carry their own `normalizeProjectionField`
- * implementations because they're entangled with `FIELD_TO_COLUMN` /
- * `DO_FIELD_TO_COLUMN`. The Firestore-shaped backends (`firestore-standard`,
+ * The SQLite-shaped backends share a `normalizeProjectionField`
+ * implementation in `src/internal/sqlite-sql.ts` because it's entangled
+ * with `FIELD_TO_COLUMN`. The Firestore-shaped backends (`firestore-standard`,
  * `firestore-enterprise`) plus the `RoutingStorageBackend` pass-through use
  * the helpers below to keep the projection contract consistent across the
  * three runtimes:
