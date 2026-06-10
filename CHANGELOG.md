@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/typicalday/firegraph/compare/v0.16.0...v0.16.1) (2026-06-10)
+
+
+### Bug Fixes
+
+* **sqlite-local:** wrap FTS5 query-parse errors as INVALID_QUERY ([#28](https://github.com/typicalday/firegraph/issues/28)) ([fea2e16](https://github.com/typicalday/firegraph/commit/fea2e16c54ff0cf316e7a23a3f224b52ace04ea5))
+
 ## [0.16.0](https://github.com/typicalday/firegraph/compare/v0.15.0...v0.16.0) (2026-06-10)
 
 
