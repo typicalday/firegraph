@@ -48,6 +48,7 @@ import {
   findOrphanedFtsTables,
   ftsMapTableName,
   ftsTableName,
+  isFts5QueryError,
   setDataPath,
   VECTOR_DISTANCE_UDF,
 } from '../internal/sqlite-search.js';
@@ -321,9 +322,13 @@ function wrapLocalSearchBackend(
         rows = await runWithSchema(() => executor.all(stmt.sql, stmt.params));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // FTS5 reports malformed MATCH expressions at query time; surface
-        // them as INVALID_QUERY rather than a raw driver error.
-        if (message.includes('fts5') || message.includes('unknown special query')) {
+        // FTS5 reports a malformed MATCH expression at query time as a generic
+        // SQLITE_ERROR (e.g. "unterminated string", "fts5: syntax error",
+        // "unknown special query"); surface those as INVALID_QUERY to match the
+        // documented Firestore-parity contract. Genuine storage errors (disk
+        // I/O, corruption, a non-healable missing table) carry different
+        // messages and propagate unchanged.
+        if (isFts5QueryError(message)) {
           throw new FiregraphError(
             `fullTextSearch(): invalid FTS5 query syntax — ${message}`,
             'INVALID_QUERY',

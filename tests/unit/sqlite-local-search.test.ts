@@ -23,6 +23,7 @@ import {
   findOrphanedFtsTables,
   ftsMapTableName,
   ftsTableName,
+  isFts5QueryError,
 } from '../../src/internal/sqlite-search.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import { tableForScope } from '../../src/sqlite/catalog.js';
@@ -359,6 +360,30 @@ describe('fullTextSearch', () => {
     close();
   });
 
+  it('maps FTS5 parse errors the engine raises (not just firegraph validation) to INVALID_QUERY', async () => {
+    const { client, close } = await memoryClient();
+    await client.putNode('tour', generateId(), { name: 'any' });
+    // Each of these is a non-empty string (so it passes firegraph's own
+    // validation) that only the FTS5 MATCH parser rejects — previously these
+    // escaped as raw SqliteError('SQLITE_ERROR').
+    const malformed = [
+      '"unclosed phrase (((', // -> "unterminated string"
+      '"', // -> "unterminated string"
+      'col: bar', // -> "no such column: col"
+      '* leading', // -> "unknown special query: leading"
+    ];
+    for (const query of malformed) {
+      await expect(
+        client.fullTextSearch({ aType: 'tour', axbType: 'is', query, limit: 5 }),
+        query,
+      ).rejects.toMatchObject({
+        code: 'INVALID_QUERY',
+        message: expect.stringContaining('FTS5'),
+      });
+    }
+    close();
+  });
+
   it('supports FTS5 boolean operators and phrase quoting', async () => {
     const { client, close } = await memoryClient();
     const both = generateId();
@@ -660,6 +685,32 @@ describe('computeVectorDistance', () => {
     expect(computeVectorDistance('[1,0]', q1, 'EUCLIDEAN')).toBe(0);
     expect(computeVectorDistance('[1,0]', q2, 'EUCLIDEAN')).toBeCloseTo(Math.SQRT2, 12);
     expect(computeVectorDistance('[1,0]', q1, 'EUCLIDEAN')).toBe(0);
+  });
+});
+
+describe('isFts5QueryError', () => {
+  it('matches the FTS5 MATCH parser complaints (case-insensitively)', () => {
+    for (const msg of [
+      'unterminated string',
+      'fts5: syntax error near "AND"',
+      'unknown special query: leading',
+      'no such column: col',
+      'UNTERMINATED STRING',
+    ]) {
+      expect(isFts5QueryError(msg), msg).toBe(true);
+    }
+  });
+
+  it('does NOT match genuine storage / non-query errors', () => {
+    for (const msg of [
+      'no such table: firegraph_g_abc_sstops',
+      'disk I/O error',
+      'database disk image is malformed',
+      'database is locked',
+      'attempt to write a readonly database',
+    ]) {
+      expect(isFts5QueryError(msg), msg).toBe(false);
+    }
   });
 });
 
