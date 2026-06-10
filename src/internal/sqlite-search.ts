@@ -283,6 +283,49 @@ export function compileFullTextSearch(
   return { sql, params: sqlParams };
 }
 
+/**
+ * Substrings that identify a malformed-FTS5-query failure raised by the
+ * FTS5 MATCH parser at *query* time.
+ *
+ * FTS5 reports a bad MATCH expression as a generic `SQLITE_ERROR` (the same
+ * code used for ordinary SQL logic errors), not as a distinct error code, so
+ * a raw better-sqlite3 `SqliteError` would otherwise escape `fullTextSearch()`
+ * instead of the documented `INVALID_QUERY` (the Firestore-parity contract).
+ * Matching the parser's specific complaints lets us translate query-syntax
+ * failures while leaving genuine storage failures (disk I/O, corruption, lock
+ * contention, a non-healable `no such table`) — which carry different messages
+ * / codes — to propagate unchanged.
+ *
+ * Observed shapes (`code === 'SQLITE_ERROR'` for all):
+ *   - `"unclosed phrase (((` → `"unterminated string"`        (unclosed quote)
+ *   - `AND AND`              → `"fts5: syntax error near ..."` (grammar error)
+ *   - `* leading`            → `"unknown special query: ..."`  (bad directive)
+ *   - `col: bar`             → `"no such column: col"`          (column filter)
+ *
+ * `no such column` is safe to treat as a query error here: every column the
+ * compiled statement references is a fixed, real column, so the only runtime
+ * source of that message is an FTS5 `col:term` filter inside the user's MATCH
+ * expression — it can never originate from a genuine missing column. A
+ * `no such table` miss is distinct ("table", not "column") and is handled
+ * upstream by the self-heal retry, so it never reaches this matcher's scope.
+ */
+const FTS5_QUERY_ERROR_SIGNATURES: readonly string[] = [
+  'fts5: syntax error',
+  'unterminated string',
+  'unknown special query',
+  'no such column',
+];
+
+/**
+ * True when `message` is the FTS5 MATCH parser rejecting a malformed query
+ * string — the failures `fullTextSearch()` must surface as `INVALID_QUERY`
+ * rather than as a raw driver error. See `FTS5_QUERY_ERROR_SIGNATURES`.
+ */
+export function isFts5QueryError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return FTS5_QUERY_ERROR_SIGNATURES.some((sig) => lower.includes(sig));
+}
+
 const DISTANCE_MEASURES: ReadonlySet<string> = new Set(['EUCLIDEAN', 'COSINE', 'DOT_PRODUCT']);
 
 export interface CompiledVectorQuery {
