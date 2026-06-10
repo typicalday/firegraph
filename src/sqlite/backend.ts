@@ -526,11 +526,6 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     options?: BulkOptions,
   ): Promise<CascadeResult> {
     await this.ensureSchema();
-    // Check the node self-loop exists up front so `nodeDeleted` reports the
-    // truth for nonexistent nodes (parity with the DO edition).
-    const nodeStmt = compileSelectByDocId(this.collectionPath, computeNodeDocId(uid));
-    const nodeRows = await this.executor.all(nodeStmt.sql, nodeStmt.params);
-    const nodeExists = nodeRows.length > 0;
     // Collect all edges touching the node in the current graph (excluding self-loop).
     const [outgoingRaw, incomingRaw] = await Promise.all([
       reader.findEdges({ aUid: uid, allowCollectionScan: true, limit: 0 }),
@@ -606,7 +601,11 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     // any batch fails. The caller can retry — cascade is idempotent.
     const allOk = errors.length === 0;
     const edgesDeleted = allOk ? edgeDocIds.length : 0;
-    const nodeDeleted = allOk && nodeExists;
+    // `nodeDeleted: true` means "the node doc is gone" — deletes are
+    // idempotent, so a nonexistent node still reports true. This matches the
+    // Firestore edition and the cross-backend contract pinned by
+    // tests/integration/bulk.test.ts ("handles nonexistent node gracefully").
+    const nodeDeleted = allOk;
 
     // `stmtDeleted` counts committed *statements*. Replace the per-descendant
     // bookkeeping statements' contribution (DROP + catalog delete = 2 each)

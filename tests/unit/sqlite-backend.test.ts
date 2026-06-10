@@ -956,10 +956,13 @@ describe('SqliteBackend cascade & bulk', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('removeNodeCascade on a nonexistent node reports nodeDeleted: false', async () => {
+  it('removeNodeCascade on a nonexistent node reports nodeDeleted: true (idempotent delete)', async () => {
+    // Cross-backend contract (see tests/integration/bulk.test.ts): deletes
+    // are idempotent, so `nodeDeleted: true` means "the node doc is gone",
+    // not "a row was removed".
     const client = createGraphClientFromBackend(backend) as GraphClient;
     const result = await client.removeNodeCascade(generateId());
-    expect(result.nodeDeleted).toBe(false);
+    expect(result.nodeDeleted).toBe(true);
     expect(result.edgesDeleted).toBe(0);
     expect(result.errors).toHaveLength(0);
   });
