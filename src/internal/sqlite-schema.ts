@@ -2,24 +2,20 @@
  * SQLite schema for firegraph triples.
  *
  * Single-table design — both nodes (self-loops with `axbType = 'is'`) and
- * edges share one row. The `scope` column carries the materialized subgraph
- * path (parent UIDs interleaved with subgraph names), which preserves
- * Firestore's nested-subcollection semantics in a flat table.
+ * edges share one row shape. Each table holds exactly one graph's triples:
+ * subgraph isolation is physical (one table per graph, or one Durable
+ * Object per graph on Cloudflare), so there is no `scope` discriminator
+ * column. The table a row lives in *is* its scope.
  *
  * `data` is a JSON string. Built-in fields are projected to typed columns so
  * the query planner can use indexes without going through `json_extract`.
  *
  * ## Indexes
  *
- * Every index is prefixed with the `scope` column so the query compiler
- * (which always emits a `scope = ?` predicate) can use the index prefix
- * directly. This is the single difference from the DO SQLite backend, where
- * each DO is physically scoped and no discriminator column exists.
- *
  * Index specs come from the core preset (overridable via
- * `buildSchemaStatementsOptions.coreIndexes`) plus per-entry `indexes`
- * declared on registry entries. Specs are deduplicated by canonical
- * fingerprint before emission.
+ * `BuildSchemaOptions.coreIndexes`) plus per-entry `indexes` declared on
+ * registry entries. Specs are deduplicated by canonical fingerprint before
+ * emission.
  */
 
 import { DEFAULT_CORE_INDEXES } from '../default-indexes.js';
@@ -28,7 +24,6 @@ import { buildIndexDDL, dedupeIndexSpecs } from './sqlite-index-ddl.js';
 
 export const SQLITE_COLUMNS = [
   'doc_id',
-  'scope',
   'a_type',
   'a_uid',
   'axb_type',
@@ -73,16 +68,19 @@ export interface BuildSchemaOptions {
 }
 
 /**
- * Build the DDL statements that create the firegraph table and its indexes.
- * Returned as separate statements because some drivers (D1) require one
- * statement per `prepare()` call.
+ * Build the DDL statements that create one graph's triple table and its
+ * indexes. Returned as separate statements because some drivers (D1, DO
+ * SQLite's `exec()`) require one statement per call.
+ *
+ * The CREATE TABLE statement is always first; index statements follow in
+ * deterministic order. Same specs across runs produce the same statements,
+ * so `CREATE … IF NOT EXISTS` is idempotent.
  */
 export function buildSchemaStatements(table: string, options: BuildSchemaOptions = {}): string[] {
   const t = quoteIdent(table);
   const statements: string[] = [
     `CREATE TABLE IF NOT EXISTS ${t} (
-      doc_id      TEXT NOT NULL,
-      scope       TEXT NOT NULL DEFAULT '',
+      doc_id      TEXT NOT NULL PRIMARY KEY,
       a_type      TEXT NOT NULL,
       a_uid       TEXT NOT NULL,
       axb_type    TEXT NOT NULL,
@@ -91,21 +89,16 @@ export function buildSchemaStatements(table: string, options: BuildSchemaOptions
       data        TEXT NOT NULL,
       v           INTEGER,
       created_at  INTEGER NOT NULL,
-      updated_at  INTEGER NOT NULL,
-      PRIMARY KEY (scope, doc_id)
+      updated_at  INTEGER NOT NULL
     )`,
-    // `doc_id`-only index for edge-doc lookup across scopes (the primary key
-    // leads with `scope`, so a scope-less lookup wouldn't otherwise hit it).
-    `CREATE INDEX IF NOT EXISTS ${quoteIdent(`${table}_idx_doc_id`)} ON ${t}(doc_id)`,
   ];
 
   const core = options.coreIndexes ?? [...DEFAULT_CORE_INDEXES];
   const fromRegistry = options.registry?.entries().flatMap((e) => e.indexes ?? []) ?? [];
 
-  const leadingColumns = ['scope'];
-  const deduped = dedupeIndexSpecs([...core, ...fromRegistry], leadingColumns);
+  const deduped = dedupeIndexSpecs([...core, ...fromRegistry]);
   for (const spec of deduped) {
-    statements.push(buildIndexDDL(spec, { table, fieldToColumn: FIELD_TO_COLUMN, leadingColumns }));
+    statements.push(buildIndexDDL(spec, { table, fieldToColumn: FIELD_TO_COLUMN }));
   }
   return statements;
 }
@@ -147,10 +140,9 @@ export function validateTableName(name: string): void {
  * the input contained `";--`, double-quote escaping would render it
  * `""";--` inside `"..."`, harmless.
  *
- * Used by `compileFindEdgesProjected` (and the DO mirror) for the
- * caller-supplied projection field name; the underlying SQL expression
- * (`json_extract(...)`, column reference) still goes through the strict
- * compiler with no caller input.
+ * Used by `compileFindEdgesProjected` for the caller-supplied projection
+ * field name; the underlying SQL expression (`json_extract(...)`, column
+ * reference) still goes through the strict compiler with no caller input.
  */
 export function quoteColumnAlias(label: string): string {
   return `"${label.replace(/"/g, '""')}"`;

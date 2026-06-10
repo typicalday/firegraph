@@ -4,7 +4,13 @@
  * The tests wrap better-sqlite3 in a `SqliteExecutor` that mirrors the DO
  * SQLite driver — sync calls bridged through resolved promises, batches via
  * a transaction. This exercises the same code paths the production drivers
- * (D1, DO SQLite) take, just over an in-memory file.
+ * (D1, better-sqlite3) take, just over an in-memory file.
+ *
+ * Table-per-graph design notes for these tests:
+ *   - Schema is created lazily on first use; no manual DDL in setup.
+ *   - Each subgraph lives in its own physical table (`<root>_g_<mangled>`),
+ *     registered in the `<root>_graphs` catalog. There is no scope column.
+ *   - `findEdgesGlobal` is intentionally absent (no cross-table index).
  */
 
 import type { Database as BetterSqliteDb } from 'better-sqlite3';
@@ -15,9 +21,9 @@ import { createGraphClientFromBackend } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
 import type { StorageBackend } from '../../src/internal/backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../../src/internal/sqlite-executor.js';
-import { buildSchemaStatements } from '../../src/internal/sqlite-schema.js';
 import { flattenPatch } from '../../src/internal/write-plan.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
+import { catalogTableName, tableForScope } from '../../src/sqlite/catalog.js';
 import type { GraphClient } from '../../src/types.js';
 const TABLE = 'firegraph_test';
 
@@ -61,11 +67,21 @@ function makeExecutor(db: BetterSqliteDb): SqliteExecutor {
   };
 }
 
+/**
+ * True when a batch is the lazy schema bootstrap (DDL + catalog register)
+ * rather than a data write. The fault-injecting executor wrappers below use
+ * this to let `ensureSchema` through while making data batches fail —
+ * mirroring real drivers where DDL succeeds but data traffic hits transient
+ * errors.
+ */
+function isSchemaBatch(statements: ReadonlyArray<{ sql: string }>): boolean {
+  return statements.length > 0 && statements[0].sql.startsWith('CREATE');
+}
+
 function setupBackend(): { db: BetterSqliteDb; backend: StorageBackend } {
   const db = new Database(':memory:');
-  for (const sql of buildSchemaStatements(TABLE)) {
-    db.exec(sql);
-  }
+  // No manual DDL — schema (table + indexes + catalog) is created lazily by
+  // the backend on first use.
   const backend = createSqliteBackend(makeExecutor(db), TABLE);
   return { db, backend };
 }
@@ -82,7 +98,7 @@ describe('SqliteBackend (raw)', () => {
     db.close();
   });
 
-  it('creates and reads back a node', async () => {
+  it('creates and reads back a node (schema bootstraps lazily)', async () => {
     const uid = generateId();
     await backend.setDoc(
       uid,
@@ -104,6 +120,19 @@ describe('SqliteBackend (raw)', () => {
     expect(record!.data.stops).toBe(5);
     expect(record!.createdAt.toMillis()).toBeGreaterThan(0);
     expect(record!.updatedAt.toMillis()).toBeGreaterThan(0);
+
+    // The lazy bootstrap created the graph table and registered it in the
+    // catalog.
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+      .all() as Array<{ name: string }>;
+    const names = tables.map((t) => t.name);
+    expect(names).toContain(TABLE);
+    expect(names).toContain(catalogTableName(TABLE));
+    const catalogRows = db.prepare(`SELECT * FROM ${catalogTableName(TABLE)}`).all() as Array<
+      Record<string, unknown>
+    >;
+    expect(catalogRows).toEqual([{ storage_scope: '', table_name: TABLE, scope_path: '' }]);
   });
 
   it('updates a node via shallow data field merge', async () => {
@@ -472,7 +501,7 @@ describe('SqliteBackend (raw)', () => {
     // The backend's getDoc path uses default integer mode (numbers), but
     // exercising rowToRecord directly with bigint inputs ensures D1's bigint
     // returns are handled.
-    const { rowToRecord } = await import('../../src/sqlite/sql.js');
+    const { rowToRecord } = await import('../../src/internal/sqlite-sql.js');
     const record = rowToRecord(row);
     expect(record.createdAt.toMillis()).toBeGreaterThan(0);
     expect(record.updatedAt.toMillis()).toBeGreaterThan(0);
@@ -565,24 +594,16 @@ describe('SqliteBackend (raw)', () => {
     ).rejects.toThrow(/non-empty array/);
   });
 
-  it('refuses an unfiltered findEdgesGlobal (SELECT-all guard)', async () => {
-    // compileSelectGlobal explicitly rejects empty filters so a stray
-    // findEdgesGlobal({}) doesn't silently scan the entire table.
-    await expect(backend.findEdgesGlobal!({} as never)).rejects.toThrow(/at least one filter/);
-  });
-
-  it('findEdgesGlobal rejects all-3-identifier params (get-strategy guard)', async () => {
-    // findEdgesGlobal must always be a query — if all three identifying fields
-    // are present, the planner picks the get strategy and there is no global
-    // doc lookup. Surface that as INVALID_QUERY rather than silently routing
-    // through the local `getDoc` path.
-    await expect(
-      backend.findEdgesGlobal!({
-        aUid: 'someUid',
-        axbType: 'hasDeparture',
-        bUid: 'otherUid',
-      }),
-    ).rejects.toMatchObject({ code: 'INVALID_QUERY' });
+  it('does not define findEdgesGlobal (table-per-graph has no cross-table index)', async () => {
+    // Each graph is its own table, so a "collection group" query would mean
+    // scanning every table in the catalog — the same unbounded fan-out the
+    // DO edition refuses. The client surfaces UNSUPPORTED_OPERATION when the
+    // method is absent.
+    expect(backend.findEdgesGlobal).toBeUndefined();
+    const client = createGraphClientFromBackend(backend) as GraphClient;
+    await expect(client.findEdgesGlobal({ aType: 'tour' })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_OPERATION',
+    });
   });
 });
 
@@ -598,7 +619,7 @@ describe('SqliteBackend subgraphs', () => {
     db.close();
   });
 
-  it('isolates rows between scopes', async () => {
+  it('isolates rows between graphs via separate physical tables', async () => {
     const parentUid = generateId();
     const sub = backend.subgraph(parentUid, 'memories');
 
@@ -637,6 +658,17 @@ describe('SqliteBackend subgraphs', () => {
     expect(rootHits[0].data.where).toBe('root');
     expect(subHits).toHaveLength(1);
     expect(subHits[0].data.where).toBe('sub');
+
+    // The subgraph's rows physically live in their own table, derived from
+    // the root table name, and the catalog records the mapping.
+    const subTable = tableForScope(TABLE, `${parentUid}/memories`);
+    expect(subTable).not.toBe(TABLE);
+    const subRows = db.prepare(`SELECT * FROM "${subTable}"`).all();
+    expect(subRows).toHaveLength(1);
+    const catalogRow = db
+      .prepare(`SELECT * FROM ${catalogTableName(TABLE)} WHERE storage_scope = ?`)
+      .get(`${parentUid}/memories`) as Record<string, unknown>;
+    expect(catalogRow).toMatchObject({ table_name: subTable, scope_path: 'memories' });
   });
 
   it('builds nested storage scopes and validation scope chain', async () => {
@@ -710,11 +742,49 @@ describe('SqliteBackend subgraphs', () => {
     expect(await sibling.getDoc(leafUid)).toBeNull();
   });
 
-  it('escapes %/_ in subgraph names so cascade prefix-delete cannot leak across siblings', async () => {
-    // The materialized-path scope is encoded directly into a SQL LIKE pattern
-    // for cascade prefix-delete. If `%` or `_` aren't escaped, a sibling
-    // subgraph with a similar name would also be wiped. `escapeLike` in
-    // sqlite-sql.ts protects against that — pin the behavior here.
+  it('same subgraph name under different parents maps to distinct tables', async () => {
+    // Two parents each with a `memories` subgraph: the storage scopes (and
+    // therefore the physical tables) must differ, and the catalog tracks both
+    // under the same logical scope path.
+    const parentA = generateId();
+    const parentB = generateId();
+    const memA = backend.subgraph(parentA, 'memories');
+    const memB = backend.subgraph(parentB, 'memories');
+
+    const uidA = generateId();
+    const uidB = generateId();
+    await memA.setDoc(
+      uidA,
+      { aType: 'note', aUid: uidA, axbType: 'is', bType: 'note', bUid: uidA, data: { from: 'a' } },
+      'replace',
+    );
+    await memB.setDoc(
+      uidB,
+      { aType: 'note', aUid: uidB, axbType: 'is', bType: 'note', bUid: uidB, data: { from: 'b' } },
+      'replace',
+    );
+
+    const tableA = tableForScope(TABLE, `${parentA}/memories`);
+    const tableB = tableForScope(TABLE, `${parentB}/memories`);
+    expect(tableA).not.toBe(tableB);
+
+    const catalogRows = db
+      .prepare(`SELECT * FROM ${catalogTableName(TABLE)} WHERE scope_path = 'memories'`)
+      .all() as Array<Record<string, unknown>>;
+    expect(catalogRows).toHaveLength(2);
+    expect(new Set(catalogRows.map((r) => r.table_name))).toEqual(new Set([tableA, tableB]));
+
+    // Each subgraph only sees its own rows.
+    expect(await memA.getDoc(uidB)).toBeNull();
+    expect(await memB.getDoc(uidA)).toBeNull();
+  });
+
+  it('escapes %/_ in subgraph names so cascade catalog matching cannot leak across siblings', async () => {
+    // Cascade delete discovers descendant graphs by prefix-matching storage
+    // scopes in the catalog with SQL LIKE. If `%` or `_` in a subgraph name
+    // weren't escaped (`escapeLikePrefix` in src/sqlite/catalog.ts +
+    // `ESCAPE '\'`), a sibling subgraph with a similar name would also have
+    // its table dropped. Pin the behavior here.
     const client = createGraphClientFromBackend(backend) as GraphClient;
     const parent = generateId();
     await client.putNode('tour', parent, {});
@@ -737,8 +807,8 @@ describe('SqliteBackend subgraphs', () => {
     await literalUnderscoreSub.putNode('note', inLiteralUnderscore, { where: 'literalUnderscore' });
 
     // Cascade-delete a node *inside* `foo%bar`. The cascade prefix becomes
-    // `parent/foo%bar/<uid>` — escapeLike must turn the `%` into `\%` so the
-    // sibling `parent/fooXbar/...` rows survive.
+    // `parent/foo%bar/<uid>` — escapeLikePrefix must turn the `%` into `\%`
+    // so the sibling `parent/fooXbar/...` tables survive.
     const deepUid = generateId();
     await wildcardSub.putNode('section', deepUid, {});
     const annotations = wildcardSub.subgraph(deepUid, 'annotations');
@@ -754,59 +824,17 @@ describe('SqliteBackend subgraphs', () => {
     const result = await wildcardSub.removeNodeCascade(deepUid);
     expect(result.errors).toHaveLength(0);
 
-    // Wildcard-side leaf is gone …
-    expect(await annotations.getNode(deepLeaf)).toBeNull();
+    // Wildcard-side leaf is gone. The cascade DROPped the annotations table;
+    // a fresh subgraph reference lazily recreates an empty one, so the read
+    // resolves to null rather than erroring on a missing table.
+    const freshAnnotations = wildcardSub.subgraph(deepUid, 'annotations');
+    expect(await freshAnnotations.getNode(deepLeaf)).toBeNull();
     // … but the sibling literal-side leaf is still there.
     expect(await literalDeep.getNode(literalLeaf)).not.toBeNull();
     // The other sibling subgraphs (note rows, root) are completely untouched.
     expect(await literalSub.getNode(inLiteral)).not.toBeNull();
     expect(await underscoreSub.getNode(inUnderscore)).not.toBeNull();
     expect(await literalUnderscoreSub.getNode(inLiteralUnderscore)).not.toBeNull();
-  });
-
-  it('same subgraph name under different parents is queryable across parents via findEdgesGlobal', async () => {
-    // Mirrors Firestore's `db.collectionGroup(name)` semantics: when two
-    // different parent nodes each have a `memories` subgraph, a global query
-    // on collectionName='memories' must surface rows from both.
-    const parentA = generateId();
-    const parentB = generateId();
-    const memA = backend.subgraph(parentA, 'memories');
-    const memB = backend.subgraph(parentB, 'memories');
-
-    const edgeAfrom = generateId();
-    const edgeAto = generateId();
-    const edgeBfrom = generateId();
-    const edgeBto = generateId();
-
-    await memA.setDoc(
-      'edge-a',
-      {
-        aType: 'note',
-        aUid: edgeAfrom,
-        axbType: 'mentions',
-        bType: 'tag',
-        bUid: edgeAto,
-        data: { from: 'a' },
-      },
-      'replace',
-    );
-    await memB.setDoc(
-      'edge-b',
-      {
-        aType: 'note',
-        aUid: edgeBfrom,
-        axbType: 'mentions',
-        bType: 'tag',
-        bUid: edgeBto,
-        data: { from: 'b' },
-      },
-      'replace',
-    );
-
-    const acrossParents = await backend.findEdgesGlobal!({ axbType: 'mentions' }, 'memories');
-    expect(acrossParents).toHaveLength(2);
-    const sources = acrossParents.map((r) => r.data.from).sort();
-    expect(sources).toEqual(['a', 'b']);
   });
 });
 
@@ -822,7 +850,7 @@ describe('SqliteBackend cascade & bulk', () => {
     db.close();
   });
 
-  it('removeNodeCascade deletes node, edges, and nested subgraph rows', async () => {
+  it('removeNodeCascade deletes node, edges, and drops descendant subgraph tables', async () => {
     const client = createGraphClientFromBackend(backend) as GraphClient;
     const tour = generateId();
     const dep1 = generateId();
@@ -838,6 +866,7 @@ describe('SqliteBackend cascade & bulk', () => {
     // Subgraph attached to tour
     const memories = client.subgraph(tour, 'memories');
     await memories.putNode('note', note, { text: 'hello' });
+    const memoriesTable = tableForScope(TABLE, `${tour}/memories`);
 
     const result = await client.removeNodeCascade(tour);
     expect(result.nodeDeleted).toBe(true);
@@ -845,9 +874,45 @@ describe('SqliteBackend cascade & bulk', () => {
     expect(result.errors).toHaveLength(0);
 
     expect(await client.getNode(tour)).toBeNull();
-    expect(await memories.getNode(note)).toBeNull();
     // Departures themselves are not deleted — only edges touching the tour.
     expect(await client.getNode(dep1)).not.toBeNull();
+
+    // The subgraph's table was dropped and its catalog row removed.
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .all(memoriesTable);
+    expect(tables).toHaveLength(0);
+    const catalogRows = db
+      .prepare(`SELECT * FROM ${catalogTableName(TABLE)} WHERE storage_scope = ?`)
+      .all(`${tour}/memories`);
+    expect(catalogRows).toHaveLength(0);
+
+    // A fresh subgraph reference lazily recreates an empty graph.
+    const freshMemories = client.subgraph(tour, 'memories');
+    expect(await freshMemories.getNode(note)).toBeNull();
+  });
+
+  it('self-heals a stale subgraph handle after its table was cascaded away', async () => {
+    // A backend instance caches its schema bootstrap, so a handle created
+    // *before* the cascade points at a dropped table. `withSchema` detects
+    // the "no such table: <own table>" error, re-runs the bootstrap (which
+    // recreates an empty graph), and retries once — matching Firestore,
+    // where a deleted subcollection reads as empty and writes recreate it.
+    const client = createGraphClientFromBackend(backend) as GraphClient;
+    const tour = generateId();
+    await client.putNode('tour', tour, {});
+    const memories = client.subgraph(tour, 'memories');
+    const note = generateId();
+    await memories.putNode('note', note, { text: 'x' });
+
+    await client.removeNodeCascade(tour);
+
+    // Read through the stale handle: empty graph, not an error.
+    expect(await memories.getNode(note)).toBeNull();
+    // Write through the stale handle: recreates the graph.
+    const fresh = generateId();
+    await memories.putNode('note', fresh, { text: 'recreated' });
+    expect(await memories.getNode(fresh)).not.toBeNull();
   });
 
   it('removeNodeCascade reports row count covering subgraph rows', async () => {
@@ -863,14 +928,16 @@ describe('SqliteBackend cascade & bulk', () => {
     await client.putEdge('tour', tour, 'hasDeparture', 'departure', dep1, {});
     await client.putEdge('tour', tour, 'hasDeparture', 'departure', dep2, {});
 
-    // 3 rows in a nested subgraph (1 node + 2 more nodes → 3 total node rows).
+    // 3 rows in a nested subgraph (3 node rows in the memories table).
     const memories = client.subgraph(tour, 'memories');
     await memories.putNode('note', generateId(), { text: 'a' });
     await memories.putNode('note', generateId(), { text: 'b' });
     await memories.putNode('note', generateId(), { text: 'c' });
 
     const result = await client.removeNodeCascade(tour);
-    // 2 direct-edge deletes + 1 node delete + 3 subgraph rows = 6
+    // 2 direct-edge deletes + 1 node delete + 3 subgraph rows = 6. The DROP
+    // TABLE + catalog-delete bookkeeping statements are excluded from the
+    // total; the dropped table's pre-counted rows are credited instead.
     expect(result.deleted).toBe(6);
     expect(result.errors).toHaveLength(0);
   });
@@ -884,12 +951,23 @@ describe('SqliteBackend cascade & bulk', () => {
     await client.putEdge('tour', tour, 'hasDeparture', 'departure', dep1, {});
 
     const result = await client.removeNodeCascade(tour);
-    // 1 edge + 1 node, 0 subgraph rows (prefix-delete ran but matched nothing).
+    // 1 edge + 1 node, 0 subgraph tables (catalog lookup matched nothing).
     expect(result.deleted).toBe(2);
     expect(result.errors).toHaveLength(0);
   });
 
-  it('removeNodeCascade with deleteSubcollections=false skips subgraph rows', async () => {
+  it('removeNodeCascade on a nonexistent node reports nodeDeleted: true (idempotent delete)', async () => {
+    // Cross-backend contract (see tests/integration/bulk.test.ts): deletes
+    // are idempotent, so `nodeDeleted: true` means "the node doc is gone",
+    // not "a row was removed".
+    const client = createGraphClientFromBackend(backend) as GraphClient;
+    const result = await client.removeNodeCascade(generateId());
+    expect(result.nodeDeleted).toBe(true);
+    expect(result.edgesDeleted).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('removeNodeCascade with deleteSubcollections=false skips subgraph tables', async () => {
     const client = createGraphClientFromBackend(backend) as GraphClient;
     const tour = generateId();
     await client.putNode('tour', tour, {});
@@ -900,14 +978,11 @@ describe('SqliteBackend cascade & bulk', () => {
     // Just the node row, no subgraph accounting.
     expect(result.deleted).toBe(1);
     expect(result.errors).toHaveLength(0);
-    // The subgraph row is intentionally left behind.
-    const survivors = await backend.query([{ field: 'aType', op: '==', value: 'note' }], undefined);
-    // subgraph query uses a different scope — use findEdgesGlobal-ish check via memories itself
-    // (the caller supplied deleteSubcollections:false, so memories rows must remain).
-    // Use memories reader to confirm:
+    // The subgraph table is intentionally left behind, rows intact.
     const memoryHits = await memories.findNodes({ aType: 'note' });
     expect(memoryHits.length).toBe(1);
-    // Root query shouldn't return subgraph rows.
+    // Root query shouldn't return subgraph rows (they're in another table).
+    const survivors = await backend.query([{ field: 'aType', op: '==', value: 'note' }], undefined);
     expect(survivors).toHaveLength(0);
   });
 
@@ -1064,7 +1139,9 @@ describe('SqliteBackend transactions & batches', () => {
     expect(recovered!.data.name).toBe('before');
   });
 
-  it('batch.commit writes atomically', async () => {
+  it('batch.commit writes atomically (and bootstraps schema first)', async () => {
+    // The batch path must also work on a virgin database — `commit()` runs
+    // the lazy schema bootstrap before submitting the data batch.
     const ids = [generateId(), generateId(), generateId()];
     const batch = backend.createBatch();
     for (const uid of ids) {
@@ -1086,100 +1163,6 @@ describe('SqliteBackend transactions & batches', () => {
     for (const uid of ids) {
       expect(await backend.getDoc(uid)).not.toBeNull();
     }
-  });
-});
-
-describe('SqliteBackend findEdgesGlobal', () => {
-  let db: BetterSqliteDb;
-  let backend: StorageBackend;
-
-  beforeEach(() => {
-    ({ db, backend } = setupBackend());
-  });
-
-  afterEach(() => {
-    db.close();
-  });
-
-  it('defaults to the table-name (root) scope when collectionName is omitted', async () => {
-    const parent = generateId();
-    const sub = backend.subgraph(parent, 'memories');
-
-    const rootA = generateId();
-    const rootB = generateId();
-    const subA = generateId();
-    const subB = generateId();
-
-    await backend.setDoc(
-      'root-edge',
-      {
-        aType: 'tour',
-        aUid: rootA,
-        axbType: 'hasDeparture',
-        bType: 'departure',
-        bUid: rootB,
-        data: {},
-      },
-      'replace',
-    );
-    await sub.setDoc(
-      'sub-edge',
-      {
-        aType: 'tour',
-        aUid: subA,
-        axbType: 'hasDeparture',
-        bType: 'departure',
-        bUid: subB,
-        data: {},
-      },
-      'replace',
-    );
-
-    // No collectionName → match root rows only (parity with Firestore's
-    // implicit `collectionGroup(parentCollectionName)` default).
-    const rootOnly = await backend.findEdgesGlobal!({ axbType: 'hasDeparture' });
-    expect(rootOnly).toHaveLength(1);
-    expect(rootOnly[0].aUid).toBe(rootA);
-  });
-
-  it('filters by subgraph name when collectionName is supplied', async () => {
-    const parent = generateId();
-    const sub = backend.subgraph(parent, 'memories');
-    const otherSub = backend.subgraph(parent, 'context');
-
-    const subA = generateId();
-    const subB = generateId();
-    const otherA = generateId();
-    const otherB = generateId();
-
-    await sub.setDoc(
-      'mem-edge',
-      {
-        aType: 'tour',
-        aUid: subA,
-        axbType: 'hasDeparture',
-        bType: 'departure',
-        bUid: subB,
-        data: {},
-      },
-      'replace',
-    );
-    await otherSub.setDoc(
-      'ctx-edge',
-      {
-        aType: 'tour',
-        aUid: otherA,
-        axbType: 'hasDeparture',
-        bType: 'departure',
-        bUid: otherB,
-        data: {},
-      },
-      'replace',
-    );
-
-    const memories = await backend.findEdgesGlobal!({ axbType: 'hasDeparture' }, 'memories');
-    expect(memories).toHaveLength(1);
-    expect(memories[0].aUid).toBe(subA);
   });
 });
 
@@ -1250,9 +1233,6 @@ describe('SqliteBackend updateDoc exotic-key escaping', () => {
 describe('SqliteBackend without transaction support (D1-shaped executor)', () => {
   it('runTransaction throws UNSUPPORTED_OPERATION when executor lacks transaction()', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
 
     // D1-shaped executor: no `transaction` method.
     const executor: SqliteExecutor = {
@@ -1279,17 +1259,23 @@ describe('SqliteBackend without transaction support (D1-shaped executor)', () =>
 });
 
 describe('SqliteBackend identifier validation (factory-time)', () => {
-  it('quoteIdent (used in DDL) rejects invalid table names', () => {
-    expect(() => buildSchemaStatements('1bad')).toThrow(/Invalid SQL identifier/);
-    expect(() => buildSchemaStatements('a-b')).toThrow(/Invalid SQL identifier/);
-    expect(() => buildSchemaStatements('a b')).toThrow(/Invalid SQL identifier/);
-    expect(() => buildSchemaStatements('a"b')).toThrow(/Invalid SQL identifier/);
+  it('rejects invalid root table names at construction', () => {
+    const db = new Database(':memory:');
+    const executor = makeExecutor(db);
+    expect(() => createSqliteBackend(executor, '1bad')).toThrow(/Invalid SQL identifier/);
+    expect(() => createSqliteBackend(executor, 'a-b')).toThrow(/Invalid SQL identifier/);
+    expect(() => createSqliteBackend(executor, 'a b')).toThrow(/Invalid SQL identifier/);
+    expect(() => createSqliteBackend(executor, 'a"b')).toThrow(/Invalid SQL identifier/);
+    db.close();
   });
 
   it('accepts valid identifiers', () => {
-    expect(() => buildSchemaStatements('firegraph')).not.toThrow();
-    expect(() => buildSchemaStatements('_my_table_2')).not.toThrow();
-    expect(() => buildSchemaStatements('FireGraph')).not.toThrow();
+    const db = new Database(':memory:');
+    const executor = makeExecutor(db);
+    expect(() => createSqliteBackend(executor, 'firegraph')).not.toThrow();
+    expect(() => createSqliteBackend(executor, '_my_table_2')).not.toThrow();
+    expect(() => createSqliteBackend(executor, 'FireGraph')).not.toThrow();
+    db.close();
   });
 });
 
@@ -1298,7 +1284,8 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
    * Wraps an executor so `batch()` rejects calls that exceed the declared
    * `maxBatchSize`. Mirrors how Cloudflare D1 rejects oversized batches;
    * this way the chunking logic is tested against the exact failure mode
-   * that would hit in production.
+   * that would hit in production. Note this cap applies to the lazy schema
+   * bootstrap too — `doEnsureSchema` must chunk its DDL by the same caps.
    */
   function makeCapped(db: BetterSqliteDb, cap: number): SqliteExecutor {
     const inner = makeExecutor(db);
@@ -1319,9 +1306,6 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
 
   it('bulkRemoveEdges chunks by executor.maxBatchSize', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     const backend = createSqliteBackend(makeCapped(db, 3), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
 
@@ -1350,17 +1334,31 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
     db.close();
   });
 
+  it('schema bootstrap itself chunks by executor.maxBatchSize', async () => {
+    // The lazy DDL batch (CREATE TABLE + indexes + catalog) is larger than
+    // a tight statement cap — `doEnsureSchema` must split it rather than
+    // submit one oversized batch the driver would reject. The first write
+    // succeeding at all proves the chunked bootstrap worked.
+    const db = new Database(':memory:');
+    const backend = createSqliteBackend(makeCapped(db, 2), TABLE);
+    const uid = generateId();
+    await backend.setDoc(
+      uid,
+      { aType: 'tour', aUid: uid, axbType: 'is', bType: 'tour', bUid: uid, data: {} },
+      'replace',
+    );
+    expect(await backend.getDoc(uid)).not.toBeNull();
+    db.close();
+  });
+
   it('removeNodeCascade chunks and still deletes everything when cap is tight', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     const backend = createSqliteBackend(makeCapped(db, 5), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
 
     const hub = generateId();
     await client.putNode('tour', hub, {});
-    // 12 outgoing edges → total 14 statements (12 edges + node + prefix).
+    // 12 outgoing edges → total 13 statements (12 edges + node).
     // With cap=5 that's 3 chunks. Without chunking this would reject on the
     // single oversize batch.
     for (let i = 0; i < 12; i++) {
@@ -1414,13 +1412,11 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
 
   it('chunks by maxBatchParams when statement count is well under maxBatchSize', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
-    // Statement cap is generous (50) but param cap is tight (5). Each
-    // compileDelete emits 2 params, so each batch can hold 2 deletes (4
-    // params) before it would exceed 5. 7 deletes → ceil(7/2) = 4 chunks.
-    const backend = createSqliteBackend(makeParamCapped(db, 50, 5), TABLE);
+    // Statement cap is generous (50) but param cap is tight (3). Each
+    // compileDelete binds 1 param (doc_id — no scope column anymore), so each
+    // batch can hold 3 deletes before exceeding the cap. 7 deletes →
+    // ceil(7/3) = 3 chunks.
+    const backend = createSqliteBackend(makeParamCapped(db, 50, 3), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
     const src = generateId();
     for (let i = 0; i < 7; i++) {
@@ -1432,17 +1428,14 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
     );
     expect(result.errors).toEqual([]);
     expect(result.deleted).toBe(7);
-    expect(result.batches).toBe(4);
+    expect(result.batches).toBe(3);
     db.close();
   });
 
   it('respects whichever cap (statement count vs param count) triggers first', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     // Statement cap (3) is tighter than what param cap (10) would allow with
-    // 2-param deletes (5 deletes = 10 params). Statement cap wins → 3 deletes
+    // 1-param deletes (10 deletes = 10 params). Statement cap wins → 3 deletes
     // per chunk. 7 deletes → ceil(7/3) = 3 chunks.
     const backend = createSqliteBackend(makeParamCapped(db, 3, 10), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
@@ -1462,9 +1455,6 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
 
   it('defaults to one batch when executor does not declare maxBatchSize', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     // Plain executor — no maxBatchSize — should submit everything at once.
     const backend = createSqliteBackend(makeExecutor(db), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
@@ -1482,10 +1472,12 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
   });
 
   /**
-   * Wraps an executor so the first `failTimes` calls to `batch()` reject
-   * with a transient error, and subsequent calls succeed. Lets us verify
-   * that the chunking retry loop hides transient failures the way the
-   * Firestore bulk path does.
+   * Wraps an executor so the first `failTimes` calls to `batch()` with data
+   * statements reject with a transient error, and subsequent calls succeed.
+   * Schema-bootstrap batches pass through (DDL succeeding while data traffic
+   * flakes is the realistic D1 failure mode). Lets us verify that the
+   * chunking retry loop hides transient failures the way the Firestore bulk
+   * path does.
    */
   function makeFlaky(db: BetterSqliteDb, failTimes: number): SqliteExecutor {
     const inner = makeExecutor(db);
@@ -1494,6 +1486,9 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
       all: inner.all,
       run: inner.run,
       async batch(statements) {
+        if (isSchemaBatch(statements)) {
+          return inner.batch(statements);
+        }
         if (remaining > 0) {
           remaining--;
           throw new Error('transient D1 error');
@@ -1505,9 +1500,6 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
 
   it('retries failed chunks with exponential backoff', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     // 2 transient failures then success. maxRetries=3 (default) covers it.
     const backend = createSqliteBackend(makeFlaky(db, 2), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
@@ -1527,9 +1519,6 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
 
   it('records an error and continues when retry budget is exhausted', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     // 10 failures exceeds maxRetries=0 → the one chunk is recorded as an error.
     const backend = createSqliteBackend(makeFlaky(db, 10), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
@@ -1554,13 +1543,10 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
     //      must report the conservative 0/false outcome (we can't know which
     //      sub-batch actually committed).
     //   2. The pre-counted subgraph row total must NOT be folded into
-    //      `deleted` if the prefix-delete chunk didn't commit. Otherwise
-    //      callers get a misleading "X rows removed" tally pointing at rows
-    //      that are still in the table.
+    //      `deleted` if the chunk carrying the DROP TABLE didn't commit.
+    //      Otherwise callers get a misleading "X rows removed" tally pointing
+    //      at rows that are still in the descendant table.
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     const backend = createSqliteBackend(makeFlaky(db, 100), TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
 
@@ -1578,7 +1564,7 @@ describe('SqliteBackend bulk chunking (D1 batch cap)', () => {
     expect(result.nodeDeleted).toBe(false);
     expect(result.edgesDeleted).toBe(0);
     // And — critically — `deleted` must not include the 2 subgraph rows that
-    // are still in the table.
+    // are still in the (undropped) descendant table.
     expect(result.deleted).toBe(0);
 
     // Sanity check: the rows really are still there (idempotent retry path).
@@ -1839,66 +1825,39 @@ describe('SqliteBackend bindValue rejects Firestore special types', () => {
   });
 });
 
-describe('SqliteBackend bulk fast-fail on oversized single statement', () => {
+describe('SqliteBackend bulk retry behaviour on permanent failure', () => {
+  // NOTE: the old "fast-fail on oversized single statement" test is gone by
+  // design. Every statement `executeChunkedBatches` handles in the scope-free
+  // edition binds at most 1 parameter (doc-id deletes, 0-param DROPs, 1-param
+  // catalog deletes), so a single statement can never exceed an integer
+  // `maxBatchParams` cap. The fast-fail guard remains in the backend as
+  // defence for future statement shapes.
+
   /**
-   * Wraps an executor so every `batch()` call is rejected. Tracks total call
-   * count so the test can confirm fast-fail collapses retries from `maxRetries+1`
-   * attempts down to 1.
+   * Wraps an executor so every data `batch()` call is rejected (schema
+   * bootstrap passes through). Tracks total data-batch call count so the
+   * test can confirm the retry budget is honoured.
    */
-  function makeAlwaysFailing(
-    db: BetterSqliteDb,
-    paramCap: number,
-  ): SqliteExecutor & { batchCalls: number } {
+  function makeAlwaysFailing(db: BetterSqliteDb): SqliteExecutor & { batchCalls: number } {
     const inner = makeExecutor(db);
     const wrapper: SqliteExecutor & { batchCalls: number } = {
-      maxBatchParams: paramCap,
       batchCalls: 0,
       all: inner.all,
       run: inner.run,
-      async batch(_statements) {
+      async batch(statements) {
+        if (isSchemaBatch(statements)) {
+          return inner.batch(statements);
+        }
         wrapper.batchCalls += 1;
-        throw new Error('simulated D1 oversized-batch rejection');
+        throw new Error('simulated D1 rejection');
       },
     };
     return wrapper;
   }
 
-  it('does not retry a single statement that exceeds the driver param cap', async () => {
+  it('retries normal-sized chunks up to the retry budget', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
-    // paramCap=1 → every 2-param compileDelete is "oversized" → fast-fail.
-    const exec = makeAlwaysFailing(db, 1);
-    const backend = createSqliteBackend(exec, TABLE);
-    const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
-
-    const src = generateId();
-    await client.putEdge('tour', src, 'hasDeparture', 'departure', generateId(), {});
-
-    exec.batchCalls = 0; // reset — putEdge above used the executor for setDoc.
-    const result = await backend.bulkRemoveEdges!(
-      { aUid: src, axbType: 'hasDeparture', allowCollectionScan: true, limit: 0 },
-      client,
-      { maxRetries: 3 },
-    );
-
-    // 1 chunk × 1 attempt (fast-fail) — NOT 1 × 4 (default retry budget).
-    expect(exec.batchCalls).toBe(1);
-    expect(result.errors).toHaveLength(1);
-    expect(result.deleted).toBe(0);
-
-    db.close();
-  });
-
-  it('still retries normal-sized chunks when only some statements would be oversized', async () => {
-    const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
-    // paramCap=10 → 2-param compileDelete is well under the cap; chunk of N
-    // statements isn't classified as oversized → retries proceed normally.
-    const exec = makeAlwaysFailing(db, 10);
+    const exec = makeAlwaysFailing(db);
     const backend = createSqliteBackend(exec, TABLE);
     const client: GraphClient = createGraphClientFromBackend(backend) as GraphClient;
 
@@ -1917,6 +1876,7 @@ describe('SqliteBackend bulk fast-fail on oversized single statement', () => {
     // 1 chunk × (maxRetries + 1) attempts = 3 calls — full retry path.
     expect(exec.batchCalls).toBe(3);
     expect(result.errors).toHaveLength(1);
+    expect(result.deleted).toBe(0);
     db.close();
   }, 15_000);
 });
@@ -1924,18 +1884,19 @@ describe('SqliteBackend bulk fast-fail on oversized single statement', () => {
 describe('SqliteBackend retry backoff cap (MAX_RETRY_DELAY_MS)', () => {
   it('caps per-attempt sleep so a high maxRetries does not block for minutes', async () => {
     const db = new Database(':memory:');
-    for (const sql of buildSchemaStatements(TABLE)) {
-      db.exec(sql);
-    }
     // Executor whose `run`/`all` go through normally (so putEdge setup works)
-    // but whose `batch` always rejects — that's the path `bulkRemoveEdges`
-    // takes. No `maxBatchParams` declared → no fast-fail.
+    // and whose schema-bootstrap batches succeed, but whose data `batch`
+    // always rejects — that's the path `bulkRemoveEdges` takes. No
+    // `maxBatchParams` declared → no fast-fail.
     const inner = makeExecutor(db);
     let batchCalls = 0;
     const exec: SqliteExecutor = {
       all: inner.all,
       run: inner.run,
-      async batch() {
+      async batch(statements) {
+        if (isSchemaBatch(statements)) {
+          return inner.batch(statements);
+        }
         batchCalls += 1;
         throw new Error('permanent error');
       },
@@ -1972,10 +1933,9 @@ describe('SqliteBackend retry backoff cap (MAX_RETRY_DELAY_MS)', () => {
 });
 
 describe('SqliteBackend.aggregate (compileAggregate)', () => {
-  // The shared-table SQLite compiler ALWAYS leads with a `"scope" = ?`
-  // predicate so the `(scope, …)` indexes apply (see compileSelect). Aggregates
-  // must follow the same rule — otherwise a subgraph-scoped aggregate would
-  // accidentally count rows from sibling subgraphs.
+  // The scope-free compiler emits no scoping predicate at all — subgraph
+  // isolation is physical (each graph is its own table), so an aggregate
+  // can only ever see the current graph's rows.
 
   let db: BetterSqliteDb;
   let backend: StorageBackend;
@@ -1990,11 +1950,10 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
 
   // --- SQL string assertions (compileAggregate output) ---
 
-  it('emits a leading "scope" = ? predicate and inlined JSON paths', async () => {
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+  it('emits no scope predicate and inlined JSON paths', async () => {
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
     const { stmt, aliases } = compileAggregate(
       TABLE,
-      '', // root scope
       {
         n: { op: 'count' },
         s: { op: 'sum', field: 'data.price' },
@@ -2005,8 +1964,8 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
       [{ field: 'aType', op: '==', value: 'tour' }],
     );
 
-    // Scope predicate is the leading WHERE term and bound (not inlined).
-    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    // No scope column anywhere in the statement.
+    expect(stmt.sql).not.toContain('"scope"');
     // The numeric cast applies to all four non-count ops.
     expect(stmt.sql).toContain(`SUM(CAST(json_extract("data", '$.price') AS REAL)) AS "s"`);
     expect(stmt.sql).toContain(`MIN(CAST(json_extract("data", '$.price') AS REAL)) AS "lo"`);
@@ -2015,21 +1974,18 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
     // index emitted by sqlite-index-ddl.ts. Parametrising the path would
     // silently fall back to a full scan.
     expect(stmt.sql).not.toContain(`json_extract("data", ?)`);
-    // Param order is fixed: scope value first (leading "scope" = ?
-    // predicate), followed by column-filter values in the order the caller
-    // supplied them. A regression that re-orders the predicate or starts
-    // parametrising the JSON path would change this exact tuple.
-    expect(stmt.params).toEqual(['', 'tour']);
+    // Params are exactly the column-filter values in caller order — no
+    // leading scope value anymore.
+    expect(stmt.params).toEqual(['tour']);
     expect(aliases).toEqual(['n', 's', 'a', 'lo', 'hi']);
   });
 
   it('preserves alias order in the returned aliases list', async () => {
     // Spec keys are in iteration order; the alias array must mirror that so
     // SqliteBackendImpl.aggregate can rehydrate result columns deterministically.
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
     const { aliases } = compileAggregate(
       TABLE,
-      '',
       {
         zCount: { op: 'count' },
         aSum: { op: 'sum', field: 'data.x' },
@@ -2042,45 +1998,43 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
 
   it('combines a built-in column filter with a data.* JSON filter', async () => {
     // Mirror the cloudflare-sql parity test — shared SQLite must apply both
-    // a column-filter and a JSON-path filter side-by-side, with the leading
-    // scope predicate intact.
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
-    const { stmt } = compileAggregate(TABLE, '', { n: { op: 'count' } }, [
+    // a column-filter and a JSON-path filter side-by-side.
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
+    const { stmt } = compileAggregate(TABLE, { n: { op: 'count' } }, [
       { field: 'aType', op: '==', value: 'tour' },
       { field: 'data.status', op: '==', value: 'active' },
     ]);
-    // Scope predicate leads, column-filter next, JSON path last; values in
-    // the same order as conditions: ['', 'tour', 'active']. Built-in
-    // `aType` resolves to column `a_type` via FIELD_TO_COLUMN.
-    expect(stmt.sql).toContain('WHERE "scope" = ? AND');
+    // Column-filter first, JSON path second; values in the same order as
+    // conditions: ['tour', 'active']. Built-in `aType` resolves to column
+    // `a_type` via FIELD_TO_COLUMN.
     expect(stmt.sql).toContain(`"a_type" = ?`);
     expect(stmt.sql).toContain(`json_extract("data", '$.status') = ?`);
-    expect(stmt.params).toEqual(['', 'tour', 'active']);
+    expect(stmt.params).toEqual(['tour', 'active']);
   });
 
   it('rejects unsafe alias identifiers at compile time', async () => {
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
-    expect(() => compileAggregate(TABLE, '', { 'bad alias': { op: 'count' } }, [])).toThrow(
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileAggregate(TABLE, { 'bad alias': { op: 'count' } }, [])).toThrow(
       /not a safe JSON-path identifier/,
     );
-    expect(() =>
-      compileAggregate(TABLE, '', { 'a"; DROP TABLE foo;--': { op: 'count' } }, []),
-    ).toThrow(/not a safe JSON-path identifier/);
+    expect(() => compileAggregate(TABLE, { 'a"; DROP TABLE foo;--': { op: 'count' } }, [])).toThrow(
+      /not a safe JSON-path identifier/,
+    );
   });
 
   it('rejects empty spec and non-count ops missing a field', async () => {
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
-    expect(() => compileAggregate(TABLE, '', {}, [])).toThrow(/at least one aggregation/);
-    expect(() => compileAggregate(TABLE, '', { s: { op: 'sum' } }, [])).toThrow(
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileAggregate(TABLE, {}, [])).toThrow(/at least one aggregation/);
+    expect(() => compileAggregate(TABLE, { s: { op: 'sum' } }, [])).toThrow(
       /'sum' requires a field/,
     );
   });
 
   it('rejects count with a stray field (catches typo from cribbing a sum spec)', async () => {
-    const { compileAggregate } = await import('../../src/sqlite/sql.js');
-    expect(() =>
-      compileAggregate(TABLE, '', { n: { op: 'count', field: 'data.price' } }, []),
-    ).toThrow(/'count' must not specify a field/);
+    const { compileAggregate } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileAggregate(TABLE, { n: { op: 'count', field: 'data.price' } }, [])).toThrow(
+      /'count' must not specify a field/,
+    );
   });
 
   // --- Functional integration (in-memory SQLite, full backend.aggregate) ---
@@ -2215,10 +2169,10 @@ describe('SqliteBackend.aggregate (compileAggregate)', () => {
 
 describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () => {
   // Phase 5 query.dml: server-side DELETE / UPDATE that bypasses the
-  // O(n) read-then-write loop bulkRemoveEdges uses. Both compilers must
-  // ALWAYS lead with a `"scope" = ?` predicate so a routed-subgraph DML
-  // call cannot leak across siblings — same invariant as compileSelect /
-  // compileAggregate.
+  // O(n) read-then-write loop bulkRemoveEdges uses. Subgraph isolation is
+  // physical (table-per-graph), so neither compiler emits a scoping
+  // predicate — a routed-subgraph DML call cannot leak across siblings
+  // because it never touches their tables.
 
   let db: BetterSqliteDb;
   let backend: StorageBackend;
@@ -2233,33 +2187,28 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
 
   // --- SQL string assertions (compiler output) ---
 
-  it('compileBulkDelete emits a leading "scope" = ? predicate', async () => {
-    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
-    const stmt = compileBulkDelete(TABLE, 'memories', [
-      { field: 'aType', op: '==', value: 'tour' },
-    ]);
-    // Scope predicate leads, column-filter follows. Param order must match.
-    expect(stmt.sql).toContain(`DELETE FROM ${'"' + TABLE + '"'} WHERE "scope" = ? AND `);
-    expect(stmt.sql).toContain(`"a_type" = ?`);
-    expect(stmt.params).toEqual(['memories', 'tour']);
+  it('compileBulkDelete emits only the caller filters as predicates', async () => {
+    const { compileBulkDelete } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileBulkDelete(TABLE, [{ field: 'aType', op: '==', value: 'tour' }]);
+    expect(stmt.sql).toBe(`DELETE FROM "${TABLE}" WHERE "a_type" = ?`);
+    expect(stmt.params).toEqual(['tour']);
   });
 
-  it('compileBulkDelete with no filters still leads with the scope predicate (delete-everything-in-scope)', async () => {
-    const { compileBulkDelete } = await import('../../src/sqlite/sql.js');
-    const stmt = compileBulkDelete(TABLE, 'memories', []);
-    // Even the unfiltered case is scope-bound — wiping a subgraph wholesale
-    // must not touch sibling subgraphs. The client-level scan-protection
-    // gate in `bulkDelete()` forces `allowCollectionScan: true` to reach
-    // this path.
-    expect(stmt.sql).toContain('WHERE "scope" = ?');
-    expect(stmt.params).toEqual(['memories']);
+  it('compileBulkDelete with no filters compiles a whole-table delete', async () => {
+    const { compileBulkDelete } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileBulkDelete(TABLE, []);
+    // The unfiltered case wipes the current graph's table — sibling
+    // subgraphs live in other tables, so nothing else can be touched. The
+    // client-level scan-protection gate in `bulkDelete()` forces
+    // `allowCollectionScan: true` to reach this path.
+    expect(stmt.sql).toBe(`DELETE FROM "${TABLE}"`);
+    expect(stmt.params).toEqual([]);
   });
 
-  it('compileBulkUpdate emits SET "data" = json_patch(...) and a leading scope predicate', async () => {
-    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+  it('compileBulkUpdate emits a deep-merge SET on data and bumps updated_at', async () => {
+    const { compileBulkUpdate } = await import('../../src/internal/sqlite-sql.js');
     const stmt = compileBulkUpdate(
       TABLE,
-      'memories',
       [{ field: 'aType', op: '==', value: 'tour' }],
       { status: 'archived' },
       1700000000000,
@@ -2268,19 +2217,18 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     expect(stmt.sql).toMatch(/UPDATE\s+"firegraph_test"\s+SET\s+"data"\s*=/);
     // updated_at is bumped.
     expect(stmt.sql).toContain(`"updated_at" = ?`);
-    // Scope predicate leads in the WHERE.
-    expect(stmt.sql).toContain(`WHERE "scope" = ? AND `);
+    // No scope predicate anywhere.
+    expect(stmt.sql).not.toContain('"scope"');
     // Params: SET-clause params first (patch value + nowMillis), then
-    // WHERE params (scope value + filter value). The exact ordering
-    // matters because the same convention is shared with compileUpdate.
-    expect(stmt.params[stmt.params.length - 2]).toBe('memories');
+    // WHERE params (filter values). The exact ordering matters because the
+    // same convention is shared with compileUpdate.
     expect(stmt.params[stmt.params.length - 1]).toBe('tour');
     expect(stmt.params).toContain(1700000000000);
   });
 
   it('compileBulkUpdate rejects an empty patch with INVALID_QUERY', async () => {
-    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
-    expect(() => compileBulkUpdate(TABLE, 'memories', [], {}, Date.now())).toThrow(
+    const { compileBulkUpdate } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileBulkUpdate(TABLE, [], {}, Date.now())).toThrow(
       /at least one leaf|INVALID_QUERY/,
     );
   });
@@ -2289,13 +2237,11 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     // Mirror of the assertJsonSafePayload guard on single-row replaceData
     // writes. SQLite rows can't store Firestore Timestamp/GeoPoint/etc.
     // The DML path hits the same guard.
-    const { compileBulkUpdate } = await import('../../src/sqlite/sql.js');
+    const { compileBulkUpdate } = await import('../../src/internal/sqlite-sql.js');
     // Construct a tagged Firestore-shaped payload — the guard fires on the
     // tagged sentinel, so we don't need a real Firestore SDK in this test.
     const tagged = { __firegraph_ser__: 'Timestamp', seconds: 1, nanoseconds: 0 };
-    expect(() =>
-      compileBulkUpdate(TABLE, 'memories', [], { stamped: tagged }, Date.now()),
-    ).toThrow();
+    expect(() => compileBulkUpdate(TABLE, [], { stamped: tagged }, Date.now())).toThrow();
   });
 
   // --- Functional integration (in-memory SQLite, full backend.bulkDelete/Update) ---
@@ -2343,7 +2289,7 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     expect(remainingPrices).toEqual([10, 20]);
   });
 
-  it('bulkDelete with zero filters deletes every row in the current scope', async () => {
+  it('bulkDelete with zero filters deletes every row in the current graph', async () => {
     await seedTours([1, 2, 3]);
     const out = await backend.bulkDelete!([]);
     expect(out.deleted).toBe(3);
@@ -2394,11 +2340,10 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     expect(active).toHaveLength(2);
   });
 
-  it('bulkDelete in a subgraph does not touch rows in sibling scopes', async () => {
-    // Cross-scope safety. A bulkDelete on the `memories` subgraph must
-    // leave the parent scope's rows untouched. The leading `"scope" = ?`
-    // predicate is what enforces this; if a future regression dropped it,
-    // this test would fail loudly.
+  it('bulkDelete in a subgraph does not touch rows in sibling graphs', async () => {
+    // Cross-graph safety. A bulkDelete on the `memories` subgraph must
+    // leave the parent graph's rows untouched. Physical table isolation is
+    // what enforces this — the DELETE only ever names the subgraph's table.
     const parentUid = generateId();
     await backend.setDoc(
       parentUid,
@@ -2431,7 +2376,7 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
     const out = await sub.bulkDelete!([{ field: 'aType', op: '==', value: 'memory' }]);
     expect(out.deleted).toBe(1);
 
-    // Parent scope's row is intact.
+    // Parent graph's row is intact.
     const parentRows = await backend.query([{ field: 'aType', op: '==', value: 'agent' }]);
     expect(parentRows).toHaveLength(1);
     // Subgraph is empty.
@@ -2442,7 +2387,7 @@ describe('SqliteBackend bulk DML (compileBulkDelete / compileBulkUpdate)', () =>
 
 describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   // Phase 6 query.join: server-side multi-source fan-out via SQL `IN (?, ?, …)`.
-  // Mirrors the bulk-DML compiler asserts above — leading `"scope" = ?`,
+  // Mirrors the bulk-DML compiler asserts above — no scope predicate,
   // parameter ordering, axbType-specific self-loop guard.
 
   let db: BetterSqliteDb;
@@ -2458,39 +2403,39 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
 
   // --- Compiler shape ---
 
-  it('compileExpand emits leading scope + axbType + IN (?, ?, …) predicates in that order', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, 'memories', {
+  it('compileExpand emits axbType + IN (?, ?, …) predicates in that order', async () => {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a', 'b', 'c'],
       axbType: 'wrote',
     });
     // Column refs use the on-disk snake_case names (`a_uid`, `axb_type`,
     // …) — see `FIELD_TO_COLUMN` in `src/internal/sqlite-schema.ts`.
     expect(stmt.sql).toContain(`SELECT * FROM "${TABLE}"`);
-    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).not.toContain('"scope"');
     expect(stmt.sql).toContain('"axb_type" = ?');
     expect(stmt.sql).toContain('"a_uid" IN (?, ?, ?)');
-    // Param order: scope, axbType, then each source UID in order.
-    expect(stmt.params).toEqual(['memories', 'wrote', 'a', 'b', 'c']);
+    // Param order: axbType, then each source UID in order.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'c']);
   });
 
   it('compileExpand reverse direction filters on bUid', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['x', 'y'],
       axbType: 'wrote',
       direction: 'reverse',
     });
     expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
     expect(stmt.sql).not.toContain('"a_uid" IN (');
-    expect(stmt.params).toEqual(['', 'wrote', 'x', 'y']);
+    expect(stmt.params).toEqual(['wrote', 'x', 'y']);
   });
 
   it('compileExpand with axbType "is" adds the self-loop guard', async () => {
     // Forward expand on the node relation could otherwise pull node-as-self-loop
     // rows. The `"a_uid" != "b_uid"` predicate excludes them.
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a'],
       axbType: 'is',
     });
@@ -2498,8 +2443,8 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   });
 
   it('compileExpand without axbType "is" omits the self-loop guard', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a'],
       axbType: 'wrote',
     });
@@ -2507,8 +2452,8 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   });
 
   it('compileExpand multiplies limitPerSource by sources.length to produce a soft cap', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a', 'b', 'c'],
       axbType: 'wrote',
       limitPerSource: 5,
@@ -2519,8 +2464,8 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   });
 
   it('compileExpand with no limitPerSource omits LIMIT entirely', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a'],
       axbType: 'wrote',
     });
@@ -2528,27 +2473,27 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   });
 
   it('compileExpand rejects empty sources list', async () => {
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    expect(() => compileExpand(TABLE, '', { sources: [], axbType: 'wrote' })).toThrow(
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileExpand(TABLE, { sources: [], axbType: 'wrote' })).toThrow(
       /INVALID_QUERY|empty/,
     );
   });
 
-  it('compileExpandHydrate scopes the lookup and includes the self-loop predicate', async () => {
-    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpandHydrate(TABLE, 'memories', ['x', 'y']);
-    // Hydration pulls node rows: scope-bound, axbType = 'is', self-loop, IN list.
+  it('compileExpandHydrate targets node rows with the self-loop predicate', async () => {
+    const { compileExpandHydrate } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpandHydrate(TABLE, ['x', 'y']);
+    // Hydration pulls node rows: axbType = 'is', self-loop, IN list.
     // Column refs use snake_case (`a_uid`, `b_uid`, `axb_type`).
-    expect(stmt.sql).toContain('"scope" = ?');
+    expect(stmt.sql).not.toContain('"scope"');
     expect(stmt.sql).toContain('"axb_type" = ?');
     expect(stmt.sql).toContain('"a_uid" = "b_uid"');
     expect(stmt.sql).toContain('"b_uid" IN (?, ?)');
-    expect(stmt.params).toEqual(['memories', 'is', 'x', 'y']);
+    expect(stmt.params).toEqual(['is', 'x', 'y']);
   });
 
   it('compileExpandHydrate rejects empty target list', async () => {
-    const { compileExpandHydrate } = await import('../../src/sqlite/sql.js');
-    expect(() => compileExpandHydrate(TABLE, '', [])).toThrow(/INVALID_QUERY|empty/);
+    const { compileExpandHydrate } = await import('../../src/internal/sqlite-sql.js');
+    expect(() => compileExpandHydrate(TABLE, [])).toThrow(/INVALID_QUERY|empty/);
   });
 
   // --- Functional integration: backend.expand() against in-memory SQLite ---
@@ -2695,14 +2640,14 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
   });
 
   it('backend.expand emits aType / bType predicates with snake_case columns', async () => {
-    // Audit gap: the leading-predicate-order test only covers core predicates.
+    // Audit gap: the predicate-order test only covers core predicates.
     // `aType` / `bType` are optional refinements and the compiler resolves
     // them through `compileFieldRef`, but no test pins the snake_case shape.
     // A regression that emitted `"aType" = ?` instead of `"a_type" = ?`
     // would crash the SQLite layer with "no such column: aType" — the same
     // class of bug we just fixed for `axbType` / `aUid` / `bUid`.
-    const { compileExpand } = await import('../../src/sqlite/sql.js');
-    const stmt = compileExpand(TABLE, '', {
+    const { compileExpand } = await import('../../src/internal/sqlite-sql.js');
+    const stmt = compileExpand(TABLE, {
       sources: ['a', 'b'],
       axbType: 'wrote',
       aType: 'agent',
@@ -2712,8 +2657,8 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
     expect(stmt.sql).toContain('"b_type" = ?');
     expect(stmt.sql).not.toContain('"aType"');
     expect(stmt.sql).not.toContain('"bType"');
-    // Param ordering: scope, axbType, sources..., aType, bType.
-    expect(stmt.params).toEqual(['', 'wrote', 'a', 'b', 'agent', 'note']);
+    // Param ordering: axbType, sources..., aType, bType.
+    expect(stmt.params).toEqual(['wrote', 'a', 'b', 'agent', 'note']);
   });
 
   it('backend.expand short-circuits empty sources list to an empty result', async () => {
@@ -2727,9 +2672,9 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
     expect(out.targets).toBeUndefined();
   });
 
-  it('backend.expand in a subgraph does not fan out to sibling scopes', async () => {
-    // Cross-scope safety. Seed identical edges in parent + sibling subgraphs;
-    // expand inside `memories` must only return rows from that scope.
+  it('backend.expand in a subgraph does not fan out to sibling graphs', async () => {
+    // Cross-graph safety. Seed identical edges in parent + subgraph; expand
+    // inside `memories` must only return rows from that graph's table.
     const a = generateId();
     await backend.setDoc(
       a,
@@ -2750,7 +2695,7 @@ describe('SqliteBackend expand (compileExpand / compileExpandHydrate)', () => {
       'replace',
     );
 
-    // Parent-scope edge (sibling-ish for the test) — not in the subgraph.
+    // Parent-graph edge (sibling-ish for the test) — not in the subgraph.
     const t2 = generateId();
     await backend.setDoc(
       t2,

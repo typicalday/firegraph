@@ -73,6 +73,22 @@ import { computeEdgeDocId, computeNodeDocId } from '../docid.js';
 import { FiregraphError } from '../errors.js';
 import type { UpdatePayload, WritableRecord, WriteMode } from '../internal/backend.js';
 import { NODE_RELATION } from '../internal/constants.js';
+import type { CompiledStatement } from '../internal/sqlite-sql.js';
+import {
+  compileAggregate as compileDOAggregate,
+  compileBulkDelete as compileDOBulkDelete,
+  compileBulkUpdate as compileDOBulkUpdate,
+  compileDelete as compileDODelete,
+  compileDeleteAll as compileDODeleteAll,
+  compileExpand as compileDOExpand,
+  compileExpandHydrate as compileDOExpandHydrate,
+  compileFindEdgesProjected as compileDOFindEdgesProjected,
+  compileSelect as compileDOSelect,
+  compileSelectByDocId as compileDOSelectByDocId,
+  compileSet as compileDOSet,
+  compileUpdate as compileDOUpdate,
+  type ProjectedColumnSpec as DOProjectedColumnSpec,
+} from '../internal/sqlite-sql.js';
 import { buildEdgeQueryPlan } from '../query.js';
 import type {
   AggregateSpec,
@@ -89,22 +105,8 @@ import type {
 } from '../types.js';
 import type { ExpandResultWire } from './backend.js';
 import { buildDOSchemaStatements, validateDOTableName } from './schema.js';
-import type { CompiledStatement, DOProjectedColumnSpec, DORecordWire } from './sql.js';
-import {
-  compileDOAggregate,
-  compileDOBulkDelete,
-  compileDOBulkUpdate,
-  compileDODelete,
-  compileDODeleteAll,
-  compileDOExpand,
-  compileDOExpandHydrate,
-  compileDOFindEdgesProjected,
-  compileDOSelect,
-  compileDOSelectByDocId,
-  compileDOSet,
-  compileDOUpdate,
-  rowToDORecord,
-} from './sql.js';
+import type { DORecordWire } from './sql.js';
+import { rowToDORecord } from './sql.js';
 
 // ---------------------------------------------------------------------------
 // Minimal DO runtime types — declared locally so this module doesn't depend

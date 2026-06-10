@@ -30,10 +30,10 @@ sub.subgraph(B, 'context'):  scopePath = 'memories/context'
 
 Firegraph tracks two parallel representations of the subgraph chain. Keep them straight — they serve different consumers:
 
-| Name           | Shape                                          | Example                  | Consumers                                                                                                        |
-| -------------- | ---------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `scopePath`    | names-only chain                               | `'memories/context'`     | `allowedIn` matching via `matchScope`, exposed on every `GraphClient` and `StorageBackend`                       |
-| `storageScope` | materialized: interleaved `<uid>/<name>` pairs | `'A/memories/B/context'` | SQLite `scope` column (internal to `SqliteBackendImpl`), DO names / shard keys when using `createRoutingBackend` |
+| Name           | Shape                                          | Example                  | Consumers                                                                                                                                                                       |
+| -------------- | ---------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scopePath`    | names-only chain                               | `'memories/context'`     | `allowedIn` matching via `matchScope`, exposed on every `GraphClient` and `StorageBackend`                                                                                      |
+| `storageScope` | materialized: interleaved `<uid>/<name>` pairs | `'A/memories/B/context'` | SQLite physical table name (mangled via `tableForScope` in `src/sqlite/catalog.ts` — table-per-graph, no scope column), DO names / shard keys when using `createRoutingBackend` |
 
 Both are `/`-delimited strings and both are empty at the root. `scopePath` is the one that flows into `registry.validate()` for `allowedIn` checks; `storageScope` is the one you want when you need a globally unique, human-readable identifier for a subgraph instance (two different parent UIDs under the same subgraph name produce distinct storage-scopes).
 
@@ -121,6 +121,7 @@ When crossing graphs, the traversal calls `reader.subgraph(sourceUid, targetGrap
 - Requires Firestore collection group indexes
 - Cannot use GET strategy (all three identifiers) — throws `FiregraphError`
 - Subject to scan protection settings
+- Firestore-only: the SQLite backend (table-per-graph, no cross-table index) omits the method entirely; the client throws `UNSUPPORTED_OPERATION`
 
 ### `lookupByAxbType()`
 

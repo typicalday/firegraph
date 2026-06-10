@@ -12,6 +12,7 @@ export default defineConfig({
     'src/firestore-standard/index.ts',
     'src/firestore-enterprise/index.ts',
     'src/sqlite/index.ts',
+    'src/sqlite/local.ts',
   ],
   format: ['esm', 'cjs'],
   dts: true,
@@ -25,6 +26,9 @@ export default defineConfig({
     'react-dom',
     'svelte',
     'ses',
+    // Optional peer — only `firegraph/sqlite-local` imports it (dynamically).
+    // Mark external so the native module is never bundled.
+    'better-sqlite3',
     // Virtual workerd builtin — only resolvable inside Cloudflare Workers.
     // Mark external so esbuild/tsup leaves the import alone for the runtime
     // to handle. Without this, bundling fails: there's no real module to

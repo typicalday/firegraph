@@ -1,13 +1,11 @@
 /**
- * Legacy shared-table SQLite schema unit tests.
+ * Scope-free SQLite schema unit tests.
  *
- * The legacy SQLite backend (D1, Node better-sqlite3, etc.) uses a single
- * table with a `scope` column for subgraph isolation. Every index is
- * prefixed with the `scope` column so the query compiler (which always
- * emits a `scope = ?` predicate) can use the index directly.
- *
- * Contrast with the DO SQLite backend where each DO physically scopes its
- * own rows and no `scope` column exists.
+ * The table-per-graph SQLite editions (better-sqlite3 / D1 in `src/sqlite/`
+ * and the Cloudflare DO edition) share one row shape: `doc_id` is the
+ * primary key and there is NO `scope` column — each graph's rows live in
+ * their own physical table (or their own Durable Object), so isolation is
+ * physical rather than a per-row predicate.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -35,7 +33,7 @@ describe('sqlite-schema — identifiers', () => {
     expect(() => quoteIdent('drop; table users')).toThrow();
   });
 
-  it('maps firegraph fields to columns (with the scope-aware shape)', () => {
+  it('maps firegraph fields to columns (no scope mapping)', () => {
     expect(FIELD_TO_COLUMN).toMatchObject({
       aType: 'a_type',
       aUid: 'a_uid',
@@ -43,71 +41,67 @@ describe('sqlite-schema — identifiers', () => {
       bType: 'b_type',
       bUid: 'b_uid',
     });
+    expect(FIELD_TO_COLUMN).not.toHaveProperty('scope');
   });
 });
 
 describe('sqlite-schema — buildSchemaStatements defaults', () => {
-  it('emits CREATE TABLE with scope + composite PK', () => {
+  it('emits CREATE TABLE with doc_id as the sole primary key and no scope column', () => {
     const stmts = buildSchemaStatements('firegraph');
     const tableDDL = stmts[0];
     expect(tableDDL).toContain('CREATE TABLE IF NOT EXISTS "firegraph"');
-    expect(tableDDL).toContain('scope');
-    expect(tableDDL).toContain('PRIMARY KEY (scope, doc_id)');
+    expect(tableDDL).toMatch(/doc_id\s+TEXT NOT NULL PRIMARY KEY/);
+    expect(tableDDL).not.toContain('scope');
   });
 
-  it('emits a scope-less doc_id index for cross-scope edge lookups', () => {
+  it('does not emit a secondary doc_id index (the PK covers doc lookups)', () => {
     const stmts = buildSchemaStatements('firegraph');
-    const docIdIdx = stmts.find((s) => s.includes(`"firegraph_idx_doc_id"`));
-    expect(docIdIdx).toBeDefined();
-    expect(docIdIdx).toMatch(/ON "firegraph"\(doc_id\)/);
+    expect(stmts.find((s) => s.includes('_idx_doc_id'))).toBeUndefined();
   });
 
-  it('defaults to DEFAULT_CORE_INDEXES plus the doc_id index', () => {
+  it('defaults to exactly the core preset indexes', () => {
     const stmts = buildSchemaStatements('firegraph');
-    // 1 CREATE TABLE + 1 doc_id index + 8 core preset indexes = 10
-    expect(stmts).toHaveLength(1 + 1 + DEFAULT_CORE_INDEXES.length);
+    // 1 CREATE TABLE + 8 core preset indexes = 9
+    expect(stmts).toHaveLength(1 + DEFAULT_CORE_INDEXES.length);
   });
 
-  it('prefixes every core-preset index with the `scope` column', () => {
+  it('no index references a scope column', () => {
     const stmts = buildSchemaStatements('firegraph');
-    // Skip the CREATE TABLE (index 0) and the bare doc_id index (index 1).
-    // Everything from index 2 onward should lead with "scope".
-    for (const ddl of stmts.slice(2)) {
-      expect(ddl).toMatch(/\("scope"/);
+    for (const ddl of stmts) {
+      expect(ddl).not.toContain('"scope"');
     }
   });
 });
 
 describe('sqlite-schema — coreIndexes override', () => {
-  it('coreIndexes: [] disables the preset (CREATE TABLE + doc_id index only)', () => {
+  it('coreIndexes: [] disables the preset (CREATE TABLE only)', () => {
     const stmts = buildSchemaStatements('firegraph', { coreIndexes: [] });
-    expect(stmts).toHaveLength(2);
+    expect(stmts).toHaveLength(1);
     expect(stmts[0]).toContain('CREATE TABLE IF NOT EXISTS "firegraph"');
-    expect(stmts[1]).toMatch(/"firegraph_idx_doc_id"/);
   });
 
   it('coreIndexes override replaces the preset', () => {
     const stmts = buildSchemaStatements('firegraph', {
       coreIndexes: [{ fields: ['aType', 'axbType', 'data.status'] }],
     });
-    // CREATE TABLE + doc_id index + 1 core = 3
-    expect(stmts).toHaveLength(3);
-    expect(stmts[2]).toContain(`json_extract("data", '$.status')`);
-    expect(stmts[2]).toMatch(/\("scope", "a_type", "axb_type"/);
+    // CREATE TABLE + 1 core = 2
+    expect(stmts).toHaveLength(2);
+    expect(stmts[1]).toContain(`json_extract("data", '$.status')`);
+    expect(stmts[1]).toMatch(/\("a_type", "axb_type"/);
   });
 
   it('inlines nested JSON paths in expression indexes', () => {
     const stmts = buildSchemaStatements('firegraph', {
       coreIndexes: [{ fields: ['aType', 'data.author.name'] }],
     });
-    expect(stmts[2]).toContain(`json_extract("data", '$.author.name')`);
+    expect(stmts[1]).toContain(`json_extract("data", '$.author.name')`);
   });
 
   it('emits ASC/DESC order from IndexFieldSpec', () => {
     const stmts = buildSchemaStatements('firegraph', {
       coreIndexes: [{ fields: ['aType', { path: 'updatedAt', desc: true }] }],
     });
-    expect(stmts[2]).toMatch(/"updated_at" DESC/);
+    expect(stmts[1]).toMatch(/"updated_at" DESC/);
   });
 
   it('appends partial-index WHERE clause', () => {
@@ -119,7 +113,7 @@ describe('sqlite-schema — coreIndexes override', () => {
         },
       ],
     });
-    expect(stmts[2]).toMatch(/WHERE json_extract\("data", '\$\.archived'\) = 0$/);
+    expect(stmts[1]).toMatch(/WHERE json_extract\("data", '\$\.archived'\) = 0$/);
   });
 });
 
@@ -134,12 +128,11 @@ describe('sqlite-schema — registry entries', () => {
       },
     ]);
     const stmts = buildSchemaStatements('firegraph', { registry });
-    // CREATE TABLE + doc_id + 8 preset + 1 registry = 11
-    expect(stmts).toHaveLength(11);
+    // CREATE TABLE + 8 preset + 1 registry = 10
+    expect(stmts).toHaveLength(1 + DEFAULT_CORE_INDEXES.length + 1);
     const registryDDL = stmts.find((s) => s.includes(`'$.status'`));
     expect(registryDDL).toBeDefined();
-    // Registry indexes also carry the `scope` leading column.
-    expect(registryDDL!).toMatch(/\("scope", "a_type", "axb_type", json_extract/);
+    expect(registryDDL!).toMatch(/\("a_type", "axb_type", json_extract/);
   });
 
   it('dedupes registry specs that duplicate core preset composites', () => {
@@ -152,8 +145,8 @@ describe('sqlite-schema — registry entries', () => {
       },
     ]);
     const stmts = buildSchemaStatements('firegraph', { registry });
-    // CREATE TABLE + doc_id + 8 preset (no extra from registry) = 10
-    expect(stmts).toHaveLength(10);
+    // CREATE TABLE + 8 preset (no extra from registry) = 9
+    expect(stmts).toHaveLength(1 + DEFAULT_CORE_INDEXES.length);
   });
 
   it('produces deterministic index names across runs', () => {
@@ -210,7 +203,7 @@ describe('sqlite-schema — bare `data` path', () => {
     const stmts = buildSchemaStatements('firegraph', {
       coreIndexes: [{ fields: ['aType', 'data'] }],
     });
-    expect(stmts[2]).toContain(`json_extract("data", '$')`);
+    expect(stmts[1]).toContain(`json_extract("data", '$')`);
   });
 });
 
