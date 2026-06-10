@@ -98,6 +98,37 @@ export interface SqliteBackendOptions {
    * Pass `[]` to disable core indexes entirely.
    */
   coreIndexes?: IndexSpec[];
+  /**
+   * Extra DDL statements appended to every graph table's lazy bootstrap.
+   * Called with the physical table name; the returned statements run after
+   * the core table/index DDL inside the same chunked batch. Statements MUST
+   * be idempotent (`IF NOT EXISTS` / `INSERT OR IGNORE` / re-runnable DML)
+   * — the bootstrap re-runs after self-heal and once per backend instance,
+   * including every lazily created subgraph table.
+   *
+   * @internal Used by `firegraph/sqlite-local` to install FTS5 index
+   * tables, sync triggers, and backfill statements. Propagated to subgraph
+   * backends derived via `subgraph()`.
+   */
+  extraTableDDL?: (tableName: string) => string[];
+}
+
+/**
+ * The shape `createSqliteBackend` actually returns: `StorageBackend` plus
+ * internal hooks the `firegraph/sqlite-local` search wrapper needs.
+ */
+export interface SqliteStorageBackend extends StorageBackend<SqliteCapability> {
+  /**
+   * Force the lazy schema bootstrap (table + indexes + catalog + any
+   * `extraTableDDL` artifacts). Pass `force: true` to reset the bootstrap
+   * cache first — mirrors the self-heal path in `withSchema` for callers
+   * that issue their own SQL against this graph's table and hit a
+   * "no such table" error after a parent cascade dropped it.
+   *
+   * @internal Used by the `firegraph/sqlite-local` search wrapper.
+   */
+  ensureReady(force?: boolean): Promise<void>;
+  subgraph(parentNodeUid: string, name: string): SqliteStorageBackend;
 }
 
 /**
@@ -303,6 +334,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
   private readonly rootTable: string;
   private readonly registry: GraphRegistry | undefined;
   private readonly coreIndexes: IndexSpec[] | undefined;
+  private readonly extraTableDDL: ((tableName: string) => string[]) | undefined;
   private ensured: Promise<void> | null = null;
 
   constructor(
@@ -312,6 +344,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     scopePath: string,
     registry: GraphRegistry | undefined,
     coreIndexes: IndexSpec[] | undefined,
+    extraTableDDL?: (tableName: string) => string[],
   ) {
     validateTableName(rootTable);
     this.rootTable = rootTable;
@@ -320,6 +353,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     this.scopePath = scopePath;
     this.registry = registry;
     this.coreIndexes = coreIndexes;
+    this.extraTableDDL = extraTableDDL;
     const caps = new Set<SqliteCapability>(SQLITE_CORE_CAPS);
     if (typeof executor.transaction === 'function') {
       caps.add('core.transactions');
@@ -344,12 +378,19 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
     return this.ensured;
   }
 
+  /** @internal See `SqliteStorageBackend.ensureReady`. */
+  async ensureReady(force = false): Promise<void> {
+    if (force) this.ensured = null;
+    await this.ensureSchema();
+  }
+
   private async doEnsureSchema(): Promise<void> {
     const ddl = [
       ...buildSchemaStatements(this.collectionPath, {
         coreIndexes: this.coreIndexes,
         registry: this.registry,
       }),
+      ...(this.extraTableDDL ? this.extraTableDDL(this.collectionPath) : []),
       buildCatalogDDL(this.rootTable),
     ];
     const statements: CompiledStatement[] = ddl.map((sql) => ({ sql, params: [] }));
@@ -485,7 +526,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
 
   // --- Subgraphs ---
 
-  subgraph(parentNodeUid: string, name: string): StorageBackend {
+  subgraph(parentNodeUid: string, name: string): SqliteStorageBackend {
     // Defense-in-depth: the public `GraphClient.subgraph()` also validates,
     // but backend users (traversal, cross-graph hops, custom integrations)
     // reach this method directly. A bad UID or a name containing '/' would
@@ -515,6 +556,7 @@ class SqliteBackendImpl implements StorageBackend<SqliteCapability> {
       newScope,
       this.registry,
       this.coreIndexes,
+      this.extraTableDDL,
     );
   }
 
@@ -983,7 +1025,7 @@ export function createSqliteBackend(
   executor: SqliteExecutor,
   tableName: string,
   options: SqliteBackendOptions = {},
-): StorageBackend<SqliteCapability> {
+): SqliteStorageBackend {
   const storageScope = options.storageScope ?? '';
   const scopePath = options.scopePath ?? '';
   return new SqliteBackendImpl(
@@ -993,5 +1035,6 @@ export function createSqliteBackend(
     scopePath,
     options.registry,
     options.coreIndexes,
+    options.extraTableDDL,
   );
 }

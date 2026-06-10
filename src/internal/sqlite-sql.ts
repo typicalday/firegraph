@@ -169,6 +169,17 @@ function compileFilter(filter: QueryFilter, params: unknown[]): string {
   }
 }
 
+/**
+ * Compile a filter list into SQL condition fragments, pushing bound values
+ * onto `params` in order. This is the same code path `compileSelect` runs,
+ * exported so the local-SQLite search layer (`src/internal/sqlite-search.ts`)
+ * compiles vector-search `where` / identifying filters with identical
+ * operator support and `data.*` path handling.
+ */
+export function compileFilterConditions(filters: QueryFilter[], params: unknown[]): string[] {
+  return filters.map((f) => compileFilter(f, params));
+}
+
 function asArray(value: unknown, op: string): unknown[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new FiregraphError(`Operator "${op}" requires a non-empty array value`, 'INVALID_QUERY');
