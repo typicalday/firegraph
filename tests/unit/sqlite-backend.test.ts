@@ -956,6 +956,14 @@ describe('SqliteBackend cascade & bulk', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('removeNodeCascade on a nonexistent node reports nodeDeleted: false', async () => {
+    const client = createGraphClientFromBackend(backend) as GraphClient;
+    const result = await client.removeNodeCascade(generateId());
+    expect(result.nodeDeleted).toBe(false);
+    expect(result.edgesDeleted).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it('removeNodeCascade with deleteSubcollections=false skips subgraph tables', async () => {
     const client = createGraphClientFromBackend(backend) as GraphClient;
     const tour = generateId();

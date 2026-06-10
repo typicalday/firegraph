@@ -111,11 +111,23 @@ function isDatabase(value: unknown): value is BetterSqliteDb {
 }
 
 const PRAGMA_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Pragma values are identifiers (WAL, NORMAL) or integers — never compound
+// expressions, so anything else is rejected rather than interpolated.
+const PRAGMA_VALUE_PATTERN = /^-?[A-Za-z0-9_]+$/;
 
 function applyPragmas(db: BetterSqliteDb, pragmas: Record<string, string | number>): void {
   for (const [key, value] of Object.entries(pragmas)) {
     if (!PRAGMA_KEY_PATTERN.test(key)) {
       throw new FiregraphError(`Invalid pragma name: ${JSON.stringify(key)}`, 'INVALID_ARGUMENT');
+    }
+    if (
+      !PRAGMA_VALUE_PATTERN.test(String(value)) ||
+      (typeof value === 'number' && !Number.isFinite(value))
+    ) {
+      throw new FiregraphError(
+        `Invalid pragma value for ${key}: ${JSON.stringify(value)}`,
+        'INVALID_ARGUMENT',
+      );
     }
     db.pragma(`${key} = ${value}`);
   }

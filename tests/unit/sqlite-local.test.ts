@@ -85,6 +85,14 @@ describe('createLocalSqliteBackend', () => {
     ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
   });
 
+  it('rejects pragma values that are not identifiers or integers', async () => {
+    await expect(
+      createLocalSqliteBackend(tempDbPath('bad-pragma-value'), {
+        pragmas: { synchronous: '1; DROP TABLE x; --' },
+      }),
+    ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+  });
+
   it('honors fileMustExist for missing files', async () => {
     await expect(
       createLocalSqliteBackend(tempDbPath('does-not-exist'), { fileMustExist: true }),
