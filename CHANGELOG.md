@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/typicalday/firegraph/compare/v0.14.0...v0.14.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **write:** escape exotic object keys instead of rejecting them ([#22](https://github.com/typicalday/firegraph/issues/22)) ([a5b5fc2](https://github.com/typicalday/firegraph/commit/a5b5fc2ca69d7788c91a6b693be4fafe149654a8))
+
 ## [0.14.0](https://github.com/typicalday/firegraph/compare/v0.13.0...v0.14.0) (2026-05-15)
 
 

@@ -489,7 +489,7 @@ describe('cloudflare/sql compileDOUpdate', () => {
     expect(sql).toMatch(
       /UPDATE "firegraph" SET "data" = json_set\(COALESCE\("data", '\{\}'\), \?, json\(\?\)\), "updated_at" = \? WHERE "doc_id" = \?/,
     );
-    expect(params).toEqual(['$.status', JSON.stringify('active'), 1, 'abc']);
+    expect(params).toEqual(['$."status"', JSON.stringify('active'), 1, 'abc']);
   });
 
   it('emits a straight data = ? for replaceData', () => {
@@ -511,10 +511,18 @@ describe('cloudflare/sql compileDOUpdate', () => {
     expect(params).toEqual([3, 1, 'abc']);
   });
 
-  it('rejects unsafe keys in deep dataOps paths', () => {
-    expect(() =>
-      compileDOUpdate('firegraph', 'abc', { dataOps: flattenPatch({ 'bad key': 1 }) }, 0),
-    ).toThrow(/safe JSON-path identifier|safe object key/);
+  it('escapes exotic keys in deep dataOps paths as quoted JSON-path labels', () => {
+    const { params } = compileDOUpdate(
+      'firegraph',
+      'abc',
+      { dataOps: flattenPatch({ holds: { '4f9Kq_2bN': 1 } }) },
+      0,
+    );
+    expect(params[0]).toBe('$."holds"."4f9Kq_2bN"');
+  });
+
+  it('rejects an empty-string key at flattenPatch time', () => {
+    expect(() => flattenPatch({ '': 1 })).toThrow(/empty object key/);
   });
 });
 
