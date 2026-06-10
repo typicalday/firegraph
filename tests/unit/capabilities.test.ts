@@ -28,6 +28,7 @@ import type {
 } from '../../src/internal/backend.js';
 import type { SqliteExecutor } from '../../src/internal/sqlite-executor.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
+import { createLocalSqliteBackend } from '../../src/sqlite/local.js';
 import type {
   BulkOptions,
   BulkResult,
@@ -459,6 +460,42 @@ describe('SqliteBackendImpl capabilities', () => {
     // primitives. SQLite would need correlated subqueries with
     // json_group_array nesting, which we don't model.
     expect(caps.has('traversal.serverSide')).toBe(false);
+  });
+});
+
+describe('LocalSqliteBackend capabilities (firegraph/sqlite-local)', () => {
+  it('declares the shared SQLite set plus search.fullText / search.vector — and nothing else', async () => {
+    const { backend, close } = await createLocalSqliteBackend(':memory:');
+    try {
+      const caps = backend.capabilities;
+      // Shared table-per-graph set (better-sqlite3 executor defines transaction).
+      expect(caps.has('core.read')).toBe(true);
+      expect(caps.has('core.write')).toBe(true);
+      expect(caps.has('core.batch')).toBe(true);
+      expect(caps.has('core.subgraph')).toBe(true);
+      expect(caps.has('core.transactions')).toBe(true);
+      expect(caps.has('query.aggregate')).toBe(true);
+      expect(caps.has('query.select')).toBe(true);
+      expect(caps.has('query.join')).toBe(true);
+      expect(caps.has('query.dml')).toBe(true);
+      expect(caps.has('raw.sql')).toBe(true);
+      // The local wrapper's additions.
+      expect(caps.has('search.fullText')).toBe(true);
+      expect(caps.has('search.vector')).toBe(true);
+      // Never declared: no geo index, no server-side traversal, no listeners.
+      expect(caps.has('search.geo')).toBe(false);
+      expect(caps.has('traversal.serverSide')).toBe(false);
+      expect(caps.has('realtime.listen')).toBe(false);
+      expect(caps.has('raw.firestore')).toBe(false);
+      // Routing invariant, both directions: declared caps imply methods…
+      expect(typeof backend.fullTextSearch).toBe('function');
+      expect(typeof backend.findNearest).toBe('function');
+      // …and undeclared surface stays absent (no cross-table index).
+      expect('findEdgesGlobal' in backend).toBe(false);
+      expect('geoSearch' in backend).toBe(false);
+    } finally {
+      close();
+    }
   });
 });
 

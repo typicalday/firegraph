@@ -817,9 +817,10 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
       throw new FiregraphError(
         'findNearest() is not supported by the current storage backend. ' +
           'Vector search requires a backend that declares `search.vector` ' +
-          '(currently Firestore Standard and Enterprise). There is no ' +
-          'client-side fallback because emulating ANN on top of the generic ' +
-          'backend surface does not scale beyond toy datasets.',
+          '(currently Firestore Standard, Firestore Enterprise, and the ' +
+          'local better-sqlite3 backend). There is no client-side fallback ' +
+          'because emulating ANN on top of the generic backend surface does ' +
+          'not scale beyond toy datasets.',
         'UNSUPPORTED_OPERATION',
       );
     }
@@ -844,13 +845,15 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
    * Native full-text search (capability `search.fullText`).
    *
    * Returns the top-N records by relevance, ordered by the search
-   * index's score. Only Firestore Enterprise declares this capability
-   * today — the underlying Pipelines `search({ query: documentMatches(...) })`
-   * stage requires Enterprise's FTS index. Standard does not declare
-   * the cap (FTS is an Enterprise-only product feature, not a
-   * typed-API gap), and the SQLite-shaped backends have no native
-   * FTS index. Backends without `search.fullText` throw
-   * `UNSUPPORTED_OPERATION` from this wrapper.
+   * index's score. Firestore Enterprise declares this capability (via
+   * the Pipelines `search({ query: documentMatches(...) })` stage over
+   * Enterprise's FTS index), as does the local better-sqlite3 backend
+   * (`firegraph/sqlite-local`, via a trigger-synced FTS5 index ranked
+   * by `bm25()`). Standard does not declare the cap (FTS is an
+   * Enterprise-only product feature, not a typed-API gap); D1 and the
+   * Cloudflare DO edition have no FTS trigger infrastructure. Backends
+   * without `search.fullText` throw `UNSUPPORTED_OPERATION` from this
+   * wrapper.
    *
    * Scan-protection mirrors `findNearest`: a search with no
    * identifying filters (`aType` / `axbType` / `bType`) walks every
@@ -868,8 +871,8 @@ export class GraphClientImpl implements CoreGraphClient, DynamicGraphMethods {
       throw new FiregraphError(
         'fullTextSearch() is not supported by the current storage backend. ' +
           'Full-text search requires a backend that declares `search.fullText` ' +
-          '(currently Firestore Enterprise only — FTS is an Enterprise product ' +
-          'feature). There is no client-side fallback because emulating FTS over ' +
+          '(currently Firestore Enterprise and the local better-sqlite3 ' +
+          'backend). There is no client-side fallback because emulating FTS over ' +
           'the generic backend surface would not scale beyond toy datasets.',
         'UNSUPPORTED_OPERATION',
       );

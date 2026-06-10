@@ -1083,9 +1083,14 @@ export interface FullTextSearchParams {
  *     Enterprise product feature, not a free-tier feature).
  *   - **Firestore Standard** — not supported. FTS is an Enterprise-only
  *     product feature; this row will never become "✓".
- *   - **SQLite / Cloudflare DO** — not supported. No native FTS index;
- *     emulating it over `json_extract` is not viable for any realistic
- *     dataset.
+ *   - **Local SQLite (`firegraph/sqlite-local`)** ✓ — backed by one FTS5
+ *     table per graph table, kept in sync by pure-SQL triggers and ranked
+ *     by `bm25()`. The whole `data` payload is indexed as one combined
+ *     text column, so a non-empty `fields` list is rejected with
+ *     `INVALID_QUERY`.
+ *   - **Shared SQLite (D1) / Cloudflare DO** — not supported. No FTS5
+ *     trigger infrastructure on those runtimes; emulating FTS over
+ *     `json_extract` is not viable for any realistic dataset.
  *
  * Migrations are NOT applied to the result. The search index walked
  * the raw stored shape; rehydrating each row through the migration
@@ -1303,12 +1308,15 @@ export interface FindNearestParams {
  * Native vector / nearest-neighbour search.
  *
  * Backends declaring `search.vector` translate the call into a single
- * server-side `findNearest` query. The SQLite-shaped backends (shared
- * SQLite, Cloudflare DO) do not declare this capability — they have no
- * native vector index, and emulating ANN on top of `json_extract` is a
- * non-starter for any realistic dataset. Firestore Standard and
- * Enterprise both implement it via the classic `Query.findNearest(...)`
- * API; the pipeline `findNearest` stage is a future optimisation.
+ * server-side `findNearest` query. Firestore Standard and Enterprise
+ * both implement it via the classic `Query.findNearest(...)` API; the
+ * pipeline `findNearest` stage is a future optimisation. The local
+ * better-sqlite3 backend (`firegraph/sqlite-local`) implements it as a
+ * brute-force scan scored by a deterministic SQL UDF — exact rather
+ * than approximate, fine for local files at local-file scale. The D1
+ * and Cloudflare DO editions do not declare the capability: those
+ * runtimes expose no UDF registration surface, and emulating ANN on top
+ * of `json_extract` alone is a non-starter for any realistic dataset.
  *
  * Migrations are NOT applied to the result. The vector query selects
  * documents by similarity, not by query plan — applying migrations

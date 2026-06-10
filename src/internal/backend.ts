@@ -313,11 +313,14 @@ export interface StorageBackend<C extends Capability = Capability> {
   // --- Native vector / nearest-neighbour search ---
   /**
    * Run a vector / nearest-neighbour query. Present only on backends that
-   * declare `search.vector`. There is no client-side fallback — the
-   * SQLite-shaped backends (shared SQLite, Cloudflare DO) genuinely have
-   * no native ANN index, and a JS-side k-NN sweep over `findEdges()` would
-   * scale catastrophically. Backends without the cap throw
-   * `UNSUPPORTED_OPERATION` from the client wrapper.
+   * declare `search.vector`. There is no client-side fallback — backends
+   * without the cap throw `UNSUPPORTED_OPERATION` from the client wrapper.
+   * In-tree: both Firestore editions (native ANN via `Query.findNearest`)
+   * and the local better-sqlite3 backend (`firegraph/sqlite-local`, a
+   * brute-force UDF-scored scan — exact, not approximate). The D1 and
+   * Cloudflare DO editions stay without the cap: no UDF registration
+   * surface, and a JS-side k-NN sweep over `findEdges()` would scale
+   * catastrophically.
    *
    * `params` carries the user-facing shape (vector field path, query
    * vector, distance metric, optional threshold and result-field). The
@@ -347,11 +350,14 @@ export interface StorageBackend<C extends Capability = Capability> {
   // --- Native full-text search ---
   /**
    * Run a full-text search query. Present only on backends that declare
-   * `search.fullText`. There is no client-side fallback — the only
-   * in-tree backend that supports it is Firestore Enterprise (via
-   * Pipeline `search({ query: documentMatches(...) })`); Standard and
-   * the SQLite-shaped backends throw `UNSUPPORTED_OPERATION` from the
-   * client wrapper.
+   * `search.fullText`. There is no client-side fallback — backends
+   * without the cap throw `UNSUPPORTED_OPERATION` from the client
+   * wrapper. In-tree: Firestore Enterprise (via Pipeline
+   * `search({ query: documentMatches(...) })`) and the local
+   * better-sqlite3 backend (`firegraph/sqlite-local`, via a
+   * trigger-synced FTS5 index ranked by `bm25()`). Firestore Standard
+   * never gets it (Enterprise-only product feature); D1 and the
+   * Cloudflare DO edition don't ship FTS5 trigger infrastructure.
    *
    * The backend is responsible for path normalisation (rewriting
    * bare `fields` entries to `data.<name>`, rejecting envelope fields
