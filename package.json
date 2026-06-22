@@ -106,6 +106,16 @@
         "types": "./dist/sqlite/local.d.cts",
         "default": "./dist/sqlite/local.cjs"
       }
+    },
+    "./sqlite-builtin": {
+      "import": {
+        "types": "./dist/sqlite/node-sqlite.d.ts",
+        "default": "./dist/sqlite/node-sqlite.js"
+      },
+      "require": {
+        "types": "./dist/sqlite/node-sqlite.d.cts",
+        "default": "./dist/sqlite/node-sqlite.cjs"
+      }
     }
   },
   "bin": {
