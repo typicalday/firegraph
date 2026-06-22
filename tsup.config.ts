@@ -13,6 +13,7 @@ export default defineConfig({
     'src/firestore-enterprise/index.ts',
     'src/sqlite/index.ts',
     'src/sqlite/local.ts',
+    'src/sqlite/node-sqlite.ts',
   ],
   format: ['esm', 'cjs'],
   dts: true,
