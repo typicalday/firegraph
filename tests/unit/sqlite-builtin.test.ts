@@ -18,11 +18,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createGraphClient } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
 import { tableForScope } from '../../src/sqlite/catalog.js';
-import { createNodeSqliteBackend, createNodeSqliteExecutor } from '../../src/sqlite/node-sqlite.js';
 
 // node:sqlite requires Node >= 22.5. Check by version.
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
 const HAS_NODE_SQLITE = nodeMajor > 22 || (nodeMajor === 22 && (nodeMinor ?? 0) >= 5);
+
+// These are populated dynamically inside HAS_NODE_SQLITE-guarded beforeAll blocks.
+// They must NOT be imported statically — node:sqlite throws at load time on Node < 22.5.
+
+let createNodeSqliteBackend: (...args: any[]) => Promise<any>;
+
+let createNodeSqliteExecutor: (...args: any[]) => any;
 
 let dir: string;
 
@@ -39,6 +45,11 @@ function tempDbPath(name: string): string {
 }
 
 describe.skipIf(!HAS_NODE_SQLITE)('createNodeSqliteBackend', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
   it('opens a file database and persists data across close/reopen', async () => {
     const path = tempDbPath('persist');
     const uid = generateId();
@@ -236,6 +247,11 @@ describe.skipIf(!HAS_NODE_SQLITE)('createNodeSqliteBackend', () => {
 });
 
 describe.skipIf(!HAS_NODE_SQLITE)('createNodeSqliteExecutor', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
   it('rolls back manual transactions when the callback rejects', async () => {
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(':memory:');

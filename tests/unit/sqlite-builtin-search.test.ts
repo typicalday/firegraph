@@ -27,11 +27,17 @@ import {
 } from '../../src/internal/sqlite-search.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import { tableForScope } from '../../src/sqlite/catalog.js';
-import { createNodeSqliteBackend, createNodeSqliteExecutor } from '../../src/sqlite/node-sqlite.js';
 
 // node:sqlite requires Node >= 22.5. Check by version.
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
 const HAS_NODE_SQLITE = nodeMajor > 22 || (nodeMajor === 22 && (nodeMinor ?? 0) >= 5);
+
+// These are populated dynamically inside HAS_NODE_SQLITE-guarded beforeAll blocks.
+// They must NOT be imported statically — node:sqlite throws at load time on Node < 22.5.
+
+let createNodeSqliteBackend: (...args: any[]) => Promise<any>;
+
+let createNodeSqliteExecutor: (...args: any[]) => any;
 
 let dir: string;
 
@@ -53,6 +59,11 @@ async function memoryClient() {
 }
 
 describe.skipIf(!HAS_NODE_SQLITE)('capability surface', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
   it('declares search.fullText and search.vector on top of the shared set', async () => {
     const { backend, close } = await createNodeSqliteBackend(':memory:');
     const caps = new Set(backend.capabilities.values());
@@ -90,6 +101,11 @@ describe.skipIf(!HAS_NODE_SQLITE)('capability surface', () => {
 });
 
 describe.skipIf(!HAS_NODE_SQLITE)('fullTextSearch', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
   it('matches text anywhere in the data payload and ranks by bm25', async () => {
     const { client, close } = await memoryClient();
     const alps = generateId();
@@ -402,6 +418,11 @@ describe.skipIf(!HAS_NODE_SQLITE)('fullTextSearch', () => {
 });
 
 describe.skipIf(!HAS_NODE_SQLITE)('findNearest', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
   async function seededVectors() {
     const ctx = await memoryClient();
     const near = generateId();
