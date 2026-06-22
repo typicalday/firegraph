@@ -129,21 +129,21 @@ if (client.capabilities.has('query.join')) {
 
 **Capability values:**
 
-| Capability                                                  | Methods unlocked                                                 | Backends                                                                                                                                                                                 |
-| ----------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `core.read` / `core.write` / `core.batch` / `core.subgraph` | `getNode`, `putNode`, `findEdges`, `batch()`, `subgraph()`, etc. | All                                                                                                                                                                                      |
-| `core.transactions`                                         | `runTransaction(fn)`                                             | Firestore (both), SQLite (`better-sqlite3` only; absent on D1); **absent on Cloudflare DO**                                                                                              |
-| `query.aggregate`                                           | `aggregate(spec)`                                                | All; `min`/`max` only on SQLite + DO (both Firestore editions reject `min`/`max` — classic `Query.aggregate` exposes only count/sum/avg)                                                 |
-| `query.select`                                              | `findEdgesProjected(params)`                                     | All                                                                                                                                                                                      |
-| `query.join`                                                | `expand(params)`                                                 | All                                                                                                                                                                                      |
-| `query.dml`                                                 | `bulkDelete(params)`, `bulkUpdate(params)`                       | Enterprise (requires `previewDml: true`), SQLite, DO                                                                                                                                     |
-| `traversal.serverSide`                                      | `runEngineTraversal(params)`                                     | Enterprise                                                                                                                                                                               |
-| `search.vector`                                             | `findNearest(params)`                                            | Firestore (both), local SQLite (`firegraph/sqlite-local` — exact brute-force scan via a SQL distance function)                                                                           |
-| `search.fullText`                                           | `fullTextSearch(params)`                                         | Enterprise, local SQLite (`firegraph/sqlite-local` — FTS5, bm25-ranked). **Note:** the `fields` option is not yet supported — passing a non-empty `fields` array throws `INVALID_QUERY`. |
-| `search.geo`                                                | `geoSearch(params)`                                              | Enterprise                                                                                                                                                                               |
-| `raw.firestore`                                             | _(reserved — no methods yet)_                                    | Firestore (both)                                                                                                                                                                         |
-| `raw.sql`                                                   | _(reserved — no methods yet)_                                    | SQLite                                                                                                                                                                                   |
-| `realtime.listen`                                           | _(reserved — no methods yet)_                                    | _(none currently)_                                                                                                                                                                       |
+| Capability                                                  | Methods unlocked                                                 | Backends                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `core.read` / `core.write` / `core.batch` / `core.subgraph` | `getNode`, `putNode`, `findEdges`, `batch()`, `subgraph()`, etc. | All                                                                                                                                                                                                                                                                      |
+| `core.transactions`                                         | `runTransaction(fn)`                                             | Firestore (both), SQLite (`better-sqlite3` only; absent on D1); **absent on Cloudflare DO**                                                                                                                                                                              |
+| `query.aggregate`                                           | `aggregate(spec)`                                                | All; `min`/`max` only on SQLite + DO (both Firestore editions reject `min`/`max` — classic `Query.aggregate` exposes only count/sum/avg)                                                                                                                                 |
+| `query.select`                                              | `findEdgesProjected(params)`                                     | All                                                                                                                                                                                                                                                                      |
+| `query.join`                                                | `expand(params)`                                                 | All                                                                                                                                                                                                                                                                      |
+| `query.dml`                                                 | `bulkDelete(params)`, `bulkUpdate(params)`                       | Enterprise (requires `previewDml: true`), SQLite, DO                                                                                                                                                                                                                     |
+| `traversal.serverSide`                                      | `runEngineTraversal(params)`                                     | Enterprise                                                                                                                                                                                                                                                               |
+| `search.vector`                                             | `findNearest(params)`                                            | Firestore (both), local SQLite (`firegraph/sqlite-local` — exact brute-force scan via a SQL distance function), Node.js built-in SQLite (`firegraph/sqlite-builtin` — same brute-force scan, Node >= 22.5)                                                               |
+| `search.fullText`                                           | `fullTextSearch(params)`                                         | Enterprise, local SQLite (`firegraph/sqlite-local` — FTS5, bm25-ranked), Node.js built-in SQLite (`firegraph/sqlite-builtin` — same FTS5, Node >= 22.5). **Note:** the `fields` option is not yet supported — passing a non-empty `fields` array throws `INVALID_QUERY`. |
+| `search.geo`                                                | `geoSearch(params)`                                              | Enterprise                                                                                                                                                                                                                                                               |
+| `raw.firestore`                                             | _(reserved — no methods yet)_                                    | Firestore (both)                                                                                                                                                                                                                                                         |
+| `raw.sql`                                                   | _(reserved — no methods yet)_                                    | SQLite                                                                                                                                                                                                                                                                   |
+| `realtime.listen`                                           | _(reserved — no methods yet)_                                    | _(none currently)_                                                                                                                                                                                                                                                       |
 
 ### Extension Methods
 
@@ -1193,6 +1193,23 @@ const similar = await g.findNearest({
   limit: 5,
 });
 ```
+
+### Node.js Built-in SQLite (`firegraph/sqlite-builtin`)
+
+For Node.js >= 22.5, use the built-in `node:sqlite` factory. It has the same capability set as `firegraph/sqlite-local` — including `search.fullText` and `search.vector` — but requires no native addon or peer dependency, only a sufficiently recent Node.js.
+
+```typescript
+import { createNodeSqliteBackend } from 'firegraph/sqlite-builtin';
+import { createGraphClient } from 'firegraph';
+
+const { backend, db, close } = createNodeSqliteBackend('./graph.db', {
+  tableName: 'graph', // default 'firegraph'
+});
+const g = createGraphClient(backend, { registry });
+close();
+```
+
+`createNodeSqliteBackend` also accepts an already-open `DatabaseSync` instance (in which case `close()` is a no-op) and `':memory:'` for ephemeral graphs. `createNodeSqliteExecutor(db)` is exported separately for wiring `createSqliteBackend` directly.
 
 ### Cloudflare Durable Object Backend (`firegraph/cloudflare`)
 
