@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/typicalday/firegraph/compare/v0.17.0...v0.17.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **sqlite-builtin:** preserve node:sqlite specifier in built dist ([#33](https://github.com/typicalday/firegraph/issues/33)) ([2751c89](https://github.com/typicalday/firegraph/commit/2751c895ecc9d9df9b31bfb7f781716778b40574))
+
 ## [0.17.0](https://github.com/typicalday/firegraph/compare/v0.16.1...v0.17.0) (2026-06-22)
 
 
