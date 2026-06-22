@@ -20,6 +20,12 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   target: 'node18',
+  // Preserve the `node:` scheme on Node built-in imports in the emitted output.
+  // tsup defaults this to `true` which strips `node:` from all built-in specifiers.
+  // Disabling it lets esbuild (platform: node) handle built-ins natively, which
+  // preserves `node:sqlite` so that the `external` entry below takes effect and
+  // the emitted dist retains `"node:sqlite"` rather than the non-existent `"sqlite"`.
+  removeNodeProtocol: false,
   external: [
     '@google-cloud/firestore',
     'json-schema-to-typescript',
@@ -30,6 +36,10 @@ export default defineConfig({
     // Optional peer — only `firegraph/sqlite-local` imports it (dynamically).
     // Mark external so the native module is never bundled.
     'better-sqlite3',
+    // Node 22.5+ built-in — only resolvable at runtime, not at build time.
+    // Without this entry esbuild (via the node18 target) strips the `node:` scheme
+    // and emits bare `"sqlite"` which does not exist as an npm package.
+    'node:sqlite',
     // Virtual workerd builtin — only resolvable inside Cloudflare Workers.
     // Mark external so esbuild/tsup leaves the import alone for the runtime
     // to handle. Without this, bundling fails: there's no real module to

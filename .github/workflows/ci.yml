@@ -174,3 +174,6 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Verify dist — node:sqlite import integrity
+        run: pnpm test:unit tests/unit/sqlite-builtin-dist.test.ts
