@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/typicalday/firegraph/compare/v0.16.1...v0.17.0) (2026-06-22)
+
+
+### Features
+
+* **sqlite-builtin:** add node:sqlite DatabaseSync backend (firegraph/sqlite-builtin) ([#30](https://github.com/typicalday/firegraph/issues/30)) ([f66e186](https://github.com/typicalday/firegraph/commit/f66e186a3500bed5bac3da3aa896d53d079620aa))
+
 ## [0.16.1](https://github.com/typicalday/firegraph/compare/v0.16.0...v0.16.1) (2026-06-10)
 
 
