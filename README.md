@@ -1177,6 +1177,20 @@ On top of the shared SQLite capability set, the local factory declares `search.f
 - **`fullTextSearch(params)`** — every graph table gets a contentless FTS5 index kept in sync by pure-SQL triggers (`json_tree` extracts all string leaves from `data`, so nested fields are searchable). Results are ranked by bm25. FTS5 query syntax (`AND` / `OR` / `NOT`, `"phrase"` quoting, `prefix*`) passes through; malformed queries throw `INVALID_QUERY`. The `fields` option is not supported (the index is one combined text column) — a non-empty `fields` array throws `INVALID_QUERY`, matching Firestore Enterprise. Because the triggers are plain SQL, writes from _any_ connection or process stay indexed, and rows written before the index existed are backfilled on bootstrap.
 - **`findNearest(params)`** — exact (not approximate) nearest-neighbour via a brute-force scan scored by a connection-local SQL distance function. Supports `EUCLIDEAN`, `COSINE`, and `DOT_PRODUCT`, plus `distanceThreshold` and `distanceResultField`, mirroring Firestore semantics (rows with a missing field, wrong dimension, or non-finite values are silently skipped). Vector queries must run through the factory-created backend — the distance function is registered per connection.
 
+  By default the scan reads each candidate vector out of the JSON `data` payload and parses it per row. Declaring the field as a vector lets the backend skip that per-row `JSON.parse`: add an `IndexSpec` with `vector: { field, dimension }` (and an empty `fields: []`) to the triple's `indexes` in the registry. The backend then maintains a Float64 little-endian BLOB shadow column `__vec_<field>` and scores it directly. Rankings and distances stay byte-identical to the JSON path. The shadow column is added and backfilled **lazily on the first `findNearest`** for that field, and a pure-SQL trigger nulls it whenever `data` changes so the next query re-backfills. Undeclared fields keep working through the JSON path unchanged, and on a read-only database the acceleration is skipped (it falls back to the JSON scan). Only `firegraph/sqlite-local` and `firegraph/sqlite-builtin` honour `vector`; every other backend (Firestore, D1, Cloudflare DO) ignores it.
+
+  ```typescript
+  const registry = createRegistry([
+    {
+      aType: 'tour',
+      axbType: 'is',
+      bType: 'tour',
+      // Accelerate findNearest on data.embedding (768-dim) for the local backends.
+      indexes: [{ fields: [], vector: { field: 'embedding', dimension: 768 } }],
+    },
+  ]);
+  ```
+
 ```typescript
 const hits = await g.fullTextSearch({
   aType: 'tour',

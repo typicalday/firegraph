@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createGraphClient } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
+import { generateIndexConfig } from '../../src/indexes.js';
 import {
   computeVectorDistance,
   findOrphanedFtsTables,
@@ -25,6 +26,7 @@ import {
   ftsTableName,
   isFts5QueryError,
 } from '../../src/internal/sqlite-search.js';
+import { createRegistry } from '../../src/registry.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
 import { tableForScope } from '../../src/sqlite/catalog.js';
 import { createBetterSqliteExecutor, createLocalSqliteBackend } from '../../src/sqlite/local.js';
@@ -651,6 +653,354 @@ describe('findNearest', () => {
       client.findNearest({ ...base, aType: 'doc', axbType: 'is', queryVector: 'nope' as never }),
     ).rejects.toMatchObject({ code: 'INVALID_QUERY' });
     close();
+  });
+});
+
+describe('findNearest — Float64 shadow BLOB column', () => {
+  // A registry that DECLARES `data.embedding` as a 3-dim vector. Passing this
+  // to the local factory is what materializes the `__vec_embedding` shadow
+  // column and switches findNearest onto the blob-scoring branch. Without it,
+  // findNearest runs the pure-JSON path (covered by the `findNearest` block).
+  const vectorRegistry = () =>
+    createRegistry([
+      {
+        aType: 'doc',
+        axbType: 'is',
+        bType: 'doc',
+        indexes: [{ vector: { field: 'embedding', dimension: 3 }, fields: [] }],
+      },
+    ]);
+
+  async function memoryVectorClient() {
+    const local = await createLocalSqliteBackend(':memory:', { registry: vectorRegistry() });
+    return { client: createGraphClient(local.backend), ...local };
+  }
+
+  async function seededVectorClient() {
+    const ctx = await memoryVectorClient();
+    const near = generateId();
+    const mid = generateId();
+    const far = generateId();
+    const noVec = generateId();
+    const wrongDim = generateId();
+    await ctx.client.putNode('doc', near, { title: 'near', embedding: [1, 0, 0] });
+    await ctx.client.putNode('doc', mid, { title: 'mid', embedding: [0.5, 0.5, 0] });
+    await ctx.client.putNode('doc', far, { title: 'far', embedding: [0, 0, 1] });
+    await ctx.client.putNode('doc', noVec, { title: 'none' });
+    await ctx.client.putNode('doc', wrongDim, { title: 'wrong', embedding: [1, 0] });
+    return { ...ctx, near, mid, far, noVec, wrongDim };
+  }
+
+  // Open a factory over a caller-managed better-sqlite3 handle (needed for the
+  // read-only reopen tests — the factory always opens a writable handle from a
+  // path). Passing a Database instance means the factory's `close` is a no-op,
+  // so callers close the handle they own.
+  async function factoryOver(db: Database.Database, withRegistry: boolean) {
+    const local = await createLocalSqliteBackend(
+      db,
+      withRegistry ? { registry: vectorRegistry() } : {},
+    );
+    return { local, client: createGraphClient(local.backend) };
+  }
+
+  const eucQuery = { vectorField: 'embedding', distanceMeasure: 'EUCLIDEAN' as const };
+
+  it('materializes and populates the __vec_embedding shadow column', async () => {
+    const ctx = await seededVectorClient();
+    const { client, db, close, near, mid, far, noVec, wrongDim } = ctx;
+    // Trigger the lazy ensure + backfill.
+    const results = await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [1, 0, 0],
+      limit: 10,
+    });
+    expect(results.map((r) => r.aUid)).toEqual([near, mid, far]);
+
+    const cols = db.prepare(`PRAGMA table_info('firegraph')`).all() as Array<{ name: string }>;
+    expect(cols.some((c) => c.name === '__vec_embedding')).toBe(true);
+
+    const rows = db
+      .prepare(
+        `SELECT doc_id, __vec_embedding IS NOT NULL AS has_blob, length(__vec_embedding) AS len ` +
+          `FROM 'firegraph' WHERE axb_type = 'is'`,
+      )
+      .all() as Array<{ doc_id: string; has_blob: number; len: number | null }>;
+    const byId = new Map(rows.map((r) => [r.doc_id, r]));
+    // Conforming 3-dim vectors get a 24-byte (3 × Float64) blob.
+    expect(byId.get(near)?.has_blob).toBe(1);
+    expect(byId.get(near)?.len).toBe(24);
+    expect(byId.get(mid)?.has_blob).toBe(1);
+    expect(byId.get(far)?.has_blob).toBe(1);
+    // Missing vector and wrong-dimension rows keep a NULL blob → JSON branch.
+    expect(byId.get(noVec)?.has_blob).toBe(0);
+    expect(byId.get(wrongDim)?.has_blob).toBe(0);
+    close();
+  });
+
+  it('scores byte-identically to the JSON path for every measure', async () => {
+    for (const measure of ['EUCLIDEAN', 'COSINE', 'DOT_PRODUCT'] as const) {
+      const { client, close, near, mid, far } = await seededVectorClient();
+      const q = [1, 0, 0];
+      const results = await client.findNearest({
+        aType: 'doc',
+        axbType: 'is',
+        vectorField: 'embedding',
+        queryVector: q,
+        limit: 10,
+        distanceMeasure: measure,
+        distanceResultField: '__d',
+      });
+      const stored: Record<string, number[]> = {
+        [near]: [1, 0, 0],
+        [mid]: [0.5, 0.5, 0],
+        [far]: [0, 0, 1],
+      };
+      for (const r of results) {
+        const expected = computeVectorDistance(
+          JSON.stringify(stored[r.aUid]),
+          JSON.stringify(q),
+          measure,
+        );
+        // Exact equality — the blob scorer must reproduce the JSON scorer's
+        // doubles bit-for-bit (same decode, same accumulation order).
+        expect((r.data as { __d: number }).__d).toBe(expected);
+      }
+      close();
+    }
+  });
+
+  it('falls back to the JSON branch for a conforming row whose blob is NULL (back-compat)', async () => {
+    const { client, db, close, near } = await seededVectorClient();
+    // Materialize + backfill.
+    await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [1, 0, 0],
+      limit: 10,
+    });
+    // Simulate a row written by a connection that never backfilled: a valid
+    // vector but a NULL shadow blob. The cached ensure won't re-backfill, so
+    // the CASE must fall to json_extract for this row.
+    db.prepare(`UPDATE 'firegraph' SET __vec_embedding = NULL WHERE doc_id = ?`).run(near);
+    const results = await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      vectorField: 'embedding',
+      queryVector: [1, 0, 0],
+      limit: 1,
+      distanceMeasure: 'COSINE',
+      distanceResultField: '__d',
+    });
+    expect(results[0].aUid).toBe(near);
+    expect((results[0].data as { __d: number }).__d).toBeCloseTo(0, 12);
+    close();
+  });
+
+  it('degrades wrong-dimension and missing-vector rows out of the result', async () => {
+    const { client, close, near, mid, far, noVec, wrongDim } = await seededVectorClient();
+    const results = await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [1, 0, 0],
+      limit: 10,
+    });
+    const uids = results.map((r) => r.aUid);
+    expect(uids).toEqual([near, mid, far]);
+    expect(uids).not.toContain(noVec);
+    expect(uids).not.toContain(wrongDim);
+    close();
+  });
+
+  it('nulls the shadow blob on a data change and re-scores correctly afterwards', async () => {
+    const { client, db, close, near } = await seededVectorClient();
+    await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [1, 0, 0],
+      limit: 10,
+    });
+    // Change the embedding — the AFTER UPDATE null-on-change trigger fires.
+    await client.updateNode(near, { embedding: [0, 1, 0] });
+    const after = db
+      .prepare(`SELECT __vec_embedding IS NULL AS is_null FROM 'firegraph' WHERE doc_id = ?`)
+      .get(near) as { is_null: number };
+    expect(after.is_null).toBe(1);
+    // A fresh client re-materializes/backfills; the row is scored against the
+    // new vector (exact match → distance 0).
+    const fresh = createGraphClient(
+      (await createLocalSqliteBackend(db, { registry: vectorRegistry() })).backend,
+    );
+    const results = await fresh.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      vectorField: 'embedding',
+      queryVector: [0, 1, 0],
+      limit: 1,
+      distanceMeasure: 'EUCLIDEAN',
+      distanceResultField: '__d',
+    });
+    expect(results[0].aUid).toBe(near);
+    expect((results[0].data as { __d: number }).__d).toBeCloseTo(0, 12);
+    close();
+  });
+
+  it('returns correct results via the blob branch on a read-only handle (no throw)', async () => {
+    const path = tempDbPath('vec-ro-materialized');
+    const writable = new Database(path);
+    const seeded = await factoryOver(writable, true);
+    const near = generateId();
+    const far = generateId();
+    await seeded.client.putNode('doc', near, { title: 'near', embedding: [1, 0, 0] });
+    await seeded.client.putNode('doc', far, { title: 'far', embedding: [0, 0, 1] });
+    // Force the shadow column + backfill to fully materialize while writable.
+    await seeded.client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [1, 0, 0],
+      limit: 10,
+    });
+    writable.close();
+
+    const ro = new Database(path, { readonly: true });
+    const reopened = await factoryOver(ro, true);
+    const results = await reopened.client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      vectorField: 'embedding',
+      queryVector: [1, 0, 0],
+      limit: 10,
+      distanceMeasure: 'COSINE',
+    });
+    expect(results.map((r) => r.aUid)).toEqual([near, far]);
+    ro.close();
+  });
+
+  it('returns correct results via the JSON branch on a read-only handle with no shadow column (no throw)', async () => {
+    const path = tempDbPath('vec-ro-json');
+    // Seed WITHOUT the registry, so the shadow column is never created.
+    const writable = new Database(path);
+    const seeded = await factoryOver(writable, false);
+    const near = generateId();
+    const far = generateId();
+    await seeded.client.putNode('doc', near, { title: 'near', embedding: [1, 0, 0] });
+    await seeded.client.putNode('doc', far, { title: 'far', embedding: [0, 0, 1] });
+    writable.close();
+
+    // Reopen read-only WITH the registry: the lazy ensure would try to ALTER +
+    // backfill (writes) and the base bootstrap would try its catalog INSERT —
+    // all rejected on a read-only handle. findNearest must swallow those and
+    // score through the pure-JSON branch instead of throwing.
+    const ro = new Database(path, { readonly: true });
+    const reopened = await factoryOver(ro, true);
+    const results = await reopened.client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      vectorField: 'embedding',
+      queryVector: [1, 0, 0],
+      limit: 10,
+      distanceMeasure: 'COSINE',
+    });
+    expect(results.map((r) => r.aUid)).toEqual([near, far]);
+    ro.close();
+  });
+
+  it('self-heals the shadow column on a recreated subgraph after a parent cascade', async () => {
+    const { client, close } = await memoryVectorClient();
+    const parentUid = generateId();
+    await client.putNode('tour', parentUid, { name: 'host' });
+    const sub = client.subgraph(parentUid, 'docs');
+    await sub.putNode('doc', generateId(), { title: 'old', embedding: [0, 1, 0] });
+
+    const cascade = await client.removeNodeCascade(parentUid);
+    expect(cascade.nodeDeleted).toBe(true);
+
+    // The cascade dropped the subgraph table (and its shadow column). The next
+    // vector search must re-bootstrap the table, re-materialize the shadow
+    // column/trigger/backfill, and retry — not throw a stale "no such column".
+    const afterDrop = await sub.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [0, 1, 0],
+      limit: 5,
+    });
+    expect(afterDrop).toHaveLength(0);
+
+    const rebornUid = generateId();
+    await sub.putNode('doc', rebornUid, { title: 'new', embedding: [0, 1, 0] });
+    const reborn = await sub.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      ...eucQuery,
+      queryVector: [0, 1, 0],
+      limit: 5,
+      distanceResultField: '__d',
+    });
+    expect(reborn.map((r) => r.aUid)).toEqual([rebornUid]);
+    expect((reborn[0].data as { __d: number }).__d).toBeCloseTo(0, 12);
+    close();
+  });
+
+  it('ranks a larger dataset identically to the reference JSON scorer', async () => {
+    const { client, close } = await memoryVectorClient();
+    const n = 200;
+    const uids: string[] = [];
+    const vectors: Record<string, number[]> = {};
+    for (let i = 0; i < n; i++) {
+      const uid = generateId();
+      const vec = [Math.sin(i), Math.cos(i * 0.5), (i % 7) / 7];
+      uids.push(uid);
+      vectors[uid] = vec;
+      await client.putNode('doc', uid, { i, embedding: vec });
+    }
+    const q = [0.3, -0.4, 0.5];
+    const results = await client.findNearest({
+      aType: 'doc',
+      axbType: 'is',
+      vectorField: 'embedding',
+      queryVector: q,
+      limit: 10,
+      distanceMeasure: 'EUCLIDEAN',
+      distanceResultField: '__d',
+    });
+    // Reference: score every vector with the JSON scorer and take the top 10.
+    const reference = uids
+      .map((uid) => ({
+        uid,
+        d: computeVectorDistance(JSON.stringify(vectors[uid]), JSON.stringify(q), 'EUCLIDEAN')!,
+      }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 10);
+    expect(results.map((r) => r.aUid)).toEqual(reference.map((r) => r.uid));
+    // And the distances the blob path emitted match the reference bit-for-bit.
+    results.forEach((r, idx) => {
+      expect((r.data as { __d: number }).__d).toBe(reference[idx].d);
+    });
+    close();
+  });
+
+  it('generateIndexConfig ignores a vector-only spec (no throw, contributes nothing)', () => {
+    // A vector-only spec carries `fields: []`; the Firestore generator emits
+    // composite indexes only for specs with ≥2 fields, so the vector entry must
+    // add nothing beyond the always-present core defaults.
+    const baseline = generateIndexConfig('firegraph', { registryEntries: [] });
+    const withVector = generateIndexConfig('firegraph', {
+      registryEntries: [
+        {
+          aType: 'doc',
+          axbType: 'is',
+          bType: 'doc',
+          indexes: [{ vector: { field: 'embedding', dimension: 3 }, fields: [] }],
+        },
+      ],
+    });
+    expect(withVector.indexes).toEqual(baseline.indexes);
   });
 });
 

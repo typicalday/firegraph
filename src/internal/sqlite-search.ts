@@ -36,14 +36,27 @@
  */
 
 import { FiregraphError } from '../errors.js';
-import type { FindNearestParams, FullTextSearchParams, QueryFilter } from '../types.js';
+import type {
+  FindNearestParams,
+  FullTextSearchParams,
+  GraphRegistry,
+  QueryFilter,
+} from '../types.js';
 import { validateJsonPathKey } from './sqlite-data-ops.js';
 import { quoteIdent } from './sqlite-schema.js';
 import type { CompiledStatement } from './sqlite-sql.js';
 import { compileFilterConditions } from './sqlite-sql.js';
 
-/** Name of the connection-local vector-distance UDF. */
+/** Name of the connection-local vector-distance UDF (JSON-string path). */
 export const VECTOR_DISTANCE_UDF = 'firegraph_vector_distance';
+
+/**
+ * Name of the connection-local vector-distance UDF that scores a Float64
+ * little-endian BLOB shadow column directly, skipping the per-row
+ * `JSON.parse` the JSON-path UDF pays. Registered alongside
+ * `VECTOR_DISTANCE_UDF`; used only for DECLARED + MATERIALIZED vector fields.
+ */
+export const VECTOR_DISTANCE_BLOB_UDF = 'firegraph_vector_distance_blob';
 
 /** Column alias carrying the computed distance through the vector query. */
 export const DISTANCE_ALIAS = '__fg_distance';
@@ -326,6 +339,19 @@ export function isFts5QueryError(message: string): boolean {
   return FTS5_QUERY_ERROR_SIGNATURES.some((sig) => lower.includes(sig));
 }
 
+/**
+ * True when a thrown error is SQLite's read-only-database write rejection.
+ * better-sqlite3 and node:sqlite both surface it as "attempt to write a
+ * readonly database" (SQLITE_READONLY). The `findNearest` read path uses this
+ * to tolerate a failing schema/vector bootstrap on a read-only handle and fall
+ * through to the pure-JSON query branch — the schema a read-only DB needs was
+ * necessarily materialized while it was still writable.
+ */
+export function isReadonlyWriteError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /readonly|read-only|SQLITE_READONLY/i.test(message);
+}
+
 const DISTANCE_MEASURES: ReadonlySet<string> = new Set(['EUCLIDEAN', 'COSINE', 'DOT_PRODUCT']);
 
 export interface CompiledVectorQuery {
@@ -371,8 +397,21 @@ function toNumberArray(qv: number[] | { toArray(): number[] }): number[] {
  * Validation parity with `runFirestoreFindNearest`: envelope-field
  * rejection on both field params, non-empty query vector, positive
  * integer limit ≤ 1000.
+ *
+ * `declaredVectors` lists ONLY the declared vector fields whose Float64 LE
+ * BLOB shadow column PROVABLY EXISTS on the handle running the query (the
+ * factories compute this from a `PRAGMA table_info` check + read-only
+ * guard). When the requested `vectorField` matches one, the score
+ * expression becomes a CASE that scores the blob column via
+ * `firegraph_vector_distance_blob` when it is non-NULL and falls back to the
+ * JSON-path UDF otherwise (a not-yet-backfilled or wrong-dimension row).
+ * Undeclared / unmaterialized fields keep exactly today's pure-JSON path.
  */
-export function compileFindNearest(table: string, params: FindNearestParams): CompiledVectorQuery {
+export function compileFindNearest(
+  table: string,
+  params: FindNearestParams,
+  declaredVectors?: ReadonlyArray<DeclaredVector>,
+): CompiledVectorQuery {
   const vec = toNumberArray(params.queryVector);
   if (vec.length === 0) {
     throw new FiregraphError(
@@ -396,6 +435,7 @@ export function compileFindNearest(table: string, params: FindNearestParams): Co
 
   const vectorField = normalizeVectorFieldPath('vectorField', params.vectorField);
   let vectorExpr: string;
+  let bareField: string | null = null;
   if (vectorField === 'data') {
     vectorExpr = '"data"';
   } else {
@@ -404,7 +444,13 @@ export function compileFindNearest(table: string, params: FindNearestParams): Co
       validateJsonPathKey(part, BACKEND_ERR_LABEL);
     }
     vectorExpr = `json_extract("data", '$.${suffix}')`;
+    bareField = suffix;
   }
+
+  // Blob fast path only when the requested field is a declared vector whose
+  // shadow column exists on this handle.
+  const declared =
+    bareField !== null ? declaredVectors?.find((d) => d.field === bareField) : undefined;
 
   let distancePath: string[] | null = null;
   if (params.distanceResultField !== undefined) {
@@ -423,9 +469,23 @@ export function compileFindNearest(table: string, params: FindNearestParams): Co
   }
 
   // Bound-parameter order tracks placeholder order in the statement text:
-  // the two UDF arguments in the SELECT list come first, then the inner
-  // WHERE filters, then threshold and limit.
-  const sqlParams: unknown[] = [JSON.stringify(vec), params.distanceMeasure];
+  // the UDF arguments in the SELECT list come first (the CASE has TWO
+  // placeholder pairs — blob branch, then JSON branch — so push in textual
+  // order), then the inner WHERE filters, then threshold and limit.
+  const queryJson = JSON.stringify(vec);
+  const sqlParams: unknown[] = [];
+  let scoreExpr: string;
+  if (declared) {
+    const col = quoteIdent(declared.shadowColumn);
+    scoreExpr =
+      `CASE WHEN ${col} IS NOT NULL ` +
+      `THEN ${VECTOR_DISTANCE_BLOB_UDF}(${col}, ?, ?) ` +
+      `ELSE ${VECTOR_DISTANCE_UDF}(${vectorExpr}, ?, ?) END`;
+    sqlParams.push(queryJson, params.distanceMeasure, queryJson, params.distanceMeasure);
+  } else {
+    scoreExpr = `${VECTOR_DISTANCE_UDF}(${vectorExpr}, ?, ?)`;
+    sqlParams.push(queryJson, params.distanceMeasure);
+  }
   const conditions = compileFilterConditions(buildSearchFilters(params), sqlParams);
   const innerWhere = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
   const dist = quoteIdent(DISTANCE_ALIAS);
@@ -433,7 +493,7 @@ export function compileFindNearest(table: string, params: FindNearestParams): Co
 
   let sql =
     `SELECT * FROM (` +
-    `SELECT *, ${VECTOR_DISTANCE_UDF}(${vectorExpr}, ?, ?) AS ${dist} ` +
+    `SELECT *, ${scoreExpr} AS ${dist} ` +
     `FROM ${quoteIdent(table)}${innerWhere}` +
     `) WHERE ${dist} IS NOT NULL`;
   if (params.distanceThreshold !== undefined) {
@@ -535,6 +595,234 @@ export function computeVectorDistance(
       return null;
   }
   return Number.isFinite(result) ? result : null;
+}
+
+/**
+ * Derive the safe SQLite column identifier for a declared vector field's
+ * shadow BLOB. `field` is a bare `data`-relative name (no `data.` prefix).
+ * Each dotted part is validated with `validateJsonPathKey` — the same rule
+ * the query path enforces — so exotic keys fail loudly rather than
+ * producing an unquotable column. Dots become underscores so
+ * `'nested.vec'` maps to `'__vec_nested_vec'`.
+ */
+export function vectorShadowColumn(field: string): string {
+  for (const part of field.split('.')) {
+    validateJsonPathKey(part, BACKEND_ERR_LABEL);
+  }
+  return `__vec_${field.replace(/\./g, '_')}`;
+}
+
+/**
+ * Encode a numeric vector as a Float64 little-endian BLOB. The byte layout
+ * mirrors `DataView.getFloat64(offset, true)` so `computeVectorDistanceBlob`
+ * reconstructs the exact same doubles that `computeVectorDistance` reads
+ * from the JSON path — the basis of the byte-identical-ranking guarantee.
+ *
+ * Bound as a SQL parameter for the backfill UPDATE: better-sqlite3 and
+ * node:sqlite both bind a `Uint8Array` as a BLOB.
+ */
+export function encodeVectorBlob(vec: number[]): Uint8Array {
+  const buf = new ArrayBuffer(vec.length * 8);
+  const view = new DataView(buf);
+  for (let i = 0; i < vec.length; i++) {
+    view.setFloat64(i * 8, vec[i], true);
+  }
+  return new Uint8Array(buf);
+}
+
+/**
+ * Scalar UDF body for `firegraph_vector_distance_blob(storedBlob, queryJson,
+ * measure)`. Math-identical to `computeVectorDistance`, but reads the stored
+ * vector from a Float64 little-endian BLOB instead of a JSON string — no
+ * per-row `JSON.parse`.
+ *
+ * Accepts whatever the driver hands a BLOB column: a `Uint8Array` (node:sqlite
+ * and better-sqlite3 both pass a `Buffer`, which is a `Uint8Array` subclass)
+ * or an `ArrayBuffer`. Honors the view's `byteOffset` / `byteLength`. Returns
+ * `null` (row drops out, same as the JSON path) when the byte length is not a
+ * multiple of 8, the decoded dimension mismatches the query, or any entry is
+ * non-finite / non-numeric.
+ *
+ * The query-vector parse is memoized through the SAME module-level memo as
+ * `computeVectorDistance`: within one findNearest the query JSON string is
+ * identical across both UDFs, so the parse is paid once per query, not per row.
+ *
+ * Exported for direct unit testing (parity with `computeVectorDistance`).
+ */
+export function computeVectorDistanceBlob(
+  storedBlob: unknown,
+  queryJson: unknown,
+  measure: unknown,
+): number | null {
+  if (typeof queryJson !== 'string' || typeof measure !== 'string') {
+    return null;
+  }
+
+  let view: DataView;
+  let byteLength: number;
+  if (storedBlob instanceof Uint8Array) {
+    // Covers Node `Buffer` (a Uint8Array subclass) — respect byteOffset.
+    view = new DataView(storedBlob.buffer, storedBlob.byteOffset, storedBlob.byteLength);
+    byteLength = storedBlob.byteLength;
+  } else if (storedBlob instanceof ArrayBuffer) {
+    view = new DataView(storedBlob);
+    byteLength = storedBlob.byteLength;
+  } else {
+    return null;
+  }
+
+  let query: number[];
+  if (memoQueryJson === queryJson && memoQueryVec !== null) {
+    query = memoQueryVec;
+  } else {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(queryJson);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(parsed)) return null;
+    query = parsed as number[];
+    memoQueryJson = queryJson;
+    memoQueryVec = query;
+  }
+
+  if (byteLength % 8 !== 0) return null;
+  const dim = byteLength / 8;
+  if (dim !== query.length) return null;
+
+  let dot = 0;
+  let sumSq = 0;
+  let normStored = 0;
+  let normQuery = 0;
+  for (let i = 0; i < dim; i++) {
+    const a = view.getFloat64(i * 8, true);
+    const b = query[i];
+    if (!Number.isFinite(a)) return null;
+    if (typeof b !== 'number' || !Number.isFinite(b)) return null;
+    dot += a * b;
+    const diff = a - b;
+    sumSq += diff * diff;
+    normStored += a * a;
+    normQuery += b * b;
+  }
+
+  let result: number;
+  switch (measure) {
+    case 'EUCLIDEAN':
+      result = Math.sqrt(sumSq);
+      break;
+    case 'COSINE': {
+      const denom = Math.sqrt(normStored) * Math.sqrt(normQuery);
+      if (denom === 0) return null;
+      result = 1 - dot / denom;
+      break;
+    }
+    case 'DOT_PRODUCT':
+      result = dot;
+      break;
+    default:
+      return null;
+  }
+  return Number.isFinite(result) ? result : null;
+}
+
+/**
+ * Pure-SQL trigger that NULLs a vector's shadow column whenever the row's
+ * `data` changes, so the next `findNearest` backfill re-encodes it. AFTER
+ * UPDATE only (a fresh column defaults NULL, so INSERT needs no trigger),
+ * guarded by `WHEN new."data" IS NOT old."data"` — the backfill UPDATE
+ * touches only the shadow column, leaving `data` untouched, so it does NOT
+ * self-invalidate. SQLite can't assign `NEW.col` in a trigger, so this
+ * issues a real UPDATE keyed by `doc_id`; recursive triggers are off by
+ * default, so that UPDATE does not re-fire this trigger.
+ */
+export function buildVectorNullOnChangeTrigger(table: string, field: string): string {
+  const t = quoteIdent(table);
+  const col = quoteIdent(vectorShadowColumn(field));
+  const name = quoteIdent(`${table}__vec_${field.replace(/\./g, '_')}_nullonchange`);
+  return (
+    `CREATE TRIGGER IF NOT EXISTS ${name} AFTER UPDATE ON ${t}\n` +
+    `  WHEN new."data" IS NOT old."data" BEGIN\n` +
+    `  UPDATE ${t} SET ${col} = NULL WHERE "doc_id" = new."doc_id";\n` +
+    `END`
+  );
+}
+
+/**
+ * `ALTER TABLE … ADD COLUMN` for a vector's shadow BLOB. The single
+ * non-idempotent statement in the ensure path — the factory guards it with
+ * a `PRAGMA table_info` check and a duplicate-column catch.
+ */
+export function vectorAddColumnSql(table: string, field: string): string {
+  return `ALTER TABLE ${quoteIdent(table)} ADD COLUMN ${quoteIdent(vectorShadowColumn(field))} BLOB`;
+}
+
+/**
+ * SELECT of the rows still needing a blob: shadow column IS NULL and the
+ * JSON field is present. `v` carries the raw `json_extract` result (a JSON
+ * text for an array value) which the factory parses + validates + encodes in
+ * JS. `field` parts are validated by `vectorShadowColumn`, so the inlined
+ * `$.<field>` JSON path is injection-safe.
+ */
+export function vectorBackfillSelectSql(table: string, field: string): string {
+  const col = quoteIdent(vectorShadowColumn(field));
+  const path = `$.${field}`;
+  return (
+    `SELECT "doc_id", json_extract("data", '${path}') AS v ` +
+    `FROM ${quoteIdent(table)} ` +
+    `WHERE ${col} IS NULL AND json_extract("data", '${path}') IS NOT NULL`
+  );
+}
+
+/** UPDATE binding `[blob, doc_id]` to populate one row's shadow column. */
+export function vectorBackfillUpdateSql(table: string, field: string): string {
+  const col = quoteIdent(vectorShadowColumn(field));
+  return `UPDATE ${quoteIdent(table)} SET ${col} = ? WHERE "doc_id" = ?`;
+}
+
+/**
+ * A declared vector field whose shadow column PROVABLY EXISTS on the handle
+ * running the query — the only kind `compileFindNearest` may reference in
+ * SQL. Produced by the factories' JS ensure step.
+ */
+export interface DeclaredVector {
+  field: string;
+  dimension: number;
+  shadowColumn: string;
+}
+
+/**
+ * Collect vector declarations from a registry: flatten entries → indexes →
+ * `spec.vector`, deduped by field. Throws `INVALID_ARGUMENT` if one field is
+ * declared with two different dimensions (a shared physical table can hold
+ * only one blob layout per field). Runs once at factory time so a
+ * misconfigured registry fails fast at construction, not at query time.
+ */
+export function collectVectorDeclarations(
+  registry: GraphRegistry | undefined,
+): Array<{ field: string; dimension: number }> {
+  if (!registry) return [];
+  const byField = new Map<string, number>();
+  for (const entry of registry.entries()) {
+    for (const spec of entry.indexes ?? []) {
+      if (spec.vector === undefined) continue;
+      const { field, dimension } = spec.vector;
+      // Validate the field name (rejects exotic keys) via the naming helper.
+      vectorShadowColumn(field);
+      const existing = byField.get(field);
+      if (existing !== undefined && existing !== dimension) {
+        throw new FiregraphError(
+          `IndexSpec.vector: field '${field}' declared with conflicting dimensions ` +
+            `(${existing} vs ${dimension}). A shared physical table can hold only one ` +
+            `blob layout per field.`,
+          'INVALID_ARGUMENT',
+        );
+      }
+      byField.set(field, dimension);
+    }
+  }
+  return [...byField.entries()].map(([field, dimension]) => ({ field, dimension }));
 }
 
 /**
