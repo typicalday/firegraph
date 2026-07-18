@@ -610,7 +610,9 @@ const backend = createFirestoreStandardBackend(db, 'graph');
 const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
-    const compartment = new Compartment({/* endowments */});
+    const compartment = new Compartment({
+      /* endowments */
+    });
     return compartment.evaluate(source);
   },
 });
