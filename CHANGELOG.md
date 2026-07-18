@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/typicalday/firegraph/compare/v0.17.1...v0.18.0) (2026-07-18)
+
+
+### Features
+
+* **sqlite-local:** Float64 LE shadow-BLOB vector column for findNearest ([#35](https://github.com/typicalday/firegraph/issues/35)) ([df99abf](https://github.com/typicalday/firegraph/commit/df99abf323cf039ba56b4c6b32add9e0081b0db8))
+
 ## [0.17.1](https://github.com/typicalday/firegraph/compare/v0.17.0...v0.17.1) (2026-06-22)
 
 
