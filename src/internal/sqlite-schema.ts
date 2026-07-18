@@ -94,7 +94,15 @@ export function buildSchemaStatements(table: string, options: BuildSchemaOptions
   ];
 
   const core = options.coreIndexes ?? [...DEFAULT_CORE_INDEXES];
-  const fromRegistry = options.registry?.entries().flatMap((e) => e.indexes ?? []) ?? [];
+  // Vector declarations (`IndexSpec.vector`) are NOT composite indexes — they
+  // carry an empty `fields: []` that would crash `buildIndexDDL` (INVALID_INDEX
+  // on empty fields). The shadow column is materialized separately by the local
+  // factories' JS ensure step, so drop vector specs here. Core indexes never
+  // carry `vector`, so filtering only the registry slice is sufficient.
+  const fromRegistry =
+    options.registry
+      ?.entries()
+      .flatMap((e) => (e.indexes ?? []).filter((spec) => spec.vector === undefined)) ?? [];
 
   const deduped = dedupeIndexSpecs([...core, ...fromRegistry]);
   for (const spec of deduped) {

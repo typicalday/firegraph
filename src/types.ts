@@ -231,6 +231,18 @@ export interface IndexSpec {
    * generator — Firestore composite indexes do not support predicates.
    */
   where?: string;
+  /**
+   * Marks this spec as a vector declaration for the local SQLite backends
+   * (`firegraph/sqlite-local`, `firegraph/sqlite-builtin`). When set, the
+   * backend maintains a Float64 little-endian BLOB shadow column
+   * (`__vec_<field>`) for `field` so `findNearest` can score without a
+   * per-row `JSON.parse`. `field` is a bare `data`-relative field name
+   * (e.g. `'embedding'` or `'nested.vec'`); `dimension` is the fixed vector
+   * length. Ignored by every other backend (Firestore, D1, Cloudflare DO).
+   * A vector spec typically carries an empty `fields: []` — it does not
+   * create a composite index.
+   */
+  vector?: { field: string; dimension: number };
 }
 
 export interface RegistryEntry {

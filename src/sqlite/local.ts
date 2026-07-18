@@ -39,18 +39,29 @@ import type { StorageBackend } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
 import { quoteIdent, validateTableName } from '../internal/sqlite-schema.js';
+import type { DeclaredVector } from '../internal/sqlite-search.js';
 import {
   buildLocalSearchDDL,
+  buildVectorNullOnChangeTrigger,
+  collectVectorDeclarations,
   compileFindNearest,
   compileFullTextSearch,
   computeVectorDistance,
+  computeVectorDistanceBlob,
   DISTANCE_ALIAS,
+  encodeVectorBlob,
   findOrphanedFtsTables,
   ftsMapTableName,
   ftsTableName,
   isFts5QueryError,
+  isReadonlyWriteError,
   setDataPath,
+  VECTOR_DISTANCE_BLOB_UDF,
   VECTOR_DISTANCE_UDF,
+  vectorAddColumnSql,
+  vectorBackfillSelectSql,
+  vectorBackfillUpdateSql,
+  vectorShadowColumn,
 } from '../internal/sqlite-search.js';
 import { rowToRecord } from '../internal/sqlite-sql.js';
 import type { FindNearestParams, FullTextSearchParams, StoredGraphRecord } from '../types.js';
@@ -192,6 +203,13 @@ function registerVectorUdf(db: BetterSqliteDb): void {
   } catch {
     // Already registered on this connection.
   }
+  try {
+    db.function(VECTOR_DISTANCE_BLOB_UDF, { deterministic: true }, (blob, query, measure) =>
+      computeVectorDistanceBlob(blob, query, measure),
+    );
+  } catch {
+    // Already registered on this connection.
+  }
 }
 
 /**
@@ -233,6 +251,7 @@ function wrapLocalSearchBackend(
   inner: SqliteStorageBackend,
   executor: SqliteExecutor,
   rootTable: string,
+  vectorDecls: ReadonlyArray<{ field: string; dimension: number }>,
 ): StorageBackend<LocalSqliteCapability> {
   const caps = new Set<LocalSqliteCapability>([
     ...(inner.capabilities.values() as IterableIterator<SqliteCapability>),
@@ -263,6 +282,115 @@ function wrapLocalSearchBackend(
     }
   };
 
+  // Lazy JS ensure of the declared vector shadow columns for THIS resolved
+  // table, cached on the wrapper instance (like SqliteBackendImpl.ensured).
+  // Returns only the declared vectors whose Float64 LE BLOB shadow column
+  // PROVABLY EXISTS on this handle — exactly what compileFindNearest may
+  // reference in SQL. Reset to null by the findNearest self-heal so a
+  // cascade-recreated table re-materializes the column/trigger/backfill.
+  let vecEnsured: Promise<DeclaredVector[]> | null = null;
+
+  // Parse + validate + encode the rows still missing a blob, then bind the
+  // BLOB as a parameter. Dimension validation lives HERE (refinement 1/4): a
+  // wrong-length or non-numeric vector is skipped, leaving the shadow column
+  // NULL, so at query time its row hits the JSON branch and drops out.
+  const backfillVectorColumn = async (
+    table: string,
+    decl: { field: string; dimension: number },
+  ): Promise<void> => {
+    const rows = await executor.all(vectorBackfillSelectSql(table, decl.field), []);
+    if (rows.length === 0) return;
+    const updateSql = vectorBackfillUpdateSql(table, decl.field);
+    const updates: { sql: string; params: unknown[] }[] = [];
+    for (const row of rows) {
+      const raw = row.v;
+      // json_extract of a stored array returns its JSON text; anything else
+      // (scalar, object) is not a vector — skip it.
+      if (typeof raw !== 'string') continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed) || parsed.length !== decl.dimension) continue;
+      let ok = true;
+      for (const n of parsed) {
+        if (typeof n !== 'number' || !Number.isFinite(n)) {
+          ok = false;
+          break;
+        }
+      }
+      if (!ok) continue;
+      updates.push({
+        sql: updateSql,
+        params: [encodeVectorBlob(parsed as number[]), String(row.doc_id)],
+      });
+    }
+    if (updates.length > 0) await executor.batch(updates);
+  };
+
+  // `inner.ensureReady()` bootstraps the base schema — table DDL plus a
+  // catalog-register INSERT and any FTS reconciliation. Those are WRITES, so on
+  // a read-only handle the bootstrap throws before findNearest can read. But a
+  // read-only DB's schema was necessarily created while it was writable, so we
+  // tolerate the read-only write failure and query what's already there; any
+  // other bootstrap error still propagates.
+  const ensureReadyTolerant = async (force = false): Promise<void> => {
+    try {
+      await inner.ensureReady(force);
+    } catch (err) {
+      if (!isReadonlyWriteError(err)) throw err;
+    }
+  };
+
+  const doVecEnsure = async (): Promise<DeclaredVector[]> => {
+    if (vectorDecls.length === 0) return [];
+    await ensureReadyTolerant();
+    const table = inner.collectionPath;
+    let existingCols: Set<string>;
+    try {
+      const info = await executor.all(`PRAGMA table_info(${quoteIdent(table)})`, []);
+      existingCols = new Set(info.map((r) => String(r.name)));
+    } catch {
+      // Can't even read the schema — no blob path; reads use pure JSON.
+      return [];
+    }
+    const materialized: DeclaredVector[] = [];
+    for (const decl of vectorDecls) {
+      const shadowColumn = vectorShadowColumn(decl.field);
+      let columnExists = existingCols.has(shadowColumn);
+      if (!columnExists) {
+        try {
+          // The ALTER is the one non-idempotent statement — run it OUTSIDE the
+          // chunked extraTableDDL transaction, guarded by the table_info check.
+          await executor.run(vectorAddColumnSql(table, decl.field), []);
+          columnExists = true;
+        } catch (err) {
+          // A lost race (a concurrent connection added it first) surfaces as
+          // "duplicate column name" — treat the column as present. Any other
+          // write failure (read-only DB) leaves it unmaterialized, so
+          // compileFindNearest never references a missing column.
+          const msg = err instanceof Error ? err.message : String(err);
+          columnExists = /duplicate column name/i.test(msg);
+        }
+      }
+      if (!columnExists) continue;
+      // Column exists → usable for reads even on a read-only handle.
+      materialized.push({ field: decl.field, dimension: decl.dimension, shadowColumn });
+      // Best-effort trigger + backfill. On a read-only DB these writes throw;
+      // swallow and let the CASE fall back to the JSON branch for NULL blobs.
+      try {
+        await executor.run(buildVectorNullOnChangeTrigger(table, decl.field), []);
+        await backfillVectorColumn(table, decl);
+      } catch {
+        // read-only or transient write failure — reads stay correct.
+      }
+    }
+    return materialized;
+  };
+  const runVecEnsure = (): Promise<DeclaredVector[]> => (vecEnsured ??= doVecEnsure());
+
   const wrapper: StorageBackend<LocalSqliteCapability> = {
     capabilities: createCapabilities(caps),
     collectionPath: inner.collectionPath,
@@ -277,7 +405,7 @@ function wrapLocalSearchBackend(
     createBatch: () => inner.createBatch(),
 
     subgraph: (parentNodeUid, name) =>
-      wrapLocalSearchBackend(inner.subgraph(parentNodeUid, name), executor, rootTable),
+      wrapLocalSearchBackend(inner.subgraph(parentNodeUid, name), executor, rootTable, vectorDecls),
 
     removeNodeCascade: async (uid, reader, options) => {
       const result = await inner.removeNodeCascade(uid, reader, options);
@@ -299,20 +427,60 @@ function wrapLocalSearchBackend(
     // is its own table; there is no cross-table index.
 
     async findNearest(params: FindNearestParams): Promise<StoredGraphRecord[]> {
-      const { stmt, distancePath } = compileFindNearest(inner.collectionPath, params);
-      const rows = await runWithSchema(() => executor.all(stmt.sql, stmt.params));
-      return rows.map((row) => {
-        const record = rowToRecord(row);
-        if (distancePath) {
-          const distance = row[DISTANCE_ALIAS];
-          setDataPath(
-            record.data as Record<string, unknown>,
-            distancePath,
-            typeof distance === 'number' ? distance : Number(distance),
-          );
+      const run = async (): Promise<{
+        rows: Record<string, unknown>[];
+        distancePath: string[] | null;
+      }> => {
+        // Ensure the base table (covers the no-declaration case, where
+        // runVecEnsure short-circuits without bootstrapping), then materialize
+        // shadow columns BEFORE compiling so the SQL only references a column
+        // that provably exists. `ensureReadyTolerant` lets a read-only handle
+        // fall through to the pure-JSON branch instead of throwing on the
+        // bootstrap's catalog write.
+        await ensureReadyTolerant();
+        const materialized = await runVecEnsure();
+        const { stmt, distancePath } = compileFindNearest(
+          inner.collectionPath,
+          params,
+          materialized,
+        );
+        const rows = await executor.all(stmt.sql, stmt.params);
+        return { rows, distancePath };
+      };
+      const toRecords = (result: {
+        rows: Record<string, unknown>[];
+        distancePath: string[] | null;
+      }): StoredGraphRecord[] =>
+        result.rows.map((row) => {
+          const record = rowToRecord(row);
+          if (result.distancePath) {
+            const distance = row[DISTANCE_ALIAS];
+            setDataPath(
+              record.data as Record<string, unknown>,
+              result.distancePath,
+              typeof distance === 'number' ? distance : Number(distance),
+            );
+          }
+          return record;
+        });
+      try {
+        return toRecords(await run());
+      } catch (err) {
+        // Same self-heal as runWithSchema, plus a shadow-column cache reset:
+        // after a parent cascade drops+recreates the table the shadow column
+        // and trigger are gone, so a "no such table" (or a stale
+        // "no such column: __vec…") must re-materialize against the reborn
+        // table before the single retry.
+        const message = err instanceof Error ? err.message : String(err);
+        const missing = /no such table: (\S+)/.exec(message)?.[1];
+        const missingVecCol = /no such column: "?__vec_/.test(message);
+        if ((missing === undefined || !healableTables.has(missing)) && !missingVecCol) {
+          throw err;
         }
-        return record;
-      });
+        await inner.ensureReady(true);
+        vecEnsured = null;
+        return toRecords(await run());
+      }
     },
 
     async fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
@@ -420,9 +588,13 @@ export async function createLocalSqliteBackend(
     ],
   };
 
+  // Collect DECLARED vector fields once at factory time; a misconfigured
+  // registry (conflicting dimensions for one field) fails fast here.
+  const vectorDecls = collectVectorDeclarations(backendOptions.registry);
+
   const executor = createBetterSqliteExecutor(db);
   const inner = createSqliteBackend(executor, tableName, optionsWithSearch);
-  const backend = wrapLocalSearchBackend(inner, executor, tableName);
+  const backend = wrapLocalSearchBackend(inner, executor, tableName, vectorDecls);
   let closed = false;
   return {
     backend,
