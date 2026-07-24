@@ -36,6 +36,7 @@
  */
 
 import { FiregraphError } from '../errors.js';
+import { mangleStorageScope } from '../sqlite/catalog.js';
 import type {
   FindNearestParams,
   FullTextSearchParams,
@@ -89,6 +90,44 @@ export function ftsMapTableName(table: string): string {
 }
 
 /**
+ * Supplementary per-type FTS5 table for one `(graph table, a_type)` pair —
+ * the opt-in mechanism that gives a single `a_type` its own BM25 statistics
+ * (`bm25()` computes IDF over the WHOLE physical index, so the shared
+ * `<t>_fts` mixes every a_type's document frequencies together and inserting
+ * other-type rows shifts within-type ranking; a per-type table holds only
+ * that a_type's rows, so its IDF is isolated).
+ *
+ * WHY CONFIGURED (opt-in) AND NOT DYNAMIC: the FTS sync triggers are pure
+ * SQL that must run identically from ANY connection or process touching the
+ * file (the "any-connection invariant"), and a trigger body cannot
+ * parameterize a table name. Creating a per-type table on demand at write
+ * time would break that invariant, so the set of per-type a_types is declared
+ * up front (`perTypeFtsStats` backend option) and the triggers carry literal,
+ * escaped `a_type` guards.
+ *
+ * NAMING — the `_fts_t_` infix (NOT the bare `_fts_<mangled>` the design
+ * sketch used) is deliberate and load-bearing for correctness. FTS5 creates
+ * shadow tables for the shared index named `<t>_fts_data`, `<t>_fts_idx`,
+ * `<t>_fts_docsize`, `<t>_fts_config`, and the stable-rowid map is
+ * `<t>_fts_map`. A bare `<t>_fts_<mangleStorageScope(aType)>` would COLLIDE
+ * with those whenever a configured a_type is `data` / `idx` / `docsize` /
+ * `config` / `content` / `map` (all pass through `mangleStorageScope`
+ * unchanged) — `CREATE VIRTUAL TABLE <t>_fts_data` would clash with the
+ * shared index's own `_data` shadow. The `_t_` infix cannot equal any FTS5
+ * shadow suffix or the `map` suffix, so per-type tables and their own shadow
+ * tables never collide with the shared index's artifacts. `mangleStorageScope`
+ * is injective, so two distinct a_types never collide with each other either.
+ */
+export function perTypeFtsTableName(table: string, aType: string): string {
+  return `${table}_fts_t_${mangleStorageScope(aType)}`;
+}
+
+/** Escape a string literal for inline SQL (standard single-quote doubling). */
+function escapeSqlLiteral(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
  * SQL fragment extracting every string value in a `data` JSON payload as
  * one space-joined text blob. Pure SQL (`json_tree`), so it is evaluatable
  * inside triggers from any connection.
@@ -110,12 +149,30 @@ function textExtractionExpr(dataRef: string): string {
  * UPDATE. Both re-derive the indexed text from `new."data"`, and both
  * start with a defensive delete of any stale FTS row so replayed writes
  * never double-index.
+ *
+ * PER-TYPE STATS (`perTypeFtsStats`): when a non-empty list of a_types is
+ * passed, one supplementary FTS5 table per a_type (`perTypeFtsTableName`) is
+ * created ALONGSIDE the shared `<t>_fts`, and its maintenance is FOLDED INTO
+ * the same three shared triggers rather than installed as separate per-type
+ * triggers. Folding — not separate `WHEN`-guarded per-type triggers — is
+ * required for correctness on DELETE: the shared AD trigger deletes the map
+ * row, and a separate per-type AD trigger keyed through the map would race it
+ * (SQLite does not guarantee inter-trigger firing order), leaving a per-type
+ * ghost. One trigger with a deterministic statement order (per-type deletes
+ * BEFORE the map delete) removes that race. Folding into AU also lets the
+ * per-type table follow a row whose `a_type` CHANGES on update (delete the
+ * old per-type row unconditionally, re-insert only when the row still belongs
+ * to the type) — a case a `WHEN new.a_type = 'T'` per-type trigger cannot see.
+ *
+ * With an empty / omitted `perTypeFtsStats` the emitted strings are
+ * byte-identical to the pre-per-type DDL (backward compatibility).
  */
-export function buildFtsDDL(table: string): string[] {
+export function buildFtsDDL(table: string, perTypeFtsStats: readonly string[] = []): string[] {
   const t = quoteIdent(table);
   const fts = quoteIdent(ftsTableName(table));
   const map = quoteIdent(ftsMapTableName(table));
   const mappedId = `(SELECT "id" FROM ${map} WHERE "doc_id" = new."doc_id")`;
+  const mappedIdOld = `(SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id")`;
   // The map insert must be conflict-free rather than `INSERT OR IGNORE`:
   // when the outer statement is the backend's upsert (`INSERT … ON CONFLICT
   // DO UPDATE`), SQLite replaces conflict handling inside trigger programs
@@ -125,17 +182,37 @@ export function buildFtsDDL(table: string): string[] {
     `WHERE NOT EXISTS (SELECT 1 FROM ${map} WHERE "doc_id" = new."doc_id");\n` +
     `  DELETE FROM ${fts} WHERE rowid = ${mappedId};\n` +
     `  INSERT INTO ${fts} (rowid, "text") VALUES (${mappedId}, ${textExtractionExpr('new."data"')});\n`;
+
+  // Per-type maintenance folded into the shared upsert/delete triggers.
+  let perTypeUpsertBody = '';
+  let perTypeDeleteBody = '';
+  const perTypeTableDDL: string[] = [];
+  for (const aType of perTypeFtsStats) {
+    const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
+    const literal = `'${escapeSqlLiteral(aType)}'`;
+    perTypeTableDDL.push(`CREATE VIRTUAL TABLE IF NOT EXISTS ${ptfts} USING fts5("text")`);
+    // Defensive delete (covers reindex AND a row leaving this type), then a
+    // guarded insert that re-adds the row only when it belongs to the type.
+    perTypeUpsertBody +=
+      `  DELETE FROM ${ptfts} WHERE rowid = ${mappedId};\n` +
+      `  INSERT INTO ${ptfts} (rowid, "text") ` +
+      `SELECT ${mappedId}, ${textExtractionExpr('new."data"')} WHERE new."a_type" = ${literal};\n`;
+    // Delete BEFORE the shared AD removes the map row (deterministic order).
+    perTypeDeleteBody += `  DELETE FROM ${ptfts} WHERE rowid = ${mappedIdOld};\n`;
+  }
+
   return [
     `CREATE TABLE IF NOT EXISTS ${map} (
       "id"     INTEGER PRIMARY KEY AUTOINCREMENT,
       "doc_id" TEXT NOT NULL UNIQUE
     )`,
     `CREATE VIRTUAL TABLE IF NOT EXISTS ${fts} USING fts5("text")`,
-    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_ai`)} AFTER INSERT ON ${t} BEGIN\n${reindexBody}END`,
-    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_au`)} AFTER UPDATE ON ${t} BEGIN\n${reindexBody}END`,
+    ...perTypeTableDDL,
+    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_ai`)} AFTER INSERT ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`,
+    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_au`)} AFTER UPDATE ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`,
     `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_ad`)} AFTER DELETE ON ${t} BEGIN
   DELETE FROM ${fts} WHERE rowid = (SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id");
-  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
+${perTypeDeleteBody}  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
 END`,
   ];
 }
@@ -152,11 +229,14 @@ END`,
  *   3–4. Backfill map/FTS rows for graph rows that predate the FTS
  *        infrastructure (e.g. a database written by an older firegraph).
  */
-export function buildFtsSyncStatements(table: string): string[] {
+export function buildFtsSyncStatements(
+  table: string,
+  perTypeFtsStats: readonly string[] = [],
+): string[] {
   const t = quoteIdent(table);
   const fts = quoteIdent(ftsTableName(table));
   const map = quoteIdent(ftsMapTableName(table));
-  return [
+  const statements = [
     `DELETE FROM ${fts} WHERE rowid IN (
       SELECT m."id" FROM ${map} m LEFT JOIN ${t} t ON t."doc_id" = m."doc_id"
       WHERE t."doc_id" IS NULL
@@ -168,14 +248,44 @@ export function buildFtsSyncStatements(table: string): string[] {
       FROM ${t} t JOIN ${map} m ON m."doc_id" = t."doc_id"
       WHERE m."id" NOT IN (SELECT rowid FROM ${fts})`,
   ];
+  // Per-type backfill runs AFTER the shared map backfill (statement 3 above)
+  // so the shared `_fts_map` rows the per-type tables key off already exist.
+  // Idempotent: purge ghosts (doc_id gone OR a_type no longer this type),
+  // then insert only the type's rows that are missing. This is what makes
+  // opting in on an already-populated DB, and reads from a second
+  // connection, correct without a write on the read path.
+  for (const aType of perTypeFtsStats) {
+    const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
+    const literal = `'${escapeSqlLiteral(aType)}'`;
+    statements.push(
+      `DELETE FROM ${ptfts} WHERE rowid IN (
+      SELECT m."id" FROM ${map} m LEFT JOIN ${t} t ON t."doc_id" = m."doc_id"
+      WHERE t."doc_id" IS NULL OR t."a_type" <> ${literal}
+    )`,
+      `INSERT INTO ${ptfts} (rowid, "text")
+      SELECT m."id", ${textExtractionExpr('t."data"')}
+      FROM ${t} t JOIN ${map} m ON m."doc_id" = t."doc_id"
+      WHERE t."a_type" = ${literal} AND m."id" NOT IN (SELECT rowid FROM ${ptfts})`,
+    );
+  }
+  return statements;
 }
 
 /**
  * Full `extraTableDDL` payload for `firegraph/sqlite-local`: FTS
- * infrastructure plus the reconciliation pass.
+ * infrastructure plus the reconciliation pass. `perTypeFtsStats` (the
+ * backend's configured per-type a_types) appends the supplementary per-type
+ * tables + their backfill after the shared DDL; empty/omitted reproduces the
+ * pre-per-type payload exactly.
  */
-export function buildLocalSearchDDL(table: string): string[] {
-  return [...buildFtsDDL(table), ...buildFtsSyncStatements(table)];
+export function buildLocalSearchDDL(
+  table: string,
+  perTypeFtsStats: readonly string[] = [],
+): string[] {
+  return [
+    ...buildFtsDDL(table, perTypeFtsStats),
+    ...buildFtsSyncStatements(table, perTypeFtsStats),
+  ];
 }
 
 /**
@@ -255,6 +365,7 @@ function buildSearchFilters(params: {
 export function compileFullTextSearch(
   table: string,
   params: FullTextSearchParams,
+  perTypeFtsStats: readonly string[] = [],
 ): CompiledStatement {
   if (typeof params.query !== 'string' || params.query.length === 0) {
     throw new FiregraphError(
@@ -279,7 +390,20 @@ export function compileFullTextSearch(
   }
 
   const t = quoteIdent(table);
-  const fts = quoteIdent(ftsTableName(table));
+  // Per-type stats are used only when the caller opts in (`perTypeStats`),
+  // the search targets exactly one a_type, AND that a_type has a maintained
+  // per-type table for this graph table. Otherwise fall back to the shared
+  // `<t>_fts` (no aType / multiple types / unconfigured type) — a non-error
+  // fallback, per constraint 2 (cross-type search unchanged). The per-type
+  // table shares the `<t>_fts_map` rowid, so only the FTS/MATCH/bm25 table
+  // changes; the map + base joins and the a_type WHERE predicate stay.
+  const usePerType =
+    params.perTypeStats === true &&
+    typeof params.aType === 'string' &&
+    perTypeFtsStats.includes(params.aType);
+  const fts = quoteIdent(
+    usePerType ? perTypeFtsTableName(table, params.aType as string) : ftsTableName(table),
+  );
   const map = quoteIdent(ftsMapTableName(table));
 
   const sqlParams: unknown[] = [params.query];
@@ -851,36 +975,78 @@ export function setDataPath(
 }
 
 /**
- * Identify orphaned FTS artifacts (`<t>_fts` / `<t>_fts_map`) whose base
- * graph table no longer exists — left behind when a parent cascade DROPs a
- * descendant subgraph table (triggers die with the table; the FTS
- * artifacts do not).
+ * Identify orphaned FTS artifacts (`<t>_fts` / `<t>_fts_map`, plus each
+ * configured per-type `<t>_fts_t_<mangled>`) whose base graph table no longer
+ * exists — left behind when a parent cascade DROPs a descendant subgraph
+ * table (triggers die with the table; the FTS artifacts do not).
  *
- * Safety against false positives: only names under the subgraph prefix
- * (`<rootTable>_g_`) are considered, a candidate must NOT itself be a
- * registered graph table (`catalogTables` — covers a real graph whose
- * mangled scope happens to end in `_fts`), and its base table must be
- * absent from `allTables`. FTS5 shadow tables (`<t>_fts_data`,
- * `<t>_fts_idx`, …) never match the suffix patterns and are dropped
- * implicitly with their parent virtual table.
+ * Two-pass, driven by the KNOWN configured type list rather than suffix
+ * guessing:
+ *
+ *   1. Discover orphaned BASE tables. A base is discovered from any surviving
+ *      artifact — the shared `_fts` / `_fts_map` table, or a per-type table
+ *      whose exact `_fts_t_<mangle(T)>` suffix (for a configured T) matches.
+ *      Matching per-type suffixes FIRST is essential: a per-type table for an
+ *      a_type that mangles to end in `fts` (e.g. a_type `"fts"`) would end in
+ *      `_fts` and be mis-read as a shared index by naive suffix stripping.
+ *   2. Emit the EXACT artifact names for each orphaned base (`ftsTableName`,
+ *      `ftsMapTableName`, and `perTypeFtsTableName` per configured type) that
+ *      actually exist and are not live graph tables.
+ *
+ * Safety against false positives: only bases under the subgraph prefix
+ * (`<rootTable>_g_`) are considered, an artifact that is itself a registered
+ * graph table (`catalogTables`) is never dropped, and the base must be absent
+ * from `allTables`. FTS5 shadow tables (`<t>_fts_data`, `<t>_fts_idx`, … and
+ * the per-type tables' own shadows) are dropped implicitly with their parent
+ * virtual table, so they are never listed here.
  */
 export function findOrphanedFtsTables(
   allTables: ReadonlyArray<string>,
   catalogTables: ReadonlyArray<string>,
   rootTable: string,
+  perTypeFtsStats: readonly string[] = [],
 ): string[] {
   const names = new Set(allTables);
   const liveGraphTables = new Set(catalogTables);
   const subgraphPrefix = `${rootTable}_g_`;
-  const orphans: string[] = [];
+  const perTypeSuffixes = perTypeFtsStats.map((aType) => `_fts_t_${mangleStorageScope(aType)}`);
+
+  // Pass 1: collect orphaned base tables.
+  const orphanedBases = new Set<string>();
+  const considerBase = (base: string | null, artifact: string): void => {
+    if (base === null || !base.startsWith(subgraphPrefix)) return;
+    if (liveGraphTables.has(artifact)) return; // artifact is itself a live graph table
+    if (names.has(base)) return; // base still exists → not orphaned
+    orphanedBases.add(base);
+  };
   for (const name of names) {
-    let base: string | null = null;
-    if (name.endsWith('_fts_map')) base = name.slice(0, -'_fts_map'.length);
-    else if (name.endsWith('_fts')) base = name.slice(0, -'_fts'.length);
-    if (base === null || !base.startsWith(subgraphPrefix)) continue;
-    if (liveGraphTables.has(name)) continue;
-    if (names.has(base)) continue;
-    orphans.push(name);
+    const ptSuffix = perTypeSuffixes.find(
+      (suffix) => name.length > suffix.length && name.endsWith(suffix),
+    );
+    if (ptSuffix !== undefined) {
+      considerBase(name.slice(0, -ptSuffix.length), name);
+      continue;
+    }
+    if (name.endsWith('_fts_map')) {
+      considerBase(name.slice(0, -'_fts_map'.length), name);
+      continue;
+    }
+    if (name.endsWith('_fts')) {
+      considerBase(name.slice(0, -'_fts'.length), name);
+    }
   }
-  return orphans.sort();
+
+  // Pass 2: emit exact, existing, non-live artifact names for each base.
+  const orphans = new Set<string>();
+  for (const base of orphanedBases) {
+    const artifacts = [
+      ftsTableName(base),
+      ftsMapTableName(base),
+      ...perTypeFtsStats.map((aType) => perTypeFtsTableName(base, aType)),
+    ];
+    for (const artifact of artifacts) {
+      if (names.has(artifact) && !liveGraphTables.has(artifact)) orphans.add(artifact);
+    }
+  }
+  return [...orphans].sort();
 }

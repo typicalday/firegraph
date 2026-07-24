@@ -111,6 +111,24 @@ export interface SqliteBackendOptions {
    * backends derived via `subgraph()`.
    */
   extraTableDDL?: (tableName: string) => string[];
+  /**
+   * Opt in to per-type BM25 statistics: the list of `a_type` strings that
+   * each get a dedicated supplementary FTS5 table (`<t>_fts_t_<mangled>`)
+   * alongside the shared `<t>_fts`, so a single-`aType` search can rank with
+   * BM25 IDF scoped to just that type (see `FullTextSearchParams.perTypeStats`
+   * for the read-side flag and the rationale). Unset or `[]` = today's
+   * behavior exactly (one shared cross-type index).
+   *
+   * Consumed ONLY by the search-wrapping local factories
+   * (`firegraph/sqlite-local` `createLocalSqliteBackend`,
+   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`), which fold it into
+   * the `extraTableDDL` closure so it propagates to every lazily created
+   * subgraph table and self-heal recreation. The non-search shared
+   * `firegraph/sqlite` / D1 backend does not implement FTS, so setting it
+   * there has no effect. Write-side cost: one extra FTS5 table plus per-type
+   * trigger work per configured type on every write.
+   */
+  perTypeFtsStats?: string[];
 }
 
 /**

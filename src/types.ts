@@ -1081,6 +1081,26 @@ export interface FullTextSearchParams {
    * full-collection rerank).
    */
   allowCollectionScan?: boolean;
+  /**
+   * Opt in to per-type BM25 statistics (local SQLite backend only).
+   *
+   * **No-op unless BOTH sides opt in.** It takes effect only when (a) the
+   * SQLite backend was constructed with a matching `perTypeFtsStats`
+   * (`firegraph/sqlite-local` `createLocalSqliteBackend` or
+   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`), so a dedicated
+   * per-type FTS table for this `aType` is being maintained, AND (b) the
+   * search targets exactly one `aType` (this field). When either is false —
+   * no configured table for the `aType`, no `aType`, or a cross-type search —
+   * the search silently falls back to the shared index and ranks exactly as
+   * today (no error).
+   *
+   * WHY: `bm25()` computes its IDF term over the ENTIRE physical FTS index,
+   * so on the shared `<t>_fts` (which mixes every `a_type`), inserting rows of
+   * OTHER a_types shifts the rank/score of a within-type result. Reading a
+   * per-type table isolates the IDF to this `a_type`. Ignored by the Firestore
+   * backends, which have no equivalent per-type index. Default absent/false.
+   */
+  perTypeStats?: boolean;
 }
 
 /**

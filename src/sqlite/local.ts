@@ -55,6 +55,7 @@ import {
   ftsTableName,
   isFts5QueryError,
   isReadonlyWriteError,
+  perTypeFtsTableName,
   setDataPath,
   VECTOR_DISTANCE_BLOB_UDF,
   VECTOR_DISTANCE_UDF,
@@ -224,6 +225,7 @@ function registerVectorUdf(db: BetterSqliteDb): void {
 async function sweepOrphanedFtsArtifacts(
   executor: SqliteExecutor,
   rootTable: string,
+  perTypeFtsStats: readonly string[],
 ): Promise<void> {
   const tableRows = await executor.all(
     `SELECT "name" FROM sqlite_master WHERE "type" = 'table'`,
@@ -235,7 +237,7 @@ async function sweepOrphanedFtsArtifacts(
     [],
   );
   const catalogTables = catalogRows.map((r) => String(r.table_name));
-  for (const name of findOrphanedFtsTables(allTables, catalogTables, rootTable)) {
+  for (const name of findOrphanedFtsTables(allTables, catalogTables, rootTable, perTypeFtsStats)) {
     validateTableName(name);
     await executor.run(`DROP TABLE IF EXISTS ${quoteIdent(name)}`, []);
   }
@@ -252,6 +254,7 @@ function wrapLocalSearchBackend(
   executor: SqliteExecutor,
   rootTable: string,
   vectorDecls: ReadonlyArray<{ field: string; dimension: number }>,
+  perTypeFtsStats: readonly string[],
 ): StorageBackend<LocalSqliteCapability> {
   const caps = new Set<LocalSqliteCapability>([
     ...(inner.capabilities.values() as IterableIterator<SqliteCapability>),
@@ -268,6 +271,10 @@ function wrapLocalSearchBackend(
     inner.collectionPath,
     ftsTableName(inner.collectionPath),
     ftsMapTableName(inner.collectionPath),
+    // Per-type FTS tables bootstrap alongside the base table; a cascade that
+    // drops the base leaves them, and a search that reads one must trigger the
+    // same re-bootstrap as a missing shared index.
+    ...perTypeFtsStats.map((aType) => perTypeFtsTableName(inner.collectionPath, aType)),
   ]);
   const runWithSchema = async <T>(op: () => Promise<T>): Promise<T> => {
     await inner.ensureReady();
@@ -405,12 +412,18 @@ function wrapLocalSearchBackend(
     createBatch: () => inner.createBatch(),
 
     subgraph: (parentNodeUid, name) =>
-      wrapLocalSearchBackend(inner.subgraph(parentNodeUid, name), executor, rootTable, vectorDecls),
+      wrapLocalSearchBackend(
+        inner.subgraph(parentNodeUid, name),
+        executor,
+        rootTable,
+        vectorDecls,
+        perTypeFtsStats,
+      ),
 
     removeNodeCascade: async (uid, reader, options) => {
       const result = await inner.removeNodeCascade(uid, reader, options);
       if (result.errors.length === 0) {
-        await sweepOrphanedFtsArtifacts(executor, rootTable);
+        await sweepOrphanedFtsArtifacts(executor, rootTable, perTypeFtsStats);
       }
       return result;
     },
@@ -484,7 +497,7 @@ function wrapLocalSearchBackend(
     },
 
     async fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
-      const stmt = compileFullTextSearch(inner.collectionPath, params);
+      const stmt = compileFullTextSearch(inner.collectionPath, params, perTypeFtsStats);
       let rows: Record<string, unknown>[];
       try {
         rows = await runWithSchema(() => executor.all(stmt.sql, stmt.params));
@@ -576,6 +589,12 @@ export async function createLocalSqliteBackend(
   }
   registerVectorUdf(db);
 
+  // Per-type BM25 stats: the configured a_types get a dedicated supplementary
+  // FTS5 table each. Folded into the DDL closure so it propagates to every
+  // lazily created subgraph table and self-heal recreation, and threaded into
+  // the wrapper for the read path, self-heal set, and orphan sweep.
+  const perTypeFtsStats = backendOptions.perTypeFtsStats ?? [];
+
   // Compose the FTS DDL into the lazy bootstrap so every graph table —
   // root, lazily created subgraphs, and self-heal recreations — gets its
   // FTS infrastructure the moment the table exists.
@@ -584,7 +603,7 @@ export async function createLocalSqliteBackend(
     ...backendOptions,
     extraTableDDL: (table) => [
       ...(userExtraDDL ? userExtraDDL(table) : []),
-      ...buildLocalSearchDDL(table),
+      ...buildLocalSearchDDL(table, perTypeFtsStats),
     ],
   };
 
@@ -594,7 +613,7 @@ export async function createLocalSqliteBackend(
 
   const executor = createBetterSqliteExecutor(db);
   const inner = createSqliteBackend(executor, tableName, optionsWithSearch);
-  const backend = wrapLocalSearchBackend(inner, executor, tableName, vectorDecls);
+  const backend = wrapLocalSearchBackend(inner, executor, tableName, vectorDecls, perTypeFtsStats);
   let closed = false;
   return {
     backend,
