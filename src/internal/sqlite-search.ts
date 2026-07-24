@@ -141,8 +141,14 @@ function textExtractionExpr(dataRef: string): string {
 
 /**
  * DDL installing the FTS5 infrastructure for one graph table: the mapping
- * table, the FTS5 virtual table, and three sync triggers. All statements
- * are `IF NOT EXISTS` — safe to re-run on every bootstrap.
+ * table, the FTS5 virtual table, and three sync triggers. Safe to re-run on
+ * every bootstrap. The table / virtual-table statements are `IF NOT EXISTS`;
+ * the three triggers are emitted `CREATE TRIGGER IF NOT EXISTS` when
+ * `perTypeFtsStats` is EMPTY (byte-identical to the pre-per-type DDL) and
+ * `DROP TRIGGER IF EXISTS` + unconditional `CREATE TRIGGER` when it is
+ * NON-EMPTY (deterministic reconciliation of the folded per-type body to the
+ * current config — see the emission block below for why plain
+ * `CREATE … IF NOT EXISTS` would leave a stale trigger installed).
  *
  * The AFTER INSERT trigger also fires for the INSERT arm of the backend's
  * upsert (`INSERT … ON CONFLICT DO UPDATE`); the conflict arm fires AFTER
@@ -201,6 +207,51 @@ export function buildFtsDDL(table: string, perTypeFtsStats: readonly string[] = 
     perTypeDeleteBody += `  DELETE FROM ${ptfts} WHERE rowid = ${mappedIdOld};\n`;
   }
 
+  const aiName = quoteIdent(`${table}_fts_ai`);
+  const auName = quoteIdent(`${table}_fts_au`);
+  const adName = quoteIdent(`${table}_fts_ad`);
+  const aiSuffix = `AFTER INSERT ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`;
+  const auSuffix = `AFTER UPDATE ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`;
+  const adSuffix = `AFTER DELETE ON ${t} BEGIN
+  DELETE FROM ${fts} WHERE rowid = (SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id");
+${perTypeDeleteBody}  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
+END`;
+
+  // Trigger emission differs by config, on purpose:
+  //
+  //   * EMPTY perTypeFtsStats → `CREATE TRIGGER IF NOT EXISTS`, byte-identical
+  //     to the pre-per-type DDL. On a DB whose triggers already exist this
+  //     NO-OPS, which is correct: the folded body is empty, so the existing
+  //     trigger is already the body we would install.
+  //
+  //   * NON-EMPTY perTypeFtsStats → `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`
+  //     (unconditional). `CREATE TRIGGER IF NOT EXISTS` alone would NO-OP on a
+  //     DB whose three FTS triggers already exist (created before opt-in, or
+  //     with a different perTypeFtsStats list), permanently leaving a stale
+  //     trigger body that lacks the current per-type upsert/delete folds — so
+  //     every post-bootstrap write would silently miss the per-type table and
+  //     a `perTypeStats:true` search would DROP those rows / leave ghosts on
+  //     delete. Dropping first reconciles the installed triggers to the
+  //     current config deterministically on every bootstrap. The pair stays
+  //     idempotent (DROP IF EXISTS + CREATE the same body ⇒ same end state),
+  //     and it is the trigger body every connection then runs, preserving the
+  //     any-connection invariant.
+  const triggerDDL =
+    perTypeFtsStats.length === 0
+      ? [
+          `CREATE TRIGGER IF NOT EXISTS ${aiName} ${aiSuffix}`,
+          `CREATE TRIGGER IF NOT EXISTS ${auName} ${auSuffix}`,
+          `CREATE TRIGGER IF NOT EXISTS ${adName} ${adSuffix}`,
+        ]
+      : [
+          `DROP TRIGGER IF EXISTS ${aiName}`,
+          `CREATE TRIGGER ${aiName} ${aiSuffix}`,
+          `DROP TRIGGER IF EXISTS ${auName}`,
+          `CREATE TRIGGER ${auName} ${auSuffix}`,
+          `DROP TRIGGER IF EXISTS ${adName}`,
+          `CREATE TRIGGER ${adName} ${adSuffix}`,
+        ];
+
   return [
     `CREATE TABLE IF NOT EXISTS ${map} (
       "id"     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,12 +259,7 @@ export function buildFtsDDL(table: string, perTypeFtsStats: readonly string[] = 
     )`,
     `CREATE VIRTUAL TABLE IF NOT EXISTS ${fts} USING fts5("text")`,
     ...perTypeTableDDL,
-    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_ai`)} AFTER INSERT ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`,
-    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_au`)} AFTER UPDATE ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`,
-    `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(`${table}_fts_ad`)} AFTER DELETE ON ${t} BEGIN
-  DELETE FROM ${fts} WHERE rowid = (SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id");
-${perTypeDeleteBody}  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
-END`,
+    ...triggerDDL,
   ];
 }
 
@@ -251,9 +297,14 @@ export function buildFtsSyncStatements(
   // Per-type backfill runs AFTER the shared map backfill (statement 3 above)
   // so the shared `_fts_map` rows the per-type tables key off already exist.
   // Idempotent: purge ghosts (doc_id gone OR a_type no longer this type),
-  // then insert only the type's rows that are missing. This is what makes
-  // opting in on an already-populated DB, and reads from a second
-  // connection, correct without a write on the read path.
+  // then insert only the type's rows that are missing. This backfill covers
+  // rows that PRE-DATE the opt-in (or predate this a_type joining the list).
+  // Correctness for rows written AFTER bootstrap depends on the folded
+  // triggers being current — `buildFtsDDL` reconciles them via DROP+CREATE on
+  // the non-empty path so this backfill is a one-time catch-up, not a crutch
+  // that masks a stale trigger. Together they make opting in on an
+  // already-populated DB, and reads from a second connection, correct without
+  // a write on the read path.
   for (const aType of perTypeFtsStats) {
     const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
     const literal = `'${escapeSqlLiteral(aType)}'`;

@@ -1327,6 +1327,49 @@ describe('per-type BM25 stats (search.fullText)', () => {
       .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
       .get() as { n: number };
     expect(cnt.n).toBe(1);
+
+    // REGRESSION (reviewer-found): backfill only covers rows that pre-date the
+    // opt-in. A row written AFTER bootstrap depends on the FOLDED triggers being
+    // current. On a DB whose three FTS triggers already existed from the default
+    // (pre-opt-in) run, `CREATE TRIGGER IF NOT EXISTS` would NO-OP and leave the
+    // stale (no per-type fold) body installed, so this new row would be missing
+    // from the per-type table and a perTypeStats:true search would DROP it.
+    const freshUid = generateId();
+    await client.putNode('tour', freshUid, { name: 'fresh dusk' });
+    const freshHits = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'dusk',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(freshHits.map((r) => r.aUid)).toEqual([freshUid]);
+    expect(
+      (
+        second.db
+          .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
+          .get() as { n: number }
+      ).n,
+    ).toBe(2);
+
+    // And DELETE must remove it from the per-type table — no ghost row (the
+    // folded AD trigger deletes the per-type row before the map row).
+    await client.removeNode(freshUid);
+    const afterDelete = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'dusk',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(afterDelete).toHaveLength(0);
+    expect(
+      (
+        second.db
+          .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
+          .get() as { n: number }
+      ).n,
+    ).toBe(1);
     second.close();
   });
 

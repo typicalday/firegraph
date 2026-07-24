@@ -127,6 +127,15 @@ export interface SqliteBackendOptions {
    * `firegraph/sqlite` / D1 backend does not implement FTS, so setting it
    * there has no effect. Write-side cost: one extra FTS5 table plus per-type
    * trigger work per configured type on every write.
+   *
+   * Caveat — DE-CONFIGURING an a_type does NOT sweep its partition. Removing
+   * an a_type from this list (or reopening with a shorter list) re-emits the
+   * three folded triggers WITHOUT that a_type's upsert/delete arms, so the
+   * old `<t>_fts_t_<mangled>` table stops being trigger-maintained and goes
+   * stale — but it is never dropped (the cascade sweep only targets partitions
+   * of a DELETED subgraph, not partitions of a still-live table). It lingers
+   * with whatever rows it held at de-configuration time. Drop it manually if
+   * you need the space back.
    */
   perTypeFtsStats?: string[];
 }
