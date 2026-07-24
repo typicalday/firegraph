@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.0](https://github.com/typicalday/firegraph/compare/v0.18.0...v0.19.0) (2026-07-24)
+
+
+### Features
+
+* **sqlite-local:** opt-in per-type BM25 stats for FTS backend ([#37](https://github.com/typicalday/firegraph/issues/37)) ([15f481b](https://github.com/typicalday/firegraph/commit/15f481be56f2d712b68676024fb722848a53e14c))
+* **sqlite-local:** per-type FTS partitions via separate triggers + IndexSpec.fullText ([#39](https://github.com/typicalday/firegraph/issues/39)) ([fe63060](https://github.com/typicalday/firegraph/commit/fe63060bfe7599e13fb22447e39c9747c5af7aed))
+
 ## [0.18.0](https://github.com/typicalday/firegraph/compare/v0.17.1...v0.18.0) (2026-07-18)
 
 
