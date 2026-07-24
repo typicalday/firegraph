@@ -1175,6 +1175,26 @@ close();
 On top of the shared SQLite capability set, the local factory declares `search.fullText` and `search.vector`:
 
 - **`fullTextSearch(params)`** — every graph table gets a contentless FTS5 index kept in sync by pure-SQL triggers (`json_tree` extracts all string leaves from `data`, so nested fields are searchable). Results are ranked by bm25. FTS5 query syntax (`AND` / `OR` / `NOT`, `"phrase"` quoting, `prefix*`) passes through; malformed queries throw `INVALID_QUERY`. The `fields` option is not supported (the index is one combined text column) — a non-empty `fields` array throws `INVALID_QUERY`, matching Firestore Enterprise. Because the triggers are plain SQL, writes from _any_ connection or process stay indexed, and rows written before the index existed are backfilled on bootstrap.
+
+  **Per-type BM25 statistics (opt-in).** Ranking is cross-type by default: the bm25 IDF term (how rare a query word is, which drives ranking) is computed over the whole `<t>_fts` index, and that index mixes every `a_type` together. So inserting rows of one `a_type` shifts the rank and score of results filtered to a _different_ `a_type`. That matters when several a_types share one graph and you search by a single `aType` — e.g. a memory system storing episodes plus derived facts/concepts in one subgraph, where consolidation floods the index with fact vocabulary and measurably deflates episode search recall even though the query only asks for episodes. To isolate one type's statistics, opt in on **both** sides (it is a no-op unless both are set):
+  - **Write side** — construct the backend with `perTypeFtsStats: ['episode', ...]`, the list of `a_type`s that each get a dedicated supplementary FTS5 table (`<t>_fts_t_<mangled>`) kept in sync alongside the shared `<t>_fts`.
+  - **Read side** — pass `perTypeStats: true` on a `fullTextSearch` filtered to exactly one of those configured `aType`s.
+
+  Only then does that search rank with IDF scoped to just that type. Every other search — no `aType`, multiple a_types, an `aType` that was not configured, or `perTypeStats` left unset — reads the shared index and ranks exactly as before (a silent, non-error fallback). With `perTypeFtsStats` unset or `[]` the emitted DDL is byte-identical to prior versions: the feature is strictly opt-in and default-off, and cross-type search is never affected. The cost is one extra FTS5 table plus per-type trigger work per configured type on every write. **De-configuring** an `a_type` later (shrinking or clearing the list) needs manual cleanup, and dropping a stale partition table incorrectly can break all writes to the graph table — the two scenarios and the safe cleanup for each are documented on the `perTypeFtsStats` doc-comment in [`src/sqlite/backend.ts`](src/sqlite/backend.ts); read it before removing a type. `firegraph/sqlite-builtin` (`createNodeSqliteBackend`) accepts the same `perTypeFtsStats` option with identical behavior.
+
+  ```typescript
+  const { backend } = await createLocalSqliteBackend('./graph.db', {
+    perTypeFtsStats: ['episode'], // episode gets its own isolated BM25 stats table
+  });
+  const g = createGraphClient(backend, { registry });
+  const hits = await g.fullTextSearch({
+    aType: 'episode',
+    axbType: 'is',
+    query: 'dolomites',
+    perTypeStats: true, // rank with IDF scoped to episodes only
+  });
+  ```
+
 - **`findNearest(params)`** — exact (not approximate) nearest-neighbour via a brute-force scan scored by a connection-local SQL distance function. Supports `EUCLIDEAN`, `COSINE`, and `DOT_PRODUCT`, plus `distanceThreshold` and `distanceResultField`, mirroring Firestore semantics (rows with a missing field, wrong dimension, or non-finite values are silently skipped). Vector queries must run through the factory-created backend — the distance function is registered per connection.
 
   By default the scan reads each candidate vector out of the JSON `data` payload and parses it per row. Declaring the field as a vector lets the backend skip that per-row `JSON.parse`: add an `IndexSpec` with `vector: { field, dimension }` (and an empty `fields: []`) to the triple's `indexes` in the registry. The backend then maintains a Float64 little-endian BLOB shadow column `__vec_<field>` and scores it directly. Rankings and distances stay byte-identical to the JSON path. The shadow column is added and backfilled **lazily on the first `findNearest`** for that field, and a pure-SQL trigger nulls it whenever `data` changes so the next query re-backfills. Undeclared fields keep working through the JSON path unchanged, and on a read-only database the acceleration is skipped (it falls back to the JSON scan). Only `firegraph/sqlite-local` and `firegraph/sqlite-builtin` honour `vector`; every other backend (Firestore, D1, Cloudflare DO) ignores it.

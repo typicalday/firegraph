@@ -25,6 +25,7 @@ import {
   ftsMapTableName,
   ftsTableName,
   isFts5QueryError,
+  perTypeFtsTableName,
 } from '../../src/internal/sqlite-search.js';
 import { createRegistry } from '../../src/registry.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
@@ -1099,5 +1100,349 @@ describe('findOrphanedFtsTables', () => {
     const tricky = `${root}_g_abc_smy_fts`;
     expect(findOrphanedFtsTables([root, tricky], [tricky], root)).toEqual([]);
     expect(findOrphanedFtsTables([root, tricky], [], root)).toEqual([tricky]);
+  });
+
+  it('flags per-type FTS partitions whose base subgraph table is gone', () => {
+    const dead = `${root}_g_abc_sstops`;
+    const orphans = findOrphanedFtsTables(
+      [
+        root,
+        `${root}_fts`,
+        `${root}_fts_map`,
+        `${dead}_fts`,
+        `${dead}_fts_map`,
+        `${dead}_fts_t_episode`,
+      ],
+      [],
+      root,
+      ['episode'],
+    );
+    expect(orphans).toEqual([`${dead}_fts`, `${dead}_fts_map`, `${dead}_fts_t_episode`].sort());
+  });
+
+  it('does not mistake the _fts_map suffix for a per-type partition named "map"', () => {
+    // With 'map' configured as a per-type a_type, the per-type suffix is
+    // '_fts_t_map' — distinct from the '_fts_map' rowid table. The live base's
+    // rowid map must never be swept, and neither must its live per-type table.
+    const live = `${root}_g_abc_sstops`;
+    const orphans = findOrphanedFtsTables(
+      [root, live, `${live}_fts`, `${live}_fts_map`, `${live}_fts_t_map`],
+      [live],
+      root,
+      ['map'],
+    );
+    expect(orphans).toEqual([]);
+  });
+});
+
+describe.skipIf(!HAS_NODE_SQLITE)('per-type BM25 stats (search.fullText)', () => {
+  beforeAll(async () => {
+    ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+      await import('../../src/sqlite/node-sqlite.js'));
+  });
+
+  // Read raw bm25 scores straight off an FTS5 table so we can prove the
+  // per-type index is genuinely isolated from other-a_type inserts. Returns
+  // {rowid, score} pairs (rowid = the shared _fts_map id) ordered by rowid.
+  function ftsScores(
+    db: NodeDatabaseSyncHandle,
+    table: string,
+    term: string,
+  ): Array<{ rowid: number; score: number }> {
+    const rows = db
+      .prepare(
+        `SELECT rowid AS rowid, bm25("${table}") AS score FROM "${table}" ` +
+          `WHERE "${table}" MATCH ? ORDER BY rowid ASC`,
+      )
+      .all(term) as Array<{ rowid: number; score: number }>;
+    return rows.map((r) => ({ rowid: Number(r.rowid), score: Number(r.score) }));
+  }
+
+  function tableNames(db: NodeDatabaseSyncHandle): string[] {
+    return db
+      .prepare(`SELECT "name" FROM sqlite_master WHERE "type" = 'table'`)
+      .all()
+      .map((r) => (r as { name: string }).name);
+  }
+
+  // Case 1 — PER-TYPE ON isolates IDF.
+  //
+  // Note on corpus shape: FTS5's bm25() clamps a term's IDF to 1e-6 whenever
+  // the term appears in more than ~half the documents (N - n + 0.5 <= n + 0.5).
+  // To exercise a REAL, corpus-size-sensitive IDF (not the clamped floor), the
+  // queried term must stay a minority — hence the filler rows that dilute it.
+  it('per-type ON: type-B inserts move neither a type-A bm25 score nor its rank', async () => {
+    const local = await createNodeSqliteBackend(':memory:', { perTypeFtsStats: ['tour'] });
+    const client = createGraphClient(local.backend);
+    const a1 = generateId();
+    await client.putNode('tour', a1, { text: 'alpha marker' });
+    for (let i = 0; i < 20; i++) {
+      await client.putNode('tour', generateId(), { text: 'filler filler' });
+    }
+
+    const ptTable = perTypeFtsTableName('firegraph', 'tour');
+    const search = () =>
+      client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'alpha',
+        perTypeStats: true,
+        limit: 10,
+      });
+
+    const rankBefore = (await search()).map((r: { aUid: string }) => r.aUid);
+    const ptBefore = ftsScores(local.db, ptTable, 'alpha');
+    expect(ptBefore).toHaveLength(1); // only a1 (a tour row) contains 'alpha'
+
+    for (let i = 0; i < 10; i++) {
+      await client.putNode('stop', generateId(), { text: 'alpha crowd' });
+    }
+
+    const rankAfter = (await search()).map((r: { aUid: string }) => r.aUid);
+    const ptAfter = ftsScores(local.db, ptTable, 'alpha');
+
+    expect(ptAfter).toEqual(ptBefore);
+    expect(rankAfter).toEqual(rankBefore);
+    local.close();
+  });
+
+  // Case 2 — PER-TYPE OFF (default) is unchanged / byte-identical to shared path.
+  it('per-type OFF (default): unconfigured backend ignores perTypeStats, builds no per-type table', async () => {
+    const local = await createNodeSqliteBackend(':memory:');
+    const client = createGraphClient(local.backend);
+    const tourUid = generateId();
+    const stopUid = generateId();
+    await client.putNode('tour', tourUid, { name: 'shared keyword zenith' });
+    await client.putNode('stop', stopUid, { name: 'shared keyword zenith' });
+
+    const base = await client.fullTextSearch({
+      aType: 'stop',
+      axbType: 'is',
+      query: 'zenith',
+      limit: 10,
+    });
+    expect(base.map((r: { aUid: string }) => r.aUid)).toEqual([stopUid]);
+
+    const optedIn = await client.fullTextSearch({
+      aType: 'stop',
+      axbType: 'is',
+      query: 'zenith',
+      perTypeStats: true,
+      limit: 10,
+    });
+    expect(optedIn.map((r: { aUid: string }) => r.aUid)).toEqual(
+      base.map((r: { aUid: string }) => r.aUid),
+    );
+
+    expect(tableNames(local.db).some((n) => n.includes('_fts_t_'))).toBe(false);
+    local.close();
+  });
+
+  // Case 3 — CONTROL: with per-type OFF the shared index score DOES shift.
+  // Same corpus shape as case 1 (filler rows keep 'alpha' a minority so bm25's
+  // IDF is unclamped), but read against the SHARED index — where the type-B
+  // flood DOES move the type-A row's score. Proves the isolation in case 1 is
+  // the per-type mechanism, not the corpus.
+  it('control: with per-type OFF the shared index score shifts on type-B inserts', async () => {
+    const local = await createNodeSqliteBackend(':memory:');
+    const client = createGraphClient(local.backend);
+    const a1 = generateId();
+    await client.putNode('tour', a1, { text: 'alpha marker' });
+    for (let i = 0; i < 20; i++) {
+      await client.putNode('tour', generateId(), { text: 'filler filler' });
+    }
+
+    const shared = ftsTableName('firegraph');
+    const before = ftsScores(local.db, shared, 'alpha');
+    expect(before).toHaveLength(1);
+
+    for (let i = 0; i < 10; i++) {
+      await client.putNode('stop', generateId(), { text: 'alpha crowd' });
+    }
+    const after = ftsScores(local.db, shared, 'alpha');
+    const afterByRow = new Map(after.map((s) => [s.rowid, s.score]));
+
+    expect(afterByRow.get(before[0].rowid)).not.toBe(before[0].score);
+    local.close();
+  });
+
+  // Case 4 — FALL-BACK: opt-in read flag with no maintained per-type table.
+  it('falls back to the shared index for unconfigured aType / no aType', async () => {
+    const local = await createNodeSqliteBackend(':memory:', { perTypeFtsStats: ['tour'] });
+    const client = createGraphClient(local.backend);
+    const tourUid = generateId();
+    const stopUid = generateId();
+    await client.putNode('tour', tourUid, { name: 'harbor lighthouse' });
+    await client.putNode('stop', stopUid, { name: 'harbor cove' });
+
+    const unconfigured = await client.fullTextSearch({
+      aType: 'stop',
+      axbType: 'is',
+      query: 'harbor',
+      perTypeStats: true,
+      limit: 10,
+    });
+    expect(unconfigured.map((r: { aUid: string }) => r.aUid)).toEqual([stopUid]);
+
+    const crossType = await client.fullTextSearch({
+      query: 'harbor',
+      perTypeStats: true,
+      allowCollectionScan: true,
+      limit: 10,
+    });
+    expect(new Set(crossType.map((r: { aUid: string }) => r.aUid))).toEqual(
+      new Set([tourUid, stopUid]),
+    );
+    local.close();
+  });
+
+  // Case 5a — LIFECYCLE: opt in on an already-populated DB (backfill).
+  it('backfills per-type tables when opting in on an already-populated DB', async () => {
+    const path = tempDbPath('pt-backfill');
+    const uid = generateId();
+
+    const first = await createNodeSqliteBackend(path);
+    await createGraphClient(first.backend).putNode('tour', uid, { name: 'legacy dawn' });
+    first.close();
+
+    const second = await createNodeSqliteBackend(path, { perTypeFtsStats: ['tour'] });
+    const client = createGraphClient(second.backend);
+    const hits = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'dawn',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(hits.map((r: { aUid: string }) => r.aUid)).toEqual([uid]);
+
+    const cnt = second.db
+      .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
+      .get() as { n: number };
+    expect(cnt.n).toBe(1);
+
+    // REGRESSION (reviewer-found): backfill only covers rows that pre-date the
+    // opt-in. A row written AFTER bootstrap depends on the FOLDED triggers being
+    // current. On a DB whose three FTS triggers already existed from the default
+    // (pre-opt-in) run, `CREATE TRIGGER IF NOT EXISTS` would NO-OP and leave the
+    // stale (no per-type fold) body installed, so this new row would be missing
+    // from the per-type table and a perTypeStats:true search would DROP it.
+    const freshUid = generateId();
+    await client.putNode('tour', freshUid, { name: 'fresh dusk' });
+    const freshHits = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'dusk',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(freshHits.map((r: { aUid: string }) => r.aUid)).toEqual([freshUid]);
+    expect(
+      (
+        second.db
+          .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
+          .get() as { n: number }
+      ).n,
+    ).toBe(2);
+
+    // And DELETE must remove it from the per-type table — no ghost row (the
+    // folded AD trigger deletes the per-type row before the map row).
+    await client.removeNode(freshUid);
+    const afterDelete = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'dusk',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(afterDelete).toHaveLength(0);
+    expect(
+      (
+        second.db
+          .prepare(`SELECT count(*) AS n FROM "${perTypeFtsTableName('firegraph', 'tour')}"`)
+          .get() as { n: number }
+      ).n,
+    ).toBe(1);
+    second.close();
+  });
+
+  // Case 5b — LIFECYCLE: writes from a second plain connection stay in sync.
+  it('keeps per-type tables in sync for writes from a second plain connection', async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const path = tempDbPath('pt-second-conn');
+    const first = await createNodeSqliteBackend(path, { perTypeFtsStats: ['tour'] });
+    const client = createGraphClient(first.backend);
+    await client.putNode('tour', generateId(), { name: 'starter beacon' });
+
+    const rawDb = new DatabaseSync(path);
+    const uid = generateId();
+    await createGraphClient(
+      createSqliteBackend(createNodeSqliteExecutor(rawDb), 'firegraph'),
+    ).putNode('tour', uid, { name: 'sidedoor sentinel' });
+    rawDb.close();
+
+    const hits = await client.fullTextSearch({
+      aType: 'tour',
+      axbType: 'is',
+      query: 'sentinel',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(hits.map((r: { aUid: string }) => r.aUid)).toEqual([uid]);
+    first.close();
+  });
+
+  // Case 5c — LIFECYCLE: per-type search inside a lazily created subgraph.
+  it('supports per-type search inside a subgraph and builds its partition table', async () => {
+    const { backend, db, close } = await createNodeSqliteBackend(':memory:', {
+      perTypeFtsStats: ['stop'],
+    });
+    const client = createGraphClient(backend);
+    const parentUid = generateId();
+    await client.putNode('tour', parentUid, { name: 'parent basin' });
+    const sub = client.subgraph(parentUid, 'stops');
+    const s1 = generateId();
+    await sub.putNode('stop', s1, { text: 'harbor harbor cliff' });
+    for (let i = 0; i < 40; i++) {
+      await sub.putNode('note', generateId(), { text: 'harbor harbor harbor' });
+    }
+
+    const hits = await sub.fullTextSearch({
+      aType: 'stop',
+      axbType: 'is',
+      query: 'harbor',
+      perTypeStats: true,
+      limit: 5,
+    });
+    expect(hits.map((r: { aUid: string }) => r.aUid)).toEqual([s1]);
+
+    const subTable = tableForScope('firegraph', `${parentUid}/stops`);
+    expect(tableNames(db)).toContain(perTypeFtsTableName(subTable, 'stop'));
+    close();
+  });
+
+  // Case 5d — LIFECYCLE: cascade delete sweeps per-type partitions.
+  it('cascade delete sweeps per-type FTS partitions of dropped subgraphs', async () => {
+    const { backend, db, close } = await createNodeSqliteBackend(':memory:', {
+      perTypeFtsStats: ['stop'],
+    });
+    const client = createGraphClient(backend);
+    const parentUid = generateId();
+    await client.putNode('tour', parentUid, { name: 'host' });
+    const sub = client.subgraph(parentUid, 'stops');
+    await sub.putNode('stop', generateId(), { text: 'ghostly reef' });
+
+    const subTable = tableForScope('firegraph', `${parentUid}/stops`);
+    const ptTable = perTypeFtsTableName(subTable, 'stop');
+    expect(tableNames(db)).toContain(ptTable);
+
+    const cascade = await client.removeNodeCascade(parentUid);
+    expect(cascade.nodeDeleted).toBe(true);
+
+    const remaining = tableNames(db);
+    expect(remaining).not.toContain(ptTable);
+    expect(remaining).not.toContain(subTable);
+    expect(remaining).not.toContain(ftsTableName(subTable));
+    close();
   });
 });
