@@ -94,15 +94,22 @@ export function buildSchemaStatements(table: string, options: BuildSchemaOptions
   ];
 
   const core = options.coreIndexes ?? [...DEFAULT_CORE_INDEXES];
-  // Vector declarations (`IndexSpec.vector`) are NOT composite indexes — they
-  // carry an empty `fields: []` that would crash `buildIndexDDL` (INVALID_INDEX
-  // on empty fields). The shadow column is materialized separately by the local
-  // factories' JS ensure step, so drop vector specs here. Core indexes never
-  // carry `vector`, so filtering only the registry slice is sufficient.
+  // Vector declarations (`IndexSpec.vector`) and per-type full-text
+  // declarations (`IndexSpec.fullText`) are NOT composite indexes — they carry
+  // an empty `fields: []` that would crash `buildIndexDDL` (INVALID_INDEX on
+  // empty fields). Their storage is materialized separately by the local
+  // factories (vector shadow column via the JS ensure step; FTS5 partition
+  // tables via `buildLocalSearchDDL` on the `extraTableDDL` hook), so drop both
+  // spec kinds here. Core indexes never carry `vector` / `fullText`, so
+  // filtering only the registry slice is sufficient.
   const fromRegistry =
     options.registry
       ?.entries()
-      .flatMap((e) => (e.indexes ?? []).filter((spec) => spec.vector === undefined)) ?? [];
+      .flatMap((e) =>
+        (e.indexes ?? []).filter(
+          (spec) => spec.vector === undefined && spec.fullText === undefined,
+        ),
+      ) ?? [];
 
   const deduped = dedupeIndexSpecs([...core, ...fromRegistry]);
   for (const spec of deduped) {

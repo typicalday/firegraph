@@ -39,9 +39,11 @@ import type { StorageBackend } from '../internal/backend.js';
 import { createCapabilities } from '../internal/backend.js';
 import type { SqliteExecutor, SqliteTxExecutor } from '../internal/sqlite-executor.js';
 import { quoteIdent, validateTableName } from '../internal/sqlite-schema.js';
-import type { DeclaredVector } from '../internal/sqlite-search.js';
+import type { DeclaredVector, PerTypeFtsConfig } from '../internal/sqlite-search.js';
 import {
   buildLocalSearchDDL,
+  buildPerTypeFtsConfig,
+  buildPerTypeFtsSyncStatements,
   buildVectorNullOnChangeTrigger,
   collectVectorDeclarations,
   compileFindNearest,
@@ -51,12 +53,15 @@ import {
   DISTANCE_ALIAS,
   encodeVectorBlob,
   findOrphanedFtsTables,
+  ftsCfgTableName,
   ftsMapTableName,
   ftsTableName,
   isFts5QueryError,
   isReadonlyWriteError,
   perTypeFtsTableName,
+  perTypeFtsTriggerNames,
   setDataPath,
+  sharedFtsTriggerDefs,
   VECTOR_DISTANCE_BLOB_UDF,
   VECTOR_DISTANCE_UDF,
   vectorAddColumnSql,
@@ -225,7 +230,7 @@ function registerVectorUdf(db: DatabaseSync): void {
 async function sweepOrphanedFtsArtifacts(
   executor: SqliteExecutor,
   rootTable: string,
-  perTypeFtsStats: readonly string[],
+  config: PerTypeFtsConfig,
 ): Promise<void> {
   const tableRows = await executor.all(
     `SELECT "name" FROM sqlite_master WHERE "type" = 'table'`,
@@ -237,9 +242,33 @@ async function sweepOrphanedFtsArtifacts(
     [],
   );
   const catalogTables = catalogRows.map((r) => String(r.table_name));
-  for (const name of findOrphanedFtsTables(allTables, catalogTables, rootTable, perTypeFtsStats)) {
+  const configuredATypes = [...config.keys()];
+  for (const name of findOrphanedFtsTables(allTables, catalogTables, rootTable, configuredATypes)) {
     validateTableName(name);
     await executor.run(`DROP TABLE IF EXISTS ${quoteIdent(name)}`, []);
+  }
+  // Purge `<root>_fts_cfg` fingerprint rows whose graph table no longer exists,
+  // so a future recreate of that table re-fingerprints its partitions from
+  // scratch. Only the non-empty-config path ever creates the cfg table; when
+  // config is empty there is nothing to sweep.
+  if (config.size === 0) return;
+  const cfgTable = ftsCfgTableName(rootTable);
+  const liveTables = new Set(allTables);
+  try {
+    const cfgRows = await executor.all(
+      `SELECT DISTINCT "table_name" FROM ${quoteIdent(cfgTable)}`,
+      [],
+    );
+    for (const row of cfgRows) {
+      const tableName = String(row.table_name);
+      if (!liveTables.has(tableName)) {
+        await executor.run(`DELETE FROM ${quoteIdent(cfgTable)} WHERE "table_name" = ?`, [
+          tableName,
+        ]);
+      }
+    }
+  } catch {
+    // cfg table absent (no fullTextSearch ran yet) — nothing to purge.
   }
 }
 
@@ -254,7 +283,7 @@ function wrapLocalSearchBackend(
   executor: SqliteExecutor,
   rootTable: string,
   vectorDecls: ReadonlyArray<{ field: string; dimension: number }>,
-  perTypeFtsStats: readonly string[],
+  ftsConfig: PerTypeFtsConfig,
 ): StorageBackend<LocalNodeSqliteCapability> {
   const caps = new Set<LocalNodeSqliteCapability>([
     ...(inner.capabilities.values() as IterableIterator<SqliteCapability>),
@@ -266,23 +295,11 @@ function wrapLocalSearchBackend(
     inner.collectionPath,
     ftsTableName(inner.collectionPath),
     ftsMapTableName(inner.collectionPath),
-    // Per-type FTS tables bootstrap alongside the base table; a cascade that
-    // drops the base leaves them, and a search that reads one must trigger the
-    // same re-bootstrap as a missing shared index.
-    ...perTypeFtsStats.map((aType) => perTypeFtsTableName(inner.collectionPath, aType)),
+    // Per-type FTS partition tables bootstrap alongside the base table; a
+    // cascade that drops the base leaves them, and a search that reads one must
+    // trigger the same re-bootstrap as a missing shared index.
+    ...[...ftsConfig.keys()].map((aType) => perTypeFtsTableName(inner.collectionPath, aType)),
   ]);
-  const runWithSchema = async <T>(op: () => Promise<T>): Promise<T> => {
-    await inner.ensureReady();
-    try {
-      return await op();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const missing = /no such table: (\S+)/.exec(message)?.[1];
-      if (missing === undefined || !healableTables.has(missing)) throw err;
-      await inner.ensureReady(true);
-      return op();
-    }
-  };
 
   // Lazy JS ensure of the declared vector shadow columns for THIS resolved
   // table, cached on the wrapper instance (like SqliteBackendImpl.ensured).
@@ -393,6 +410,129 @@ function wrapLocalSearchBackend(
   };
   const runVecEnsure = (): Promise<DeclaredVector[]> => (vecEnsured ??= doVecEnsure());
 
+  // Lazy JS reconciliation of the per-type FTS partitions for THIS resolved
+  // table, cached on the wrapper (like `vecEnsured`) and awaited by
+  // `fullTextSearch` before it compiles. Reset to null by the fullTextSearch
+  // self-heal so a cascade-recreated table re-reconciles. Three phases:
+  //
+  //   1. LEGACY HEAL — replace any shared FTS trigger whose body still contains
+  //      the PR-#37 folded per-type maintenance (`_fts_t_` substring) with the
+  //      clean shared-only body from `sharedFtsTriggerDefs`. Runs regardless of
+  //      the current config so a 0.19.0 database is fixed even after opting out.
+  //   2. STALE TRIGGER CLEANUP (config non-empty only) — drop any `_fts_t_*`
+  //      per-type trigger not in the current config's expected trigger set (a
+  //      de-configured a_type).
+  //   3. FINGERPRINT REBUILD (config non-empty only) — per configured a_type,
+  //      compare the stored field-list fingerprint in `<root>_fts_cfg`; on a
+  //      miss/change fully purge the partition and re-run its per-type sync with
+  //      the current extraction (a FIELD-LIST CHANGE on already-indexed rows is
+  //      the case the idempotent bootstrap backfill cannot fix, since it only
+  //      inserts MISSING rows), then upsert the fingerprint. Cfg rows for
+  //      de-configured a_types are removed.
+  //
+  // HARD CONSTRAINT: with an EMPTY config, phases 2–3 are skipped and the
+  // `<root>_fts_cfg` table is never created — a no-opt-in database issues no
+  // per-type writes, byte-identical to the pre-per-type behaviour. Read-only
+  // handles tolerate the write failures (search whatever is materialized).
+  let ftsEnsured: Promise<void> | null = null;
+  const cfgTable = ftsCfgTableName(rootTable);
+
+  const doFtsEnsure = async (): Promise<void> => {
+    await ensureReadyTolerant();
+    const table = inner.collectionPath;
+
+    // Phase 1: legacy folded-trigger heal.
+    try {
+      const canonical = new Map(sharedFtsTriggerDefs(table).map((d) => [d.name, d.statement]));
+      const sharedRows = await executor.all(
+        `SELECT "name", "sql" FROM sqlite_master ` +
+          `WHERE "type" = 'trigger' AND "tbl_name" = ? AND "name" IN (?, ?, ?)`,
+        [table, `${table}_fts_ai`, `${table}_fts_au`, `${table}_fts_ad`],
+      );
+      for (const row of sharedRows) {
+        const name = String(row.name);
+        const sql = typeof row.sql === 'string' ? row.sql : '';
+        // A clean shared trigger never references a per-type partition table.
+        if (!sql.includes('_fts_t_')) continue;
+        const statement = canonical.get(name);
+        if (statement === undefined) continue;
+        await executor.run(`DROP TRIGGER IF EXISTS ${quoteIdent(name)}`, []);
+        await executor.run(statement, []);
+      }
+    } catch (err) {
+      if (!isReadonlyWriteError(err)) throw err;
+      return;
+    }
+
+    if (ftsConfig.size === 0) return;
+
+    try {
+      // Phase 2: stale per-type trigger cleanup.
+      const expected = new Set<string>();
+      for (const aType of ftsConfig.keys()) {
+        const names = perTypeFtsTriggerNames(table, aType);
+        expected.add(names.ai);
+        expected.add(names.au);
+        expected.add(names.bd);
+      }
+      const perTypeRows = await executor.all(
+        `SELECT "name" FROM sqlite_master ` +
+          `WHERE "type" = 'trigger' AND "tbl_name" = ? AND "name" GLOB ?`,
+        [table, `${table}_fts_t_*`],
+      );
+      for (const row of perTypeRows) {
+        const name = String(row.name);
+        if (!expected.has(name)) {
+          await executor.run(`DROP TRIGGER IF EXISTS ${quoteIdent(name)}`, []);
+        }
+      }
+
+      // Phase 3: config fingerprint rebuild.
+      await executor.run(
+        `CREATE TABLE IF NOT EXISTS ${quoteIdent(cfgTable)} (
+          "table_name"  TEXT NOT NULL,
+          "a_type"      TEXT NOT NULL,
+          "fingerprint" TEXT NOT NULL,
+          PRIMARY KEY ("table_name", "a_type")
+        )`,
+        [],
+      );
+      const storedRows = await executor.all(
+        `SELECT "a_type", "fingerprint" FROM ${quoteIdent(cfgTable)} WHERE "table_name" = ?`,
+        [table],
+      );
+      const stored = new Map(storedRows.map((r) => [String(r.a_type), String(r.fingerprint)]));
+      for (const [aType, fields] of ftsConfig) {
+        const fingerprint = JSON.stringify({ fields: fields === null ? null : [...fields] });
+        if (stored.get(aType) === fingerprint) continue;
+        const single: PerTypeFtsConfig = new Map([[aType, fields]]);
+        const ptfts = perTypeFtsTableName(table, aType);
+        validateTableName(ptfts);
+        await executor.run(`DELETE FROM ${quoteIdent(ptfts)}`, []);
+        for (const sql of buildPerTypeFtsSyncStatements(table, single)) {
+          await executor.run(sql, []);
+        }
+        await executor.run(
+          `INSERT INTO ${quoteIdent(cfgTable)} ("table_name", "a_type", "fingerprint") ` +
+            `VALUES (?, ?, ?) ` +
+            `ON CONFLICT("table_name", "a_type") DO UPDATE SET "fingerprint" = excluded."fingerprint"`,
+          [table, aType, fingerprint],
+        );
+      }
+      for (const aType of stored.keys()) {
+        if (!ftsConfig.has(aType)) {
+          await executor.run(
+            `DELETE FROM ${quoteIdent(cfgTable)} WHERE "table_name" = ? AND "a_type" = ?`,
+            [table, aType],
+          );
+        }
+      }
+    } catch (err) {
+      if (!isReadonlyWriteError(err)) throw err;
+    }
+  };
+  const runFtsEnsure = (): Promise<void> => (ftsEnsured ??= doFtsEnsure());
+
   const wrapper: StorageBackend<LocalNodeSqliteCapability> = {
     capabilities: createCapabilities(caps),
     collectionPath: inner.collectionPath,
@@ -412,13 +552,13 @@ function wrapLocalSearchBackend(
         executor,
         rootTable,
         vectorDecls,
-        perTypeFtsStats,
+        ftsConfig,
       ),
 
     removeNodeCascade: async (uid, reader, options) => {
       const result = await inner.removeNodeCascade(uid, reader, options);
       if (result.errors.length === 0) {
-        await sweepOrphanedFtsArtifacts(executor, rootTable, perTypeFtsStats);
+        await sweepOrphanedFtsArtifacts(executor, rootTable, ftsConfig);
       }
       return result;
     },
@@ -491,19 +631,42 @@ function wrapLocalSearchBackend(
     },
 
     async fullTextSearch(params: FullTextSearchParams): Promise<StoredGraphRecord[]> {
-      const stmt = compileFullTextSearch(inner.collectionPath, params, perTypeFtsStats);
+      // Compile against the resolved config so a single-aType search default-
+      // routes to its per-type partition (`<t>_fts_t_<mangled>`) when one is
+      // declared, unless the caller forces the shared index with
+      // `perTypeStats: false`.
+      const stmt = compileFullTextSearch(inner.collectionPath, params, ftsConfig);
+      const run = async (): Promise<Record<string, unknown>[]> => {
+        // Reconcile partitions (schema + fingerprint) before querying, mirroring
+        // the shared-table bootstrap the deleted `runWithSchema` used to run.
+        await runFtsEnsure();
+        return executor.all(stmt.sql, stmt.params);
+      };
       let rows: Record<string, unknown>[];
       try {
-        rows = await runWithSchema(() => executor.all(stmt.sql, stmt.params));
+        rows = await run();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // FTS5 reports a malformed MATCH expression at query time as a generic
+        // SQLITE_ERROR; surface those as INVALID_QUERY to match the documented
+        // Firestore-parity contract.
         if (isFts5QueryError(message)) {
           throw new FiregraphError(
             `fullTextSearch(): invalid FTS5 query syntax — ${message}`,
             'INVALID_QUERY',
           );
         }
-        throw err;
+        // Self-heal: a parent cascade dropped+recreated this table, so the FTS
+        // index/partition tables are gone ("no such table: <t>_fts…"). Re-bootstrap
+        // the schema, drop the cached ensure promise so partitions re-reconcile,
+        // and retry once. Non-healable tables propagate unchanged.
+        const missing = /no such table: "?([A-Za-z_][A-Za-z0-9_]*)"?/.exec(message)?.[1];
+        if (missing === undefined || !healableTables.has(missing)) {
+          throw err;
+        }
+        await inner.ensureReady(true);
+        ftsEnsured = null;
+        rows = await run();
       }
       return rows.map(rowToRecord);
     },
@@ -572,11 +735,16 @@ export async function createNodeSqliteBackend(
   }
   registerVectorUdf(db);
 
-  // Per-type BM25 stats: the configured a_types get a dedicated supplementary
-  // FTS5 table each. Folded into the DDL closure so it propagates to every
-  // lazily created subgraph table and self-heal recreation, and threaded into
-  // the wrapper for the read path, self-heal set, and orphan sweep.
-  const perTypeFtsStats = backendOptions.perTypeFtsStats ?? [];
+  // Per-type FTS partitions: merge two opt-in sources into ONE resolved config
+  // (aType → field list, or `null` for a whole-text partition). Source 1 is the
+  // legacy `perTypeFtsStats: string[]` backend option (whole-text partition,
+  // `null` value). Source 2 is each registry entry's `IndexSpec.fullText.fields`
+  // (declared searchable fields). The same aType appearing in both sources is an
+  // INVALID_ARGUMENT conflict, raised here at factory time. Folded into the DDL
+  // closure so it propagates to every lazily created subgraph table and self-heal
+  // recreation, and threaded into the wrapper for the read path, self-heal set,
+  // fingerprint reconciliation, and orphan sweep.
+  const ftsConfig = buildPerTypeFtsConfig(backendOptions.registry, backendOptions.perTypeFtsStats);
 
   // Compose the FTS DDL into the lazy bootstrap so every graph table —
   // root, lazily created subgraphs, and self-heal recreations — gets its
@@ -586,7 +754,7 @@ export async function createNodeSqliteBackend(
     ...backendOptions,
     extraTableDDL: (table) => [
       ...(userExtraDDL ? userExtraDDL(table) : []),
-      ...buildLocalSearchDDL(table, perTypeFtsStats),
+      ...buildLocalSearchDDL(table, ftsConfig),
     ],
   };
 
@@ -596,7 +764,7 @@ export async function createNodeSqliteBackend(
 
   const executor = createNodeSqliteExecutor(db);
   const inner = createSqliteBackend(executor, tableName, optionsWithSearch);
-  const backend = wrapLocalSearchBackend(inner, executor, tableName, vectorDecls, perTypeFtsStats);
+  const backend = wrapLocalSearchBackend(inner, executor, tableName, vectorDecls, ftsConfig);
   let closed = false;
   return {
     backend,
