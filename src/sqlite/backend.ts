@@ -112,51 +112,47 @@ export interface SqliteBackendOptions {
    */
   extraTableDDL?: (tableName: string) => string[];
   /**
-   * Opt in to per-type BM25 statistics: the list of `a_type` strings that
-   * each get a dedicated supplementary FTS5 table (`<t>_fts_t_<mangled>`)
-   * alongside the shared `<t>_fts`, so a single-`aType` search can rank with
-   * BM25 IDF scoped to just that type (see `FullTextSearchParams.perTypeStats`
-   * for the read-side flag and the rationale). Unset or `[]` = today's
-   * behavior exactly (one shared cross-type index).
+   * Opt in to per-type BM25 statistics with a WHOLE-TEXT partition: the list
+   * of `a_type` strings that each get a dedicated supplementary FTS5 table
+   * (`<t>_fts_t_<mangled>`) alongside the shared `<t>_fts`, indexing the SAME
+   * all-text extraction as the shared index but scoped to one `a_type`, so a
+   * single-`aType` search ranks with BM25 IDF computed over just that type (see
+   * `FullTextSearchParams.perTypeStats` for the read-side flag and the
+   * rationale). Unset or `[]` = today's behavior exactly (one shared
+   * cross-type index, no partitions, no `<t>_fts_cfg` table).
+   *
+   * Relationship to `IndexSpec.fullText` (the OTHER partition source): an entry
+   * declaring `indexes: [{ fields: [], fullText: { fields: ['title', ...] } }]`
+   * ALSO creates a `<t>_fts_t_<mangled>` partition for its `a_type`, but one
+   * that indexes ONLY the declared field paths rather than all text. The local
+   * factories merge both sources into one config via `buildPerTypeFtsConfig`.
+   * The SAME `a_type` supplied in BOTH `perTypeFtsStats` (whole-text) and an
+   * `IndexSpec.fullText` (declared-fields) is a conflict and throws
+   * `INVALID_ARGUMENT` at factory time — pick one extraction per type.
    *
    * Consumed ONLY by the search-wrapping local factories
    * (`firegraph/sqlite-local` `createLocalSqliteBackend`,
-   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`), which fold it into
-   * the `extraTableDDL` closure so it propagates to every lazily created
-   * subgraph table and self-heal recreation. The non-search shared
-   * `firegraph/sqlite` / D1 backend does not implement FTS, so setting it
-   * there has no effect. Write-side cost: one extra FTS5 table plus per-type
-   * trigger work per configured type on every write.
+   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`), which fold the
+   * merged config into the `extraTableDDL` closure so partitions and their
+   * SEPARATE per-type triggers (`<t>_fts_t_<mangled>_ai/_au/_bd`) propagate to
+   * every lazily created subgraph table and self-heal recreation. The per-type
+   * triggers are independent of the shared `<t>_fts_ai/_au/_ad` triggers — they
+   * are NOT folded into the shared trigger bodies, so a consumer's own
+   * `extraTableDDL` customizations of the shared triggers are never clobbered.
+   * The non-search shared `firegraph/sqlite` / D1 backend does not implement
+   * FTS, so setting it there has no effect. Write-side cost: one extra FTS5
+   * table plus three per-type triggers' work per configured type on every write.
    *
-   * Caveat — DE-CONFIGURING an a_type does NOT sweep its partition, and the
-   * safe manual cleanup differs between two scenarios. Either way the cascade
-   * sweep never drops a live table's partition (it only targets partitions of
-   * a DELETED subgraph), so a de-configured `<t>_fts_t_<mangled>` is never
-   * auto-removed — but whether it is safe to `DROP TABLE` by hand depends on
-   * which reopen path `buildFtsDDL` takes:
-   *
-   *   SCENARIO A — reduce to a shorter but still NON-EMPTY list (drop some
-   *   a_types, keep others). `buildFtsDDL` takes the non-empty path, which
-   *   emits `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`, so the three folded
-   *   triggers are reconciled WITHOUT the removed a_types' arms. The removed
-   *   type's `<t>_fts_t_<mangled>` table stops being trigger-maintained and
-   *   goes stale. It is safe to `DROP TABLE` manually to reclaim the space.
-   *
-   *   SCENARIO B — full opt-out: this list becomes EMPTY (`[]`) or is unset.
-   *   `buildFtsDDL` takes the empty path, which — held byte-identical for
-   *   backward compatibility — emits `CREATE TRIGGER IF NOT EXISTS`. That
-   *   NO-OPs against the FOLDED triggers still installed from the previous
-   *   non-empty config, so every `<t>_fts_t_<mangled>` KEEPS being
-   *   trigger-maintained; none goes stale. Dropping a partition table by hand
-   *   in this state is DANGEROUS: because the folded triggers still reference
-   *   it, trigger-program preparation then fails for rows of EVERY a_type, and
-   *   every subsequent INSERT/UPDATE/DELETE on the graph table fails with
-   *   `no such table: <t>_fts_t_<mangled>` (not just for the de-configured
-   *   type). To clean up safely in Scenario B, `DROP TRIGGER` the three
-   *   `<t>_fts_ai` / `<t>_fts_au` / `<t>_fts_ad` triggers TOGETHER WITH the
-   *   `DROP TABLE` on the partition (the next bootstrap recreates clean
-   *   unfolded triggers via the `IF NOT EXISTS` path), or reopen once with a
-   *   non-empty list that excludes the type before dropping.
+   * DE-CONFIGURING is handled automatically by the factory's JS reconciliation
+   * step (`doFtsEnsure`, run lazily before the first `fullTextSearch` per
+   * resolved table). On reopen it drops any `<t>_fts_t_*` per-type trigger not
+   * in the current config (a removed `a_type`) and purges that `a_type`'s
+   * `<t>_fts_cfg` fingerprint row. The stale `<t>_fts_t_<mangled>` PARTITION
+   * TABLE itself is left in place (it is no longer trigger-maintained and no
+   * longer read, so it is inert); a manual `DROP TABLE` on the partition
+   * is safe once the type is de-configured, since no trigger references it any
+   * more. A CHANGE to a still-configured type's field list re-fingerprints and
+   * fully rebuilds that partition on reopen.
    */
   perTypeFtsStats?: string[];
 }

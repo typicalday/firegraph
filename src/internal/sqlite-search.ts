@@ -10,6 +10,19 @@
  *     required on the write path. Queries rank with `bm25()` (lower =
  *     better, so `ORDER BY bm25 ASC` is relevance-descending).
  *
+ *     Optionally, specific a_types get their OWN per-type FTS5 partition table
+ *     (`perTypeFtsTableName`, `_fts_t_` infix) so their `bm25()` IDF is
+ *     isolated from other a_types (the shared index mixes every a_type's
+ *     document frequencies). A partition is declared per-field via
+ *     `IndexSpec.fullText: { fields }` on a registry entry (index only those
+ *     paths) or all-text via the legacy `perTypeFtsStats` backend option; the
+ *     two merge into one `PerTypeFtsConfig` (`buildPerTypeFtsConfig`). Each
+ *     partition is maintained by its OWN triggers (`buildPerTypeFtsDDL`), NOT
+ *     folded into the shared triggers, so a consumer's `extraTableDDL`
+ *     customisation of the shared triggers is never clobbered. A single-a_type
+ *     search auto-routes to the partition unless the caller passes
+ *     `perTypeStats: false`.
+ *
  *   - **`search.vector`** — brute-force k-NN via a deterministic scalar UDF
  *     (`firegraph_vector_distance`) registered on the better-sqlite3
  *     connection by `createLocalSqliteBackend`. There is no ANN index; the
@@ -90,6 +103,19 @@ export function ftsMapTableName(table: string): string {
 }
 
 /**
+ * Per-type FTS config-fingerprint table, ONE per database, keyed by the ROOT
+ * table name (not each graph table). Rows are `(table_name, a_type,
+ * fingerprint)` where `fingerprint` is the canonical JSON of the a_type's
+ * declared field list at the time its partition was last materialized. The
+ * factory's `ftsEnsure` step reads it to detect a field-list CHANGE (purge +
+ * rebuild the partition on mismatch) and NEVER creates it when the unified
+ * per-type config is empty (byte-identity guarantee for no-opt-in databases).
+ */
+export function ftsCfgTableName(rootTable: string): string {
+  return `${rootTable}_fts_cfg`;
+}
+
+/**
  * Supplementary per-type FTS5 table for one `(graph table, a_type)` pair —
  * the opt-in mechanism that gives a single `a_type` its own BM25 statistics
  * (`bm25()` computes IDF over the WHOLE physical index, so the shared
@@ -128,57 +154,104 @@ function escapeSqlLiteral(value: string): string {
 }
 
 /**
- * SQL fragment extracting every string value in a `data` JSON payload as
- * one space-joined text blob. Pure SQL (`json_tree`), so it is evaluatable
- * inside triggers from any connection.
+ * Per-type full-text configuration: `a_type` → the declared field list, or
+ * `null` when the a_type opts in through the legacy all-text `perTypeFtsStats`
+ * backend option (index every string value, byte-identical extraction to the
+ * shared `<t>_fts`). A non-null value is a NON-EMPTY, de-duplicated, SORTED
+ * list of bare `data`-relative field paths (`'title'`, `'meta.notes'`) declared
+ * via `IndexSpec.fullText` on registry entries. Built once at factory time by
+ * `buildPerTypeFtsConfig`; consumed by every per-type DDL / compile helper.
  */
-function textExtractionExpr(dataRef: string): string {
-  return (
-    `(SELECT coalesce(group_concat("value", ' '), '') ` +
-    `FROM json_tree(coalesce(${dataRef}, '{}')) WHERE "type" = 'text')`
-  );
+export type PerTypeFtsConfig = ReadonlyMap<string, readonly string[] | null>;
+
+/** Config entries in deterministic `a_type`-ascending order for stable DDL. */
+function sortedPerTypeFtsEntries(
+  config: PerTypeFtsConfig,
+): Array<[string, readonly string[] | null]> {
+  return [...config.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
 }
 
 /**
- * DDL installing the FTS5 infrastructure for one graph table: the mapping
- * table, the FTS5 virtual table, and three sync triggers. Safe to re-run on
- * every bootstrap. The table / virtual-table statements are `IF NOT EXISTS`;
- * the three triggers are emitted `CREATE TRIGGER IF NOT EXISTS` when
- * `perTypeFtsStats` is EMPTY (byte-identical to the pre-per-type DDL) and
- * `DROP TRIGGER IF EXISTS` + unconditional `CREATE TRIGGER` when it is
- * NON-EMPTY (deterministic reconciliation of the folded per-type body to the
- * current config — see the emission block below for why plain
- * `CREATE … IF NOT EXISTS` would leave a stale trigger installed).
+ * The three per-type trigger names for one `(graph table, a_type)` pair.
+ * Named off the partition table (`perTypeFtsTableName`) so every per-type
+ * trigger carries the load-bearing `_fts_t_` infix — the stale-trigger sweep
+ * in the factory's `ftsEnsure` step scans for exactly `<t>_fts_t_*` triggers.
+ * `_bd` is BEFORE DELETE (not `_ad`) on purpose: it must fire and read the
+ * `<t>_fts_map` row BEFORE the shared `<t>_fts_ad` AFTER DELETE trigger removes
+ * that map row, so the per-type partition delete never races a vanished map id.
+ */
+export function perTypeFtsTriggerNames(
+  table: string,
+  aType: string,
+): { ai: string; au: string; bd: string } {
+  const base = perTypeFtsTableName(table, aType);
+  return { ai: `${base}_ai`, au: `${base}_au`, bd: `${base}_bd` };
+}
+
+/**
+ * SQL fragment extracting text out of a `data` JSON payload as one
+ * space-joined blob. Pure SQL (`json_tree`), so it is evaluatable inside
+ * triggers from any connection.
+ *
+ *   - `fields` UNDEFINED (or omitted) → index EVERY string value anywhere in
+ *     `data` (`json_tree` over the whole payload). This is the all-text form
+ *     the shared `<t>_fts` index and the legacy `perTypeFtsStats` (null-config)
+ *     partitions use; the emitted string is byte-identical to the pre-per-type
+ *     DDL, so `buildFtsDDL` stays backward compatible.
+ *   - `fields` a NON-EMPTY list of bare `data`-relative paths → index only the
+ *     text under those paths. Each path roots a `json_tree(..., '$.<path>')`
+ *     subtree walk (so a path pointing at an object/array contributes every
+ *     string beneath it); the per-path walks are `UNION ALL`-ed. Paths are
+ *     validated by `collectFullTextDeclarations` at factory time, so the
+ *     inlined `$.<path>` is injection-safe.
+ */
+function textExtractionExpr(dataRef: string, fields?: readonly string[]): string {
+  if (fields === undefined) {
+    return (
+      `(SELECT coalesce(group_concat("value", ' '), '') ` +
+      `FROM json_tree(coalesce(${dataRef}, '{}')) WHERE "type" = 'text')`
+    );
+  }
+  const branches = fields
+    .map(
+      (field) =>
+        `SELECT "value" FROM json_tree(coalesce(${dataRef}, '{}'), '$.${field}') ` +
+        `WHERE "type" = 'text'`,
+    )
+    .join(' UNION ALL ');
+  return `(SELECT coalesce(group_concat("value", ' '), '') FROM (${branches}))`;
+}
+
+/** One shared FTS trigger: its unquoted name and its canonical CREATE statement. */
+export interface SharedFtsTriggerDef {
+  /** Unquoted trigger name (`<t>_fts_ai` / `_au` / `_ad`). */
+  name: string;
+  /** Canonical `CREATE TRIGGER IF NOT EXISTS …` statement. */
+  statement: string;
+}
+
+/**
+ * The three shared FTS triggers (`<t>_fts_ai` / `_au` / `_ad`) for one graph
+ * table, as `{ name, statement }` pairs. Single source of truth for the shared
+ * trigger bodies: `buildFtsDDL` emits their statements, and the factory's
+ * `ftsEnsure` legacy-heal step re-runs the exact statement string here to
+ * replace a 0.19.0 folded trigger (whose body contained per-type
+ * `<t>_fts_t_…` maintenance) with this clean shared-only body.
  *
  * The AFTER INSERT trigger also fires for the INSERT arm of the backend's
  * upsert (`INSERT … ON CONFLICT DO UPDATE`); the conflict arm fires AFTER
- * UPDATE. Both re-derive the indexed text from `new."data"`, and both
- * start with a defensive delete of any stale FTS row so replayed writes
- * never double-index.
- *
- * PER-TYPE STATS (`perTypeFtsStats`): when a non-empty list of a_types is
- * passed, one supplementary FTS5 table per a_type (`perTypeFtsTableName`) is
- * created ALONGSIDE the shared `<t>_fts`, and its maintenance is FOLDED INTO
- * the same three shared triggers rather than installed as separate per-type
- * triggers. Folding — not separate `WHEN`-guarded per-type triggers — is
- * required for correctness on DELETE: the shared AD trigger deletes the map
- * row, and a separate per-type AD trigger keyed through the map would race it
- * (SQLite does not guarantee inter-trigger firing order), leaving a per-type
- * ghost. One trigger with a deterministic statement order (per-type deletes
- * BEFORE the map delete) removes that race. Folding into AU also lets the
- * per-type table follow a row whose `a_type` CHANGES on update (delete the
- * old per-type row unconditionally, re-insert only when the row still belongs
- * to the type) — a case a `WHEN new.a_type = 'T'` per-type trigger cannot see.
- *
- * With an empty / omitted `perTypeFtsStats` the emitted strings are
- * byte-identical to the pre-per-type DDL (backward compatibility).
+ * UPDATE. Both re-derive the indexed text from `new."data"`, and both start
+ * with a defensive delete of any stale FTS row so replayed writes never
+ * double-index. All three are `CREATE TRIGGER IF NOT EXISTS` — the shared body
+ * never varies, so a plain idempotent create is correct (the folding that PR
+ * #37 added has been removed; per-type maintenance now lives in separate
+ * `perTypeFtsTriggerNames` triggers built by `buildPerTypeFtsDDL`).
  */
-export function buildFtsDDL(table: string, perTypeFtsStats: readonly string[] = []): string[] {
+export function sharedFtsTriggerDefs(table: string): SharedFtsTriggerDef[] {
   const t = quoteIdent(table);
   const fts = quoteIdent(ftsTableName(table));
   const map = quoteIdent(ftsMapTableName(table));
   const mappedId = `(SELECT "id" FROM ${map} WHERE "doc_id" = new."doc_id")`;
-  const mappedIdOld = `(SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id")`;
   // The map insert must be conflict-free rather than `INSERT OR IGNORE`:
   // when the outer statement is the backend's upsert (`INSERT … ON CONFLICT
   // DO UPDATE`), SQLite replaces conflict handling inside trigger programs
@@ -188,78 +261,49 @@ export function buildFtsDDL(table: string, perTypeFtsStats: readonly string[] = 
     `WHERE NOT EXISTS (SELECT 1 FROM ${map} WHERE "doc_id" = new."doc_id");\n` +
     `  DELETE FROM ${fts} WHERE rowid = ${mappedId};\n` +
     `  INSERT INTO ${fts} (rowid, "text") VALUES (${mappedId}, ${textExtractionExpr('new."data"')});\n`;
-
-  // Per-type maintenance folded into the shared upsert/delete triggers.
-  let perTypeUpsertBody = '';
-  let perTypeDeleteBody = '';
-  const perTypeTableDDL: string[] = [];
-  for (const aType of perTypeFtsStats) {
-    const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
-    const literal = `'${escapeSqlLiteral(aType)}'`;
-    perTypeTableDDL.push(`CREATE VIRTUAL TABLE IF NOT EXISTS ${ptfts} USING fts5("text")`);
-    // Defensive delete (covers reindex AND a row leaving this type), then a
-    // guarded insert that re-adds the row only when it belongs to the type.
-    perTypeUpsertBody +=
-      `  DELETE FROM ${ptfts} WHERE rowid = ${mappedId};\n` +
-      `  INSERT INTO ${ptfts} (rowid, "text") ` +
-      `SELECT ${mappedId}, ${textExtractionExpr('new."data"')} WHERE new."a_type" = ${literal};\n`;
-    // Delete BEFORE the shared AD removes the map row (deterministic order).
-    perTypeDeleteBody += `  DELETE FROM ${ptfts} WHERE rowid = ${mappedIdOld};\n`;
-  }
-
-  const aiName = quoteIdent(`${table}_fts_ai`);
-  const auName = quoteIdent(`${table}_fts_au`);
-  const adName = quoteIdent(`${table}_fts_ad`);
-  const aiSuffix = `AFTER INSERT ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`;
-  const auSuffix = `AFTER UPDATE ON ${t} BEGIN\n${reindexBody}${perTypeUpsertBody}END`;
+  const aiName = `${table}_fts_ai`;
+  const auName = `${table}_fts_au`;
+  const adName = `${table}_fts_ad`;
   const adSuffix = `AFTER DELETE ON ${t} BEGIN
   DELETE FROM ${fts} WHERE rowid = (SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id");
-${perTypeDeleteBody}  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
+  DELETE FROM ${map} WHERE "doc_id" = old."doc_id";
 END`;
+  return [
+    {
+      name: aiName,
+      statement: `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(aiName)} AFTER INSERT ON ${t} BEGIN\n${reindexBody}END`,
+    },
+    {
+      name: auName,
+      statement: `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(auName)} AFTER UPDATE ON ${t} BEGIN\n${reindexBody}END`,
+    },
+    {
+      name: adName,
+      statement: `CREATE TRIGGER IF NOT EXISTS ${quoteIdent(adName)} ${adSuffix}`,
+    },
+  ];
+}
 
-  // Trigger emission differs by config, on purpose:
-  //
-  //   * EMPTY perTypeFtsStats → `CREATE TRIGGER IF NOT EXISTS`, byte-identical
-  //     to the pre-per-type DDL. On a DB whose triggers already exist this
-  //     NO-OPS, which is correct: the folded body is empty, so the existing
-  //     trigger is already the body we would install.
-  //
-  //   * NON-EMPTY perTypeFtsStats → `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`
-  //     (unconditional). `CREATE TRIGGER IF NOT EXISTS` alone would NO-OP on a
-  //     DB whose three FTS triggers already exist (created before opt-in, or
-  //     with a different perTypeFtsStats list), permanently leaving a stale
-  //     trigger body that lacks the current per-type upsert/delete folds — so
-  //     every post-bootstrap write would silently miss the per-type table and
-  //     a `perTypeStats:true` search would DROP those rows / leave ghosts on
-  //     delete. Dropping first reconciles the installed triggers to the
-  //     current config deterministically on every bootstrap. The pair stays
-  //     idempotent (DROP IF EXISTS + CREATE the same body ⇒ same end state),
-  //     and it is the trigger body every connection then runs, preserving the
-  //     any-connection invariant.
-  const triggerDDL =
-    perTypeFtsStats.length === 0
-      ? [
-          `CREATE TRIGGER IF NOT EXISTS ${aiName} ${aiSuffix}`,
-          `CREATE TRIGGER IF NOT EXISTS ${auName} ${auSuffix}`,
-          `CREATE TRIGGER IF NOT EXISTS ${adName} ${adSuffix}`,
-        ]
-      : [
-          `DROP TRIGGER IF EXISTS ${aiName}`,
-          `CREATE TRIGGER ${aiName} ${aiSuffix}`,
-          `DROP TRIGGER IF EXISTS ${auName}`,
-          `CREATE TRIGGER ${auName} ${auSuffix}`,
-          `DROP TRIGGER IF EXISTS ${adName}`,
-          `CREATE TRIGGER ${adName} ${adSuffix}`,
-        ];
-
+/**
+ * DDL installing the SHARED FTS5 infrastructure for one graph table: the
+ * mapping table, the FTS5 virtual table, and the three shared sync triggers
+ * (`sharedFtsTriggerDefs`). Safe to re-run on every bootstrap: the table /
+ * virtual-table statements are `IF NOT EXISTS` and the triggers are
+ * `CREATE TRIGGER IF NOT EXISTS`. The emitted strings are byte-identical to
+ * the pre-per-type (pre-PR-#37) DDL — per-type maintenance is NO LONGER folded
+ * into these triggers; it lives in separate per-type triggers built by
+ * `buildPerTypeFtsDDL`.
+ */
+export function buildFtsDDL(table: string): string[] {
+  const fts = quoteIdent(ftsTableName(table));
+  const map = quoteIdent(ftsMapTableName(table));
   return [
     `CREATE TABLE IF NOT EXISTS ${map} (
       "id"     INTEGER PRIMARY KEY AUTOINCREMENT,
       "doc_id" TEXT NOT NULL UNIQUE
     )`,
     `CREATE VIRTUAL TABLE IF NOT EXISTS ${fts} USING fts5("text")`,
-    ...perTypeTableDDL,
-    ...triggerDDL,
+    ...sharedFtsTriggerDefs(table).map((def) => def.statement),
   ];
 }
 
@@ -275,14 +319,11 @@ END`;
  *   3–4. Backfill map/FTS rows for graph rows that predate the FTS
  *        infrastructure (e.g. a database written by an older firegraph).
  */
-export function buildFtsSyncStatements(
-  table: string,
-  perTypeFtsStats: readonly string[] = [],
-): string[] {
+export function buildFtsSyncStatements(table: string): string[] {
   const t = quoteIdent(table);
   const fts = quoteIdent(ftsTableName(table));
   const map = quoteIdent(ftsMapTableName(table));
-  const statements = [
+  return [
     `DELETE FROM ${fts} WHERE rowid IN (
       SELECT m."id" FROM ${map} m LEFT JOIN ${t} t ON t."doc_id" = m."doc_id"
       WHERE t."doc_id" IS NULL
@@ -294,27 +335,93 @@ export function buildFtsSyncStatements(
       FROM ${t} t JOIN ${map} m ON m."doc_id" = t."doc_id"
       WHERE m."id" NOT IN (SELECT rowid FROM ${fts})`,
   ];
-  // Per-type backfill runs AFTER the shared map backfill (statement 3 above)
-  // so the shared `_fts_map` rows the per-type tables key off already exist.
-  // Idempotent: purge ghosts (doc_id gone OR a_type no longer this type),
-  // then insert only the type's rows that are missing. This backfill covers
-  // rows that PRE-DATE the opt-in (or predate this a_type joining the list).
-  // Correctness for rows written AFTER bootstrap depends on the folded
-  // triggers being current — `buildFtsDDL` reconciles them via DROP+CREATE on
-  // the non-empty path so this backfill is a one-time catch-up, not a crutch
-  // that masks a stale trigger. Together they make opting in on an
-  // already-populated DB, and reads from a second connection, correct without
-  // a write on the read path.
-  for (const aType of perTypeFtsStats) {
+}
+
+/**
+ * DDL installing one supplementary per-type FTS5 partition table
+ * (`perTypeFtsTableName`) and its three OWN maintenance triggers
+ * (`perTypeFtsTriggerNames`) for each configured a_type. Emitted ALONGSIDE the
+ * shared `buildFtsDDL` output, never folded into the shared triggers.
+ *
+ * WHY SEPARATE, DROP+CREATE'd TRIGGERS (not folded, not `IF NOT EXISTS`):
+ *
+ *   - SEPARATE (own triggers) so a consumer's `extraTableDDL` customisation of
+ *     the shared `<t>_fts_ai/_au/_ad` triggers is never clobbered — the bug PR
+ *     #37 introduced by folding per-type maintenance into the shared bodies.
+ *   - DROP+CREATE (unconditional, not `IF NOT EXISTS`) so a field-list change
+ *     on an existing DB deterministically reconciles the installed trigger body
+ *     to the current `fields` on every bootstrap; a plain `CREATE … IF NOT
+ *     EXISTS` would leave a stale body indexing the old field set.
+ *
+ * The `_bd` trigger is BEFORE DELETE so it reads the `<t>_fts_map` row before
+ * the shared `<t>_fts_ad` AFTER DELETE trigger removes it (no inter-trigger
+ * ordering race). Each per-type trigger carries its OWN idempotent map-ensure
+ * (the `WHERE NOT EXISTS` form, matching the shared trigger's conflict-free
+ * insert) so a per-type-only opt-in still populates the shared map. The upsert
+ * body deletes unconditionally (covers reindex AND a row LEAVING the type on an
+ * `a_type` change) then re-inserts only when the row still belongs to the type.
+ */
+export function buildPerTypeFtsDDL(table: string, config: PerTypeFtsConfig): string[] {
+  const t = quoteIdent(table);
+  const map = quoteIdent(ftsMapTableName(table));
+  const mappedId = `(SELECT "id" FROM ${map} WHERE "doc_id" = new."doc_id")`;
+  const mappedIdOld = `(SELECT "id" FROM ${map} WHERE "doc_id" = old."doc_id")`;
+  const statements: string[] = [];
+  for (const [aType, fields] of sortedPerTypeFtsEntries(config)) {
     const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
     const literal = `'${escapeSqlLiteral(aType)}'`;
+    const extraction = textExtractionExpr('new."data"', fields === null ? undefined : fields);
+    const names = perTypeFtsTriggerNames(table, aType);
+    const ai = quoteIdent(names.ai);
+    const au = quoteIdent(names.au);
+    const bd = quoteIdent(names.bd);
+    const upsertBody =
+      `  INSERT INTO ${map} ("doc_id") SELECT new."doc_id" ` +
+      `WHERE NOT EXISTS (SELECT 1 FROM ${map} WHERE "doc_id" = new."doc_id");\n` +
+      `  DELETE FROM ${ptfts} WHERE rowid = ${mappedId};\n` +
+      `  INSERT INTO ${ptfts} (rowid, "text") ` +
+      `SELECT ${mappedId}, ${extraction} WHERE new."a_type" = ${literal};\n`;
+    const deleteBody = `  DELETE FROM ${ptfts} WHERE rowid = ${mappedIdOld};\n`;
+    statements.push(
+      `CREATE VIRTUAL TABLE IF NOT EXISTS ${ptfts} USING fts5("text")`,
+      `DROP TRIGGER IF EXISTS ${ai}`,
+      `CREATE TRIGGER ${ai} AFTER INSERT ON ${t} BEGIN\n${upsertBody}END`,
+      `DROP TRIGGER IF EXISTS ${au}`,
+      `CREATE TRIGGER ${au} AFTER UPDATE ON ${t} BEGIN\n${upsertBody}END`,
+      `DROP TRIGGER IF EXISTS ${bd}`,
+      `CREATE TRIGGER ${bd} BEFORE DELETE ON ${t} BEGIN\n${deleteBody}END`,
+    );
+  }
+  return statements;
+}
+
+/**
+ * Idempotent reconciliation statements for the per-type partition tables, run
+ * at every bootstrap AFTER the shared `buildFtsSyncStatements` (so the shared
+ * `<t>_fts_map` rows the partitions key off already exist). For each configured
+ * a_type: purge ghosts (map row's `doc_id` gone OR its `a_type` no longer this
+ * type), then insert only the type's rows that are missing — using the
+ * field-filtered extraction so the backfill matches the trigger body. Covers
+ * rows that PRE-DATE the opt-in (or predate this a_type / field set), plus the
+ * recreate-after-cascade path. A field-list CHANGE on already-indexed rows is
+ * handled by `ftsEnsure` (full partition purge on fingerprint mismatch), which
+ * then re-runs these statements.
+ */
+export function buildPerTypeFtsSyncStatements(table: string, config: PerTypeFtsConfig): string[] {
+  const t = quoteIdent(table);
+  const map = quoteIdent(ftsMapTableName(table));
+  const statements: string[] = [];
+  for (const [aType, fields] of sortedPerTypeFtsEntries(config)) {
+    const ptfts = quoteIdent(perTypeFtsTableName(table, aType));
+    const literal = `'${escapeSqlLiteral(aType)}'`;
+    const extraction = textExtractionExpr('t."data"', fields === null ? undefined : fields);
     statements.push(
       `DELETE FROM ${ptfts} WHERE rowid IN (
       SELECT m."id" FROM ${map} m LEFT JOIN ${t} t ON t."doc_id" = m."doc_id"
       WHERE t."doc_id" IS NULL OR t."a_type" <> ${literal}
     )`,
       `INSERT INTO ${ptfts} (rowid, "text")
-      SELECT m."id", ${textExtractionExpr('t."data"')}
+      SELECT m."id", ${extraction}
       FROM ${t} t JOIN ${map} m ON m."doc_id" = t."doc_id"
       WHERE t."a_type" = ${literal} AND m."id" NOT IN (SELECT rowid FROM ${ptfts})`,
     );
@@ -323,19 +430,20 @@ export function buildFtsSyncStatements(
 }
 
 /**
- * Full `extraTableDDL` payload for `firegraph/sqlite-local`: FTS
- * infrastructure plus the reconciliation pass. `perTypeFtsStats` (the
- * backend's configured per-type a_types) appends the supplementary per-type
- * tables + their backfill after the shared DDL; empty/omitted reproduces the
- * pre-per-type payload exactly.
+ * Full `extraTableDDL` payload for `firegraph/sqlite-local`: shared FTS
+ * infrastructure + per-type partitions + both reconciliation passes, in the
+ * order shared-DDL → per-type-DDL → shared-sync → per-type-sync (per-type sync
+ * depends on the shared map being backfilled first). An EMPTY `config`
+ * reproduces the pre-per-type payload exactly (shared DDL + shared sync only),
+ * so a backend with no `IndexSpec.fullText` and no `perTypeFtsStats` is
+ * byte-identical to today.
  */
-export function buildLocalSearchDDL(
-  table: string,
-  perTypeFtsStats: readonly string[] = [],
-): string[] {
+export function buildLocalSearchDDL(table: string, config: PerTypeFtsConfig = new Map()): string[] {
   return [
-    ...buildFtsDDL(table, perTypeFtsStats),
-    ...buildFtsSyncStatements(table, perTypeFtsStats),
+    ...buildFtsDDL(table),
+    ...buildPerTypeFtsDDL(table, config),
+    ...buildFtsSyncStatements(table),
+    ...buildPerTypeFtsSyncStatements(table, config),
   ];
 }
 
@@ -416,7 +524,7 @@ function buildSearchFilters(params: {
 export function compileFullTextSearch(
   table: string,
   params: FullTextSearchParams,
-  perTypeFtsStats: readonly string[] = [],
+  config: PerTypeFtsConfig = new Map(),
 ): CompiledStatement {
   if (typeof params.query !== 'string' || params.query.length === 0) {
     throw new FiregraphError(
@@ -441,17 +549,16 @@ export function compileFullTextSearch(
   }
 
   const t = quoteIdent(table);
-  // Per-type stats are used only when the caller opts in (`perTypeStats`),
-  // the search targets exactly one a_type, AND that a_type has a maintained
-  // per-type table for this graph table. Otherwise fall back to the shared
-  // `<t>_fts` (no aType / multiple types / unconfigured type) — a non-error
-  // fallback, per constraint 2 (cross-type search unchanged). The per-type
-  // table shares the `<t>_fts_map` rowid, so only the FTS/MATCH/bm25 table
-  // changes; the map + base joins and the a_type WHERE predicate stay.
+  // Routing to the per-type partition is DEFAULT-ON: the partition is used
+  // whenever the search targets exactly one a_type that HAS a configured
+  // partition for this graph table, UNLESS the caller explicitly opts out with
+  // `perTypeStats: false`. Any other shape falls back to the shared `<t>_fts`
+  // (no aType / multiple types / unconfigured type) — a non-error fallback, so
+  // cross-type search is unchanged. The partition shares the `<t>_fts_map`
+  // rowid, so only the FTS/MATCH/bm25 table changes; the map + base joins and
+  // the a_type WHERE predicate stay identical.
   const usePerType =
-    params.perTypeStats === true &&
-    typeof params.aType === 'string' &&
-    perTypeFtsStats.includes(params.aType);
+    typeof params.aType === 'string' && config.has(params.aType) && params.perTypeStats !== false;
   const fts = quoteIdent(
     usePerType ? perTypeFtsTableName(table, params.aType as string) : ftsTableName(table),
   );
@@ -1001,6 +1108,104 @@ export function collectVectorDeclarations(
 }
 
 /**
+ * Validate one declared full-text field path (a bare `data`-relative path like
+ * `'title'` or `'meta.notes'`). Each dotted segment must satisfy
+ * `validateJsonPathKey` — the same safe-identifier rule the query / index paths
+ * enforce — so the path can be inlined into `json_tree(..., '$.<path>')` without
+ * injection. `validateJsonPathKey` raises `INVALID_QUERY`; a bad DECLARATION is
+ * a construction-time misconfiguration, so it is re-raised as `INVALID_ARGUMENT`.
+ */
+function validateFullTextFieldPath(aType: string, path: string): void {
+  for (const part of path.split('.')) {
+    try {
+      validateJsonPathKey(part, BACKEND_ERR_LABEL);
+    } catch (err) {
+      throw new FiregraphError(
+        `IndexSpec.fullText on a_type '${aType}': field path '${path}' has an ` +
+          `unsafe segment '${part}'. ${err instanceof Error ? err.message : String(err)}`,
+        'INVALID_ARGUMENT',
+      );
+    }
+  }
+}
+
+/**
+ * Collect per-type full-text declarations from a registry: flatten entries →
+ * indexes → `spec.fullText`, group the declared `fields` by `aType`, then
+ * UNION + de-dupe + SORT the field paths so two entries sharing an a_type merge
+ * into one partition field set. Each field path is validated
+ * (`validateFullTextFieldPath`); an empty `fields` array throws
+ * `INVALID_ARGUMENT` (declare at least one field, or omit the whole spec).
+ * Runs once at factory time so a misconfigured registry fails fast at
+ * construction. Returns `a_type` → sorted field paths.
+ */
+export function collectFullTextDeclarations(
+  registry: GraphRegistry | undefined,
+): ReadonlyMap<string, readonly string[]> {
+  const byType = new Map<string, Set<string>>();
+  if (!registry) return new Map<string, readonly string[]>();
+  for (const entry of registry.entries()) {
+    for (const spec of entry.indexes ?? []) {
+      if (spec.fullText === undefined) continue;
+      const { fields } = spec.fullText;
+      if (!Array.isArray(fields) || fields.length === 0) {
+        throw new FiregraphError(
+          `IndexSpec.fullText on a_type '${entry.aType}': \`fields\` must be a ` +
+            `non-empty array of data-relative field paths. Omit the whole \`fullText\` ` +
+            `spec to not declare a per-type text index for this a_type.`,
+          'INVALID_ARGUMENT',
+        );
+      }
+      const set = byType.get(entry.aType) ?? new Set<string>();
+      for (const path of fields) {
+        validateFullTextFieldPath(entry.aType, path);
+        set.add(path);
+      }
+      byType.set(entry.aType, set);
+    }
+  }
+  const result = new Map<string, readonly string[]>();
+  for (const [aType, set] of byType) {
+    result.set(aType, [...set].sort());
+  }
+  return result;
+}
+
+/**
+ * Merge the two per-type full-text opt-in sources into one `PerTypeFtsConfig`:
+ *
+ *   - `IndexSpec.fullText` declarations (`collectFullTextDeclarations`) → the
+ *     a_type maps to its sorted declared field list (field-filtered partition).
+ *   - Legacy `perTypeFtsStats` backend option → the a_type maps to `null`
+ *     (all-text partition, byte-identical extraction to the shared index).
+ *
+ * An a_type present in BOTH sources is a configuration conflict (all-text vs
+ * field-filtered are mutually exclusive for one partition) and throws
+ * `INVALID_ARGUMENT` at factory time.
+ */
+export function buildPerTypeFtsConfig(
+  registry: GraphRegistry | undefined,
+  perTypeFtsStats: readonly string[] = [],
+): PerTypeFtsConfig {
+  const config = new Map<string, readonly string[] | null>();
+  for (const [aType, fields] of collectFullTextDeclarations(registry)) {
+    config.set(aType, fields);
+  }
+  for (const aType of perTypeFtsStats) {
+    if (config.has(aType)) {
+      throw new FiregraphError(
+        `a_type '${aType}' is declared for per-type full-text search in BOTH the ` +
+          `\`perTypeFtsStats\` backend option (all-text) and \`IndexSpec.fullText\` ` +
+          `(specific fields). Declare it in exactly one place.`,
+        'INVALID_ARGUMENT',
+      );
+    }
+    config.set(aType, null);
+  }
+  return config;
+}
+
+/**
  * Set a nested value inside a record's `data` payload, creating
  * intermediate objects along the way (replacing non-object intermediates,
  * matching Firestore's `distanceResultField` write semantics).
@@ -1055,12 +1260,12 @@ export function findOrphanedFtsTables(
   allTables: ReadonlyArray<string>,
   catalogTables: ReadonlyArray<string>,
   rootTable: string,
-  perTypeFtsStats: readonly string[] = [],
+  configuredATypes: readonly string[] = [],
 ): string[] {
   const names = new Set(allTables);
   const liveGraphTables = new Set(catalogTables);
   const subgraphPrefix = `${rootTable}_g_`;
-  const perTypeSuffixes = perTypeFtsStats.map((aType) => `_fts_t_${mangleStorageScope(aType)}`);
+  const perTypeSuffixes = configuredATypes.map((aType) => `_fts_t_${mangleStorageScope(aType)}`);
 
   // Pass 1: collect orphaned base tables.
   const orphanedBases = new Set<string>();
@@ -1093,7 +1298,7 @@ export function findOrphanedFtsTables(
     const artifacts = [
       ftsTableName(base),
       ftsMapTableName(base),
-      ...perTypeFtsStats.map((aType) => perTypeFtsTableName(base, aType)),
+      ...configuredATypes.map((aType) => perTypeFtsTableName(base, aType)),
     ];
     for (const artifact of artifacts) {
       if (names.has(artifact) && !liveGraphTables.has(artifact)) orphans.add(artifact);

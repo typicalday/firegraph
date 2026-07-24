@@ -243,6 +243,29 @@ export interface IndexSpec {
    * create a composite index.
    */
   vector?: { field: string; dimension: number };
+  /**
+   * Marks this spec as a per-type full-text declaration for the local SQLite
+   * backends (`firegraph/sqlite-local`, `firegraph/sqlite-builtin`). When set,
+   * the backend maintains a dedicated FTS5 partition table for this entry's
+   * `aType`, indexing ONLY the text under the listed `fields`, so `bm25()`
+   * ranking for that a_type is computed over an isolated index (the shared
+   * `<t>_fts` mixes every a_type's document frequencies together). A
+   * `fullTextSearch({ aType })` targeting a declared a_type auto-routes to its
+   * partition unless the call passes `perTypeStats: false`.
+   *
+   * `fields` is a NON-EMPTY list of bare `data`-relative field paths
+   * (`'title'`, `'meta.notes'`); each path roots a `json_tree` subtree walk, so
+   * a path pointing at an object indexes every string beneath it. Multiple
+   * specs sharing an `aType` union their field lists. An empty `fields: []`
+   * throws `INVALID_ARGUMENT` at construction. Declaring the same `aType` in
+   * both `IndexSpec.fullText` and the `perTypeFtsStats` backend option (which
+   * indexes ALL text for that a_type) is a conflict and also throws
+   * `INVALID_ARGUMENT`. Ignored by every other backend (Firestore, D1,
+   * Cloudflare DO). Like `vector`, a `fullText` spec typically carries an empty
+   * `fields: []` at the `IndexSpec` level — it does not create a composite
+   * index.
+   */
+  fullText?: { fields: string[] };
 }
 
 export interface RegistryEntry {
@@ -1082,23 +1105,26 @@ export interface FullTextSearchParams {
    */
   allowCollectionScan?: boolean;
   /**
-   * Opt in to per-type BM25 statistics (local SQLite backend only).
+   * Control per-type BM25 statistics routing (local SQLite backends only).
    *
-   * **No-op unless BOTH sides opt in.** It takes effect only when (a) the
-   * SQLite backend was constructed with a matching `perTypeFtsStats`
-   * (`firegraph/sqlite-local` `createLocalSqliteBackend` or
-   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`), so a dedicated
-   * per-type FTS table for this `aType` is being maintained, AND (b) the
-   * search targets exactly one `aType` (this field). When either is false —
-   * no configured table for the `aType`, no `aType`, or a cross-type search —
-   * the search silently falls back to the shared index and ranks exactly as
-   * today (no error).
+   * **Routing is DEFAULT-ON, this field is an OPT-OUT.** When the SQLite
+   * backend was constructed with a per-type partition for this search's single
+   * `aType` — declared via `IndexSpec.fullText: { fields }` on a registry
+   * entry, or via the legacy `perTypeFtsStats` backend option
+   * (`firegraph/sqlite-local` `createLocalSqliteBackend` /
+   * `firegraph/sqlite-builtin` `createNodeSqliteBackend`) — the search AUTO-
+   * ROUTES to that partition. Pass `perTypeStats: false` to force the shared
+   * `<t>_fts` index instead. The field has NO effect when there is no
+   * configured partition for the `aType`, no `aType`, or a cross-type search:
+   * those always use the shared index (no error). Passing `true` is accepted
+   * but redundant — it is the default when a partition exists.
    *
-   * WHY: `bm25()` computes its IDF term over the ENTIRE physical FTS index,
-   * so on the shared `<t>_fts` (which mixes every `a_type`), inserting rows of
-   * OTHER a_types shifts the rank/score of a within-type result. Reading a
-   * per-type table isolates the IDF to this `a_type`. Ignored by the Firestore
-   * backends, which have no equivalent per-type index. Default absent/false.
+   * WHY the partition exists: `bm25()` computes its IDF term over the ENTIRE
+   * physical FTS index, so on the shared `<t>_fts` (which mixes every
+   * `a_type`), inserting rows of OTHER a_types shifts the rank/score of a
+   * within-type result. Reading a per-type partition isolates the IDF to this
+   * `a_type`. Ignored by the Firestore backends, which have no equivalent
+   * per-type index. Default absent (partition used when one exists).
    */
   perTypeStats?: boolean;
 }
@@ -1115,11 +1141,16 @@ export interface FullTextSearchParams {
  *     Enterprise product feature, not a free-tier feature).
  *   - **Firestore Standard** — not supported. FTS is an Enterprise-only
  *     product feature; this row will never become "✓".
- *   - **Local SQLite (`firegraph/sqlite-local`)** ✓ — backed by one FTS5
- *     table per graph table, kept in sync by pure-SQL triggers and ranked
- *     by `bm25()`. The whole `data` payload is indexed as one combined
- *     text column, so a non-empty `fields` list is rejected with
- *     `INVALID_QUERY`.
+ *   - **Local SQLite (`firegraph/sqlite-local`, `firegraph/sqlite-builtin`)**
+ *     ✓ — backed by one shared FTS5 table per graph table, kept in sync by
+ *     pure-SQL triggers and ranked by `bm25()`. The whole `data` payload is
+ *     indexed as one combined text column, so a non-empty `fields` list on
+ *     the SEARCH call is rejected with `INVALID_QUERY`. Specific a_types may
+ *     additionally get an isolated-BM25 partition table declared at
+ *     CONSTRUCTION time via `IndexSpec.fullText: { fields }` (index only those
+ *     paths) or the `perTypeFtsStats` backend option (index all text); a
+ *     single-`aType` search auto-routes to that partition unless the call
+ *     passes `perTypeStats: false` (see `FullTextSearchParams.perTypeStats`).
  *   - **Shared SQLite (D1) / Cloudflare DO** — not supported. No FTS5
  *     trigger infrastructure on those runtimes; emulating FTS over
  *     `json_extract` is not viable for any realistic dataset.

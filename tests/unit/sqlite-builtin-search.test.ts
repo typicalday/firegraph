@@ -20,12 +20,17 @@ import { createGraphClient } from '../../src/client.js';
 import { generateId } from '../../src/id.js';
 import { generateIndexConfig } from '../../src/indexes.js';
 import {
+  buildFtsDDL,
+  buildFtsSyncStatements,
+  buildLocalSearchDDL,
   computeVectorDistance,
   findOrphanedFtsTables,
+  ftsCfgTableName,
   ftsMapTableName,
   ftsTableName,
   isFts5QueryError,
   perTypeFtsTableName,
+  sharedFtsTriggerDefs,
 } from '../../src/internal/sqlite-search.js';
 import { createRegistry } from '../../src/registry.js';
 import { createSqliteBackend } from '../../src/sqlite/backend.js';
@@ -1446,3 +1451,294 @@ describe.skipIf(!HAS_NODE_SQLITE)('per-type BM25 stats (search.fullText)', () =>
     close();
   });
 });
+
+describe.skipIf(!HAS_NODE_SQLITE)(
+  'per-type FTS: declared fields (IndexSpec.fullText) + auto-routing',
+  () => {
+    let DatabaseSync: NodeDatabaseSyncCtor;
+    beforeAll(async () => {
+      ({ createNodeSqliteBackend, createNodeSqliteExecutor } =
+        await import('../../src/sqlite/node-sqlite.js'));
+      ({ DatabaseSync } = (await import('node:sqlite')) as unknown as {
+        DatabaseSync: NodeDatabaseSyncCtor;
+      });
+    });
+
+    function tableNames(db: NodeDatabaseSyncHandle): string[] {
+      return db
+        .prepare(`SELECT "name" FROM sqlite_master WHERE "type" = 'table'`)
+        .all()
+        .map((r) => (r as { name: string }).name);
+    }
+
+    it('indexes only declared fields and auto-routes single-aType search to the partition', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['title'] } }],
+        },
+      ]);
+      const local = await createNodeSqliteBackend(':memory:', { registry });
+      const client = createGraphClient(local.backend);
+      const uid = generateId();
+      await client.putNode('tour', uid, { title: 'alphaword', body: 'betaword' });
+
+      expect(tableNames(local.db)).toContain(perTypeFtsTableName('firegraph', 'tour'));
+
+      const titleHit = await client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'alphaword',
+        limit: 5,
+      });
+      expect(titleHit.map((r) => r.aUid)).toEqual([uid]);
+
+      const bodyMiss = await client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'betaword',
+        limit: 5,
+      });
+      expect(bodyMiss).toHaveLength(0);
+
+      const bodyViaShared = await client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'betaword',
+        perTypeStats: false,
+        limit: 5,
+      });
+      expect(bodyViaShared.map((r) => r.aUid)).toEqual([uid]);
+      local.close();
+    });
+
+    it('unions declared field paths across entries sharing an a_type', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['title'] } }],
+        },
+        {
+          aType: 'tour',
+          axbType: 'hasNote',
+          bType: 'note',
+          indexes: [{ fields: [], fullText: { fields: ['summary'] } }],
+        },
+      ]);
+      const local = await createNodeSqliteBackend(':memory:', { registry });
+      const client = createGraphClient(local.backend);
+      const uid = generateId();
+      await client.putNode('tour', uid, { title: 'peakword', summary: 'valleyword' });
+
+      for (const term of ['peakword', 'valleyword']) {
+        const hits = await client.fullTextSearch({
+          aType: 'tour',
+          axbType: 'is',
+          query: term,
+          limit: 5,
+        });
+        expect(hits.map((r) => r.aUid)).toEqual([uid]);
+      }
+      local.close();
+    });
+
+    it('re-fingerprints and rebuilds the partition when the declared field list changes', async () => {
+      const path = tempDbPath('pt-fingerprint');
+      const uid = generateId();
+
+      const narrow = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['title'] } }],
+        },
+      ]);
+      const first = await createNodeSqliteBackend(path, { registry: narrow });
+      await createGraphClient(first.backend).putNode('tour', uid, {
+        title: 'aurora',
+        body: 'borealis',
+      });
+      const miss = await createGraphClient(first.backend).fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'borealis',
+        limit: 5,
+      });
+      expect(miss).toHaveLength(0);
+      first.close();
+
+      const wide = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['title', 'body'] } }],
+        },
+      ]);
+      const second = await createNodeSqliteBackend(path, { registry: wide });
+      const client = createGraphClient(second.backend);
+      const hit = await client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'borealis',
+        limit: 5,
+      });
+      expect(hit.map((r) => r.aUid)).toEqual([uid]);
+
+      const fp = second.db
+        .prepare(
+          `SELECT "fingerprint" FROM "${ftsCfgTableName('firegraph')}" ` +
+            `WHERE "table_name" = 'firegraph' AND "a_type" = 'tour'`,
+        )
+        .get() as { fingerprint: string };
+      expect(JSON.parse(fp.fingerprint)).toEqual({ fields: ['body', 'title'] });
+      second.close();
+    });
+
+    it('rejects the same a_type declared via both perTypeFtsStats and IndexSpec.fullText', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['title'] } }],
+        },
+      ]);
+      await expect(
+        createNodeSqliteBackend(':memory:', { registry, perTypeFtsStats: ['tour'] }),
+      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
+    });
+
+    it('rejects an IndexSpec.fullText with an unsafe field path', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: ['bad!key'] } }],
+        },
+      ]);
+      await expect(createNodeSqliteBackend(':memory:', { registry })).rejects.toMatchObject({
+        code: 'INVALID_ARGUMENT',
+      });
+    });
+
+    it('rejects an IndexSpec.fullText with an empty field list', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'tour',
+          axbType: 'is',
+          bType: 'tour',
+          indexes: [{ fields: [], fullText: { fields: [] } }],
+        },
+      ]);
+      await expect(createNodeSqliteBackend(':memory:', { registry })).rejects.toMatchObject({
+        code: 'INVALID_ARGUMENT',
+      });
+    });
+
+    it('empty config emits only shared FTS DDL (byte-identical, no partitions)', () => {
+      const table = 'firegraph';
+      const ddl = buildLocalSearchDDL(table, new Map());
+      expect(ddl).toEqual([...buildFtsDDL(table), ...buildFtsSyncStatements(table)]);
+      expect(ddl.some((s) => s.includes('_fts_t_'))).toBe(false);
+      expect(
+        buildFtsDDL(table)
+          .filter((s) => s.includes('TRIGGER'))
+          .every((s) => s.includes('CREATE TRIGGER IF NOT EXISTS')),
+      ).toBe(true);
+    });
+
+    it('does not create a _fts_cfg table for a default (empty-config) backend', async () => {
+      const local = await createNodeSqliteBackend(':memory:');
+      const client = createGraphClient(local.backend);
+      await client.putNode('tour', generateId(), { name: 'plain' });
+      await client.fullTextSearch({ aType: 'tour', axbType: 'is', query: 'plain', limit: 5 });
+      expect(tableNames(local.db)).not.toContain(ftsCfgTableName('firegraph'));
+      local.close();
+    });
+
+    it('heals a legacy folded shared FTS trigger on reopen', async () => {
+      const path = tempDbPath('legacy-heal');
+      const first = await createNodeSqliteBackend(path);
+      await createGraphClient(first.backend).putNode('tour', generateId(), { name: 'relic' });
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      raw.exec(`DROP TRIGGER IF EXISTS "firegraph_fts_ai"`);
+      raw.exec(
+        `CREATE TRIGGER "firegraph_fts_ai" AFTER INSERT ON "firegraph" ` +
+          `BEGIN SELECT '_fts_t_tour'; END`,
+      );
+      const broken = raw
+        .prepare(`SELECT "sql" FROM sqlite_master WHERE "name" = 'firegraph_fts_ai'`)
+        .get() as { sql: string };
+      expect(broken.sql).toContain('_fts_t_');
+      raw.close();
+
+      const second = await createNodeSqliteBackend(path);
+      const client = createGraphClient(second.backend);
+      await client.fullTextSearch({ aType: 'tour', axbType: 'is', query: 'relic', limit: 5 });
+
+      const healed = second.db
+        .prepare(`SELECT "sql" FROM sqlite_master WHERE "name" = 'firegraph_fts_ai'`)
+        .get() as { sql: string };
+      expect(healed.sql).not.toContain('_fts_t_');
+      const canonicalAi = sharedFtsTriggerDefs('firegraph').find(
+        (d) => d.name === 'firegraph_fts_ai',
+      );
+      expect(healed.sql).toBe(
+        canonicalAi?.statement.replace('CREATE TRIGGER IF NOT EXISTS', 'CREATE TRIGGER'),
+      );
+
+      const freshUid = generateId();
+      await client.putNode('tour', freshUid, { name: 'renewed' });
+      const hits = await client.fullTextSearch({
+        aType: 'tour',
+        axbType: 'is',
+        query: 'renewed',
+        limit: 5,
+      });
+      expect(hits.map((r) => r.aUid)).toEqual([freshUid]);
+      second.close();
+    });
+
+    it('sweeps _fts_cfg rows for a cascade-dropped subgraph', async () => {
+      const registry = createRegistry([
+        {
+          aType: 'stop',
+          axbType: 'is',
+          bType: 'stop',
+          indexes: [{ fields: [], fullText: { fields: ['text'] } }],
+        },
+      ]);
+      const { backend, db, close } = await createNodeSqliteBackend(':memory:', { registry });
+      const client = createGraphClient(backend);
+      const parentUid = generateId();
+      await client.putNode('tour', parentUid, { name: 'host' });
+      const sub = client.subgraph(parentUid, 'stops');
+      await sub.putNode('stop', generateId(), { text: 'reef' });
+      await sub.fullTextSearch({ aType: 'stop', axbType: 'is', query: 'reef', limit: 5 });
+
+      const subTable = tableForScope('firegraph', `${parentUid}/stops`);
+      const cfg = ftsCfgTableName('firegraph');
+      const before = db
+        .prepare(`SELECT "table_name" FROM "${cfg}" WHERE "table_name" = ?`)
+        .all(subTable);
+      expect(before.length).toBeGreaterThan(0);
+
+      await client.removeNodeCascade(parentUid);
+
+      const after = db
+        .prepare(`SELECT "table_name" FROM "${cfg}" WHERE "table_name" = ?`)
+        .all(subTable);
+      expect(after).toHaveLength(0);
+      close();
+    });
+  },
+);

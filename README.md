@@ -610,9 +610,7 @@ const backend = createFirestoreStandardBackend(db, 'graph');
 const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
-    const compartment = new Compartment({
-      /* endowments */
-    });
+    const compartment = new Compartment({/* endowments */});
     return compartment.evaluate(source);
   },
 });
@@ -1176,23 +1174,36 @@ On top of the shared SQLite capability set, the local factory declares `search.f
 
 - **`fullTextSearch(params)`** — every graph table gets a contentless FTS5 index kept in sync by pure-SQL triggers (`json_tree` extracts all string leaves from `data`, so nested fields are searchable). Results are ranked by bm25. FTS5 query syntax (`AND` / `OR` / `NOT`, `"phrase"` quoting, `prefix*`) passes through; malformed queries throw `INVALID_QUERY`. The `fields` option is not supported (the index is one combined text column) — a non-empty `fields` array throws `INVALID_QUERY`, matching Firestore Enterprise. Because the triggers are plain SQL, writes from _any_ connection or process stay indexed, and rows written before the index existed are backfilled on bootstrap.
 
-  **Per-type BM25 statistics (opt-in).** Ranking is cross-type by default: the bm25 IDF term (how rare a query word is, which drives ranking) is computed over the whole `<t>_fts` index, and that index mixes every `a_type` together. So inserting rows of one `a_type` shifts the rank and score of results filtered to a _different_ `a_type`. That matters when several a_types share one graph and you search by a single `aType` — e.g. a memory system storing episodes plus derived facts/concepts in one subgraph, where consolidation floods the index with fact vocabulary and measurably deflates episode search recall even though the query only asks for episodes. To isolate one type's statistics, opt in on **both** sides (it is a no-op unless both are set):
-  - **Write side** — construct the backend with `perTypeFtsStats: ['episode', ...]`, the list of `a_type`s that each get a dedicated supplementary FTS5 table (`<t>_fts_t_<mangled>`) kept in sync alongside the shared `<t>_fts`.
-  - **Read side** — pass `perTypeStats: true` on a `fullTextSearch` filtered to exactly one of those configured `aType`s.
+  **Per-type text partitions (opt-in).** Ranking is cross-type by default: the bm25 IDF term (how rare a query word is, which drives ranking) is computed over the whole `<t>_fts` index, and that index mixes every `a_type` together. So inserting rows of one `a_type` shifts the rank and score of results filtered to a _different_ `a_type`. That matters when several a_types share one graph and you search by a single `aType` — e.g. a memory system storing episodes plus derived facts/concepts in one subgraph, where consolidation floods the index with fact vocabulary and measurably deflates episode search recall even though the query only asks for episodes. Opt a type in and it gets a dedicated supplementary FTS5 partition table (`<t>_fts_t_<mangled>`) holding only that type's rows, kept in sync alongside the shared `<t>_fts`. There are two ways to declare a partition, and one `a_type` may use only one of them:
 
-  Only then does that search rank with IDF scoped to just that type. Every other search — no `aType`, multiple a_types, an `aType` that was not configured, or `perTypeStats` left unset — reads the shared index and ranks exactly as before (a silent, non-error fallback). With `perTypeFtsStats` unset or `[]` the emitted DDL is byte-identical to prior versions: the feature is strictly opt-in and default-off, and cross-type search is never affected. The cost is one extra FTS5 table plus per-type trigger work per configured type on every write. **De-configuring** an `a_type` later (shrinking or clearing the list) needs manual cleanup, and dropping a stale partition table incorrectly can break all writes to the graph table — the two scenarios and the safe cleanup for each are documented on the `perTypeFtsStats` doc-comment in [`src/sqlite/backend.ts`](src/sqlite/backend.ts); read it before removing a type. `firegraph/sqlite-builtin` (`createNodeSqliteBackend`) accepts the same `perTypeFtsStats` option with identical behavior.
+  - **Whole-text partition** — construct the backend with `perTypeFtsStats: ['episode', ...]`. Each listed `a_type` gets a partition indexing the SAME all-text extraction as the shared index (every string leaf in `data`), just scoped to that type.
+  - **Declared-fields partition** — add `fullText: { fields: ['title', 'body.note'] }` to an `IndexSpec` on the registry entry (alongside an empty `fields: []`). That type's partition indexes ONLY the listed `data`-relative field paths. Two entries sharing an `a_type` union their field lists. Passing the same `a_type` in both `perTypeFtsStats` and an `IndexSpec.fullText` throws `INVALID_ARGUMENT` at construction — pick one extraction per type.
+
+  **Auto-routing (read side).** A `fullTextSearch` filtered to exactly one configured `aType` DEFAULT-routes to that type's partition and ranks with IDF scoped to just that type — no read-side flag needed. To force the shared cross-type index for one query, pass `perTypeStats: false`. Every non-single-type search — no `aType`, multiple a_types, or an `aType` that was not configured — reads the shared index and ranks exactly as before (a silent, non-error fallback). With no partitions configured at all (`perTypeFtsStats` unset or `[]` and no `IndexSpec.fullText`) the emitted DDL is byte-identical to prior versions and no `<t>_fts_cfg` bookkeeping table is created: the feature is strictly opt-in and default-off, and cross-type search is never affected. The cost is one extra FTS5 table plus three per-type triggers' work per configured type on every write.
+
+  **De-configuring is automatic.** On reopen the factory reconciles partitions: a removed `a_type`'s per-type triggers are dropped and its fingerprint row purged (the now-inert partition table is left in place — dropping it by hand is safe), and CHANGING a still-configured type's declared field list fully rebuilds that partition (tracked by a fingerprint in `<t>_fts_cfg`). No manual cleanup is required. `firegraph/sqlite-builtin` (`createNodeSqliteBackend`) accepts the same options with identical behavior.
 
   ```typescript
+  // Whole-text partition via perTypeFtsStats:
   const { backend } = await createLocalSqliteBackend('./graph.db', {
-    perTypeFtsStats: ['episode'], // episode gets its own isolated BM25 stats table
+    perTypeFtsStats: ['episode'], // episode gets its own isolated partition
   });
   const g = createGraphClient(backend, { registry });
   const hits = await g.fullTextSearch({
     aType: 'episode',
     axbType: 'is',
-    query: 'dolomites',
-    perTypeStats: true, // rank with IDF scoped to episodes only
+    query: 'dolomites', // auto-routes to the episode partition — no flag needed
   });
+
+  // Declared-fields partition via the registry:
+  const registry = createRegistry([
+    {
+      aType: 'episode',
+      axbType: 'is',
+      bType: 'episode',
+      indexes: [{ fields: [], fullText: { fields: ['title', 'body'] } }],
+    },
+  ]);
   ```
 
 - **`findNearest(params)`** — exact (not approximate) nearest-neighbour via a brute-force scan scored by a connection-local SQL distance function. Supports `EUCLIDEAN`, `COSINE`, and `DOT_PRODUCT`, plus `distanceThreshold` and `distanceResultField`, mirroring Firestore semantics (rows with a missing field, wrong dimension, or non-finite values are silently skipped). Vector queries must run through the factory-created backend — the distance function is registered per connection.
