@@ -610,7 +610,9 @@ const backend = createFirestoreStandardBackend(db, 'graph');
 const g = createGraphClient(backend, {
   registryMode: { mode: 'dynamic' },
   migrationSandbox: (source) => {
-    const compartment = new Compartment({/* endowments */});
+    const compartment = new Compartment({
+      /* endowments */
+    });
     return compartment.evaluate(source);
   },
 });
@@ -1174,8 +1176,7 @@ On top of the shared SQLite capability set, the local factory declares `search.f
 
 - **`fullTextSearch(params)`** — every graph table gets a contentless FTS5 index kept in sync by pure-SQL triggers (`json_tree` extracts all string leaves from `data`, so nested fields are searchable). Results are ranked by bm25. FTS5 query syntax (`AND` / `OR` / `NOT`, `"phrase"` quoting, `prefix*`) passes through; malformed queries throw `INVALID_QUERY`. The `fields` option is not supported (the index is one combined text column) — a non-empty `fields` array throws `INVALID_QUERY`, matching Firestore Enterprise. Because the triggers are plain SQL, writes from _any_ connection or process stay indexed, and rows written before the index existed are backfilled on bootstrap.
 
-  **Per-type text partitions (opt-in).** Ranking is cross-type by default: the bm25 IDF term (how rare a query word is, which drives ranking) is computed over the whole `<t>_fts` index, and that index mixes every `a_type` together. So inserting rows of one `a_type` shifts the rank and score of results filtered to a _different_ `a_type`. That matters when several a_types share one graph and you search by a single `aType` — e.g. a memory system storing episodes plus derived facts/concepts in one subgraph, where consolidation floods the index with fact vocabulary and measurably deflates episode search recall even though the query only asks for episodes. Opt a type in and it gets a dedicated supplementary FTS5 partition table (`<t>_fts_t_<mangled>`) holding only that type's rows, kept in sync alongside the shared `<t>_fts`. There are two ways to declare a partition, and one `a_type` may use only one of them:
-
+  **Per-type text partitions (opt-in).** Ranking is cross-type by default: the bm25 IDF term (how rare a query word is, which drives ranking) is computed over the whole `<t>_fts` index, and that index mixes every `a_type` together. So inserting rows of one `a_type` shifts the rank and score of results filtered to a _different_ `a_type`. That matters when several `a_type`s share one graph and you search by a single `aType` — e.g. a memory system storing episodes plus derived facts/concepts in one subgraph, where consolidation floods the index with fact vocabulary and measurably deflates episode search recall even though the query only asks for episodes. Opt a type in and it gets a dedicated supplementary FTS5 partition table (`<t>_fts_t_<mangled>`) holding only that type's rows, kept in sync alongside the shared `<t>_fts`. There are two ways to declare a partition, and one `a_type` may use only one of them:
   - **Whole-text partition** — construct the backend with `perTypeFtsStats: ['episode', ...]`. Each listed `a_type` gets a partition indexing the SAME all-text extraction as the shared index (every string leaf in `data`), just scoped to that type.
   - **Declared-fields partition** — add `fullText: { fields: ['title', 'body.note'] }` to an `IndexSpec` on the registry entry (alongside an empty `fields: []`). That type's partition indexes ONLY the listed `data`-relative field paths. Two entries sharing an `a_type` union their field lists. Passing the same `a_type` in both `perTypeFtsStats` and an `IndexSpec.fullText` throws `INVALID_ARGUMENT` at construction — pick one extraction per type.
 
