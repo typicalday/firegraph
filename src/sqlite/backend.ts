@@ -128,14 +128,35 @@ export interface SqliteBackendOptions {
    * there has no effect. Write-side cost: one extra FTS5 table plus per-type
    * trigger work per configured type on every write.
    *
-   * Caveat — DE-CONFIGURING an a_type does NOT sweep its partition. Removing
-   * an a_type from this list (or reopening with a shorter list) re-emits the
-   * three folded triggers WITHOUT that a_type's upsert/delete arms, so the
-   * old `<t>_fts_t_<mangled>` table stops being trigger-maintained and goes
-   * stale — but it is never dropped (the cascade sweep only targets partitions
-   * of a DELETED subgraph, not partitions of a still-live table). It lingers
-   * with whatever rows it held at de-configuration time. Drop it manually if
-   * you need the space back.
+   * Caveat — DE-CONFIGURING an a_type does NOT sweep its partition, and the
+   * safe manual cleanup differs between two scenarios. Either way the cascade
+   * sweep never drops a live table's partition (it only targets partitions of
+   * a DELETED subgraph), so a de-configured `<t>_fts_t_<mangled>` is never
+   * auto-removed — but whether it is safe to `DROP TABLE` by hand depends on
+   * which reopen path `buildFtsDDL` takes:
+   *
+   *   SCENARIO A — reduce to a shorter but still NON-EMPTY list (drop some
+   *   a_types, keep others). `buildFtsDDL` takes the non-empty path, which
+   *   emits `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`, so the three folded
+   *   triggers are reconciled WITHOUT the removed a_types' arms. The removed
+   *   type's `<t>_fts_t_<mangled>` table stops being trigger-maintained and
+   *   goes stale. It is safe to `DROP TABLE` manually to reclaim the space.
+   *
+   *   SCENARIO B — full opt-out: this list becomes EMPTY (`[]`) or is unset.
+   *   `buildFtsDDL` takes the empty path, which — held byte-identical for
+   *   backward compatibility — emits `CREATE TRIGGER IF NOT EXISTS`. That
+   *   NO-OPs against the FOLDED triggers still installed from the previous
+   *   non-empty config, so every `<t>_fts_t_<mangled>` KEEPS being
+   *   trigger-maintained; none goes stale. Dropping a partition table by hand
+   *   in this state is DANGEROUS: because the folded triggers still reference
+   *   it, trigger-program preparation then fails for rows of EVERY a_type, and
+   *   every subsequent INSERT/UPDATE/DELETE on the graph table fails with
+   *   `no such table: <t>_fts_t_<mangled>` (not just for the de-configured
+   *   type). To clean up safely in Scenario B, `DROP TRIGGER` the three
+   *   `<t>_fts_ai` / `<t>_fts_au` / `<t>_fts_ad` triggers TOGETHER WITH the
+   *   `DROP TABLE` on the partition (the next bootstrap recreates clean
+   *   unfolded triggers via the `IF NOT EXISTS` path), or reopen once with a
+   *   non-empty list that excludes the type before dropping.
    */
   perTypeFtsStats?: string[];
 }
